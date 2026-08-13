@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""Extract ledger-family activity from the agentsview archive.
+
+When to use: rebuilding the research dataset for the ledger study, or
+refreshing it after agentsview syncs new sessions.
+
+Reads ~/.agentsview/sessions.db (read-only) and writes data/ledger_activity.db
+containing:
+  calls    - every tool call that touched a ledger-family file (file_path
+             match for Claude-style agents, input_json match for shell-driven
+             agents like Codex), classified into a cluster
+  sessions - metadata + health signals for every session with at least one
+             matching call
+
+Clusters (broad definition of "ledger": durable working-state files):
+  sdd-progress      .superpowers/sdd/**/progress.md (superpowers SDD ledger)
+  named-ledger      files with 'ledger' in the name, agent working state
+  scenario-ledger   e2e scenario LEDGER.md files (story-loop / e2e testing)
+  handoff           handoff docs
+  worklog           worklog / checkpoint / working-state files
+  progress-other    progress.md files outside .superpowers
+  seeded-fixture    seeded-truth/defect ledgers (autoresearch grading fixtures)
+  domain-code       ledger.rs/.go/.py etc - software about ledgers, not
+                    agent working state (kept for counting, excluded from
+                    behavioral analysis)
+  shell-ledger      shell command mentioning a ledger path (mostly Codex)
+
+Usage: scripts/extract-ledger-activity [--db PATH] [--out PATH]
+"""
+
+import argparse
+import os
+import re
+import sqlite3
+import sys
+
+CODE_EXT = re.compile(r"\.(rs|go|py|ts|js|tsv|json|sql|c|h|java)$", re.I)
+SEEDED = re.compile(r"seeded-(truth|defect|bug|trap)-?ledger|SEEDED-.*LEDGER", re.I)
+
+
+def classify_path(p: str) -> str:
+    lp = p.lower()
+    if SEEDED.search(p):
+        return "seeded-fixture"
+    if "ledger" in lp and CODE_EXT.search(lp):
+        return "domain-code"
+    if re.search(r"\.superpowers/sdd/.*progress.*\.md$|\.superpowers/sdd/progress", lp):
+        return "sdd-progress"
+    if re.search(r"scenarios?/ledger\.md$", lp):
+        return "scenario-ledger"
+    if "ledger" in lp:
+        return "named-ledger"
+    if "handoff" in lp or "hand-off" in lp:
+        return "handoff"
+    if re.search(r"worklog|work-log|working-state|checkpoint.*\.md$", lp):
+        return "worklog"
+    if lp.endswith("progress.md"):
+        return "progress-other"
+    return "other"
+
+
+FILE_PATH_WHERE = """
+    t.file_path LIKE '%ledger%'
+ OR t.file_path LIKE '%handoff%' OR t.file_path LIKE '%hand-off%'
+ OR t.file_path LIKE '%worklog%' OR t.file_path LIKE '%work-log%'
+ OR t.file_path LIKE '%working-state%'
+ OR (t.file_path LIKE '%checkpoint%' AND t.file_path LIKE '%.md')
+ OR t.file_path LIKE '%progress.md'
+"""
+
+SHELL_TOOLS = ("Bash", "exec_command", "shell_command", "shell", "exec")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--db", default=os.path.expanduser("~/.agentsview/sessions.db"))
+    ap.add_argument("--out", default="data/ledger_activity.db")
+    args = ap.parse_args()
+
+    if not os.path.exists(args.db):
+        sys.exit(f"error: source db not found: {args.db}")
+    os.makedirs(os.path.dirname(args.out), exist_ok=True)
+    if os.path.exists(args.out):
+        os.remove(args.out)
+
+    src = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
+    out = sqlite3.connect(args.out)
+    out.executescript(
+        """
+        CREATE TABLE calls (
+            src_id INTEGER, session_id TEXT, tool_name TEXT, file_path TEXT,
+            cluster TEXT, ts TEXT, input_json TEXT
+        );
+        CREATE TABLE sessions (
+            id TEXT PRIMARY KEY, project TEXT, agent TEXT, started_at TEXT,
+            ended_at TEXT, message_count INTEGER, user_message_count INTEGER,
+            first_message TEXT, file_path TEXT, outcome TEXT, health_score INTEGER,
+            health_grade TEXT, compaction_count INTEGER,
+            mid_task_compaction_count INTEGER, tool_failure_signal_count INTEGER,
+            total_output_tokens INTEGER, is_automated INTEGER,
+            parent_session_id TEXT, relationship_type TEXT
+        );
+        """
+    )
+
+    # Pass 1: file-path based (Claude-style Read/Write/Edit).
+    n_file = 0
+    for row in src.execute(
+        f"""SELECT t.id, t.session_id, t.tool_name, t.file_path, m.timestamp,
+                   t.input_json
+            FROM tool_calls t JOIN messages m ON m.id = t.message_id
+            WHERE {FILE_PATH_WHERE}"""
+    ):
+        cluster = classify_path(row[3])
+        out.execute("INSERT INTO calls VALUES (?,?,?,?,?,?,?)", (*row[:4], cluster, row[4], row[5]))
+        n_file += 1
+
+    # Pass 2: shell commands that reference ledger-ish paths (Codex et al).
+    # file_path IS NULL keeps this from double-counting pass 1.
+    n_shell = 0
+    like = " OR ".join(
+        f"t.input_json LIKE '%{pat}%'"
+        for pat in ("ledger", "handoff", ".superpowers/sdd", "worklog")
+    )
+    for row in src.execute(
+        f"""SELECT t.id, t.session_id, t.tool_name, m.timestamp, t.input_json
+            FROM tool_calls t JOIN messages m ON m.id = t.message_id
+            WHERE t.tool_name IN {SHELL_TOOLS!r} AND t.file_path IS NULL
+              AND ({like})"""
+    ):
+        out.execute(
+            "INSERT INTO calls VALUES (?,?,?,?,?,?,?)",
+            (row[0], row[1], row[2], None, "shell-ledger", row[3], row[4]),
+        )
+        n_shell += 1
+
+    session_ids = [r[0] for r in out.execute("SELECT DISTINCT session_id FROM calls")]
+    for sid in session_ids:
+        row = src.execute(
+            """SELECT id, project, agent, started_at, ended_at, message_count,
+                      user_message_count, first_message, file_path, outcome,
+                      health_score, health_grade, compaction_count,
+                      mid_task_compaction_count, tool_failure_signal_count,
+                      total_output_tokens, is_automated, parent_session_id,
+                      relationship_type
+               FROM sessions WHERE id = ?""",
+            (sid,),
+        ).fetchone()
+        if row:
+            out.execute(
+                "INSERT INTO sessions VALUES (%s)" % ",".join("?" * 19), row
+            )
+    out.commit()
+
+    print(f"file-path calls: {n_file}")
+    print(f"shell calls:     {n_shell}")
+    for cluster, n, s in out.execute(
+        "SELECT cluster, count(*), count(DISTINCT session_id) FROM calls GROUP BY 1 ORDER BY 2 DESC"
+    ):
+        print(f"  {cluster:16s} calls={n:6d} sessions={s}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
