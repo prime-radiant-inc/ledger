@@ -19,7 +19,7 @@ func newRenderCmd(c *Ctx) *cobra.Command {
 		Long: "Writes exactly show's TTY-style spine+notes render to a file, but with\n" +
 			"absolute timestamps in place of relative ages, so two runs against the\n" +
 			"same ledger state produce byte-identical output.",
-		Args: cobra.NoArgs,
+		Args: noPositionals("render"),
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runRender(c, to, ledgerFlag)
 		}}

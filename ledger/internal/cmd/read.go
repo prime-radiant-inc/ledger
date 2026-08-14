@@ -341,7 +341,7 @@ func init() { register(newShowCmd) }
 
 func newShowCmd(c *Ctx) *cobra.Command {
 	var ledgerFlag string
-	cmd := &cobra.Command{Use: "show", Short: "full render: schema, spine, notes", Args: cobra.NoArgs,
+	cmd := &cobra.Command{Use: "show", Short: "full render: schema, spine, notes", Args: noPositionals("show"),
 		RunE: func(_ *cobra.Command, _ []string) error { return runShow(c, ledgerFlag) }}
 	cmd.Flags().StringVar(&ledgerFlag, "ledger", "", "target ledger")
 	return cmd
@@ -422,7 +422,7 @@ func newNotesCmd(c *Ctx) *cobra.Command {
 	var kind, key, id, ledgerFlag string
 	var latest bool
 	var limit int
-	cmd := &cobra.Command{Use: "notes", Short: "list notes", Args: cobra.NoArgs,
+	cmd := &cobra.Command{Use: "notes", Short: "list notes", Args: noPositionals("notes"),
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runNotes(c, kind, key, id, latest, limit, ledgerFlag)
 		}}
@@ -480,7 +480,7 @@ func init() { register(newTailCmd) }
 func newTailCmd(c *Ctx) *cobra.Command {
 	var limit int
 	var ledgerFlag string
-	cmd := &cobra.Command{Use: "tail", Short: "the most recent events, oldest first", Args: cobra.NoArgs,
+	cmd := &cobra.Command{Use: "tail", Short: "the most recent events, oldest first", Args: noPositionals("tail"),
 		RunE: func(_ *cobra.Command, _ []string) error { return runTail(c, limit, ledgerFlag) }}
 	cmd.Flags().IntVarP(&limit, "limit", "n", 20, "how many recent events")
 	cmd.Flags().StringVar(&ledgerFlag, "ledger", "", "target ledger")

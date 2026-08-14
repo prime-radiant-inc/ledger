@@ -23,9 +23,10 @@ func init() { register(newLsCmd) }
 
 func newLsCmd(c *Ctx) *cobra.Command {
 	var all bool
-	cmd := &cobra.Command{Use: "ls", Short: "list ledgers with freshness", RunE: func(_ *cobra.Command, _ []string) error {
-		return runLs(c, all)
-	}}
+	cmd := &cobra.Command{Use: "ls", Short: "list ledgers with freshness", Args: noPositionals("show"),
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runLs(c, all)
+		}}
 	cmd.Flags().BoolVar(&all, "all", false, "include ledgers closed more than 30 days ago")
 	return cmd
 }

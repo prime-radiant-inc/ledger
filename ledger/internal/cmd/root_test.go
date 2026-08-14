@@ -59,6 +59,33 @@ func TestNoOpenLedgerError(t *testing.T) {
 	}
 }
 
+// TestPositionalSlugOnReadVerbSuggestsLedgerFlag: `ledger show <slug>` is the
+// slug-positional habit from set/close transferring wrongly (two eval agents
+// made it independently). It must not read as an unknown *verb* — it's a
+// usage error whose fix is the --ledger flag, named in the hint.
+func TestPositionalSlugOnReadVerbSuggestsLedgerFlag(t *testing.T) {
+	dir := setup(t) // ledger "demo" exists here
+	for _, verb := range []string{"show", "tail", "notes", "watch", "render"} {
+		_, se, code := run(t, dir, verb, "demo")
+		if code != 4 || !strings.Contains(se, "bad_usage") {
+			t.Fatalf("%s <slug> must be bad_usage exit 4: %d %q", verb, code, se)
+		}
+		if !strings.Contains(se, "did you mean: ledger "+verb+" --ledger demo?") {
+			t.Fatalf("%s <slug> hint must name --ledger: %q", verb, se)
+		}
+	}
+	// ls has no --ledger of its own; its fix is the verb that does.
+	_, se, code := run(t, dir, "ls", "demo")
+	if code != 4 || !strings.Contains(se, "did you mean: ledger show --ledger demo?") {
+		t.Fatalf("ls <slug> hint must point at show: %d %q", code, se)
+	}
+	// and a genuinely unknown subcommand stays unknown_verb
+	_, se, code = run(t, dir, "frobnicate")
+	if code != 4 || !strings.Contains(se, "unknown_verb") {
+		t.Fatalf("unknown verb must stay unknown_verb: %d %q", code, se)
+	}
+}
+
 // TestCobraUsageErrorsMapToBadUsage: a genuine cobra flag-parse error (an
 // unknown flag, here) must not fall into the generic git_failed bucket
 // (exit 1, empty hint); it's classified as bad_usage, exit 4, with a hint
