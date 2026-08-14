@@ -5,8 +5,6 @@ import (
 	"io"
 	"sort"
 
-	"github.com/spf13/cobra"
-
 	"ledger/internal/fold"
 	"ledger/internal/out"
 	"ledger/internal/store"
@@ -79,16 +77,4 @@ func (c *Ctx) PickLedger(ledgerFlag string) (*fold.Ledger, error) {
 
 func outEmit(c *Ctx, payload map[string]any, lines []string) {
 	out.Emit(c.Stdout, c.TTY, payload, lines)
-}
-
-// in resolve.go for now; moved to read.go in Task 9
-func init() { register(newStatusStub) }
-func newStatusStub(c *Ctx) *cobra.Command {
-	var ledgerFlag string
-	cmd := &cobra.Command{Use: "status [key]", Short: "the spine: latest value per item", RunE: func(_ *cobra.Command, _ []string) error {
-		_, err := c.PickLedger(ledgerFlag)
-		return err
-	}}
-	cmd.Flags().StringVar(&ledgerFlag, "ledger", "", "target ledger")
-	return cmd
 }

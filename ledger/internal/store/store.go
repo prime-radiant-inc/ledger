@@ -145,6 +145,26 @@ func (s Store) Events(slug string) ([]model.Event, model.Meta, error) {
 	return evs, meta, nil
 }
 
+// Committers reads every commit's committer name in one `git log` pass and
+// keys the result by 10-char event id, matching Events' id truncation — the
+// committer name holds the harness marker (terminal/claude-code/codex/etc.),
+// distinct from the event's own recorded author.
+func (s Store) Committers(slug string) (map[string]string, error) {
+	out, _, code := s.Repo.Git("", "log", `--format=%H %cn`, ref(slug))
+	if code != 0 || out == "" {
+		return nil, fmt.Errorf("%w: %s", ErrUnknownLedger, slug)
+	}
+	m := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		sha, cn, ok := strings.Cut(line, " ")
+		if !ok {
+			continue
+		}
+		m[sha[:10]] = cn
+	}
+	return m, nil
+}
+
 // catBatch fetches every id (an object sha, or a "<rev>:<path>" spec) with a
 // single `git cat-file --batch` call. cat-file replies in request order, so
 // results are returned positionally as parallel slices — never keyed by the
