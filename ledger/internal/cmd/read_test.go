@@ -1,9 +1,14 @@
 package cmd
 
 import (
+	"bytes"
 	"os/exec"
 	"strings"
 	"testing"
+
+	"ledger/internal/gitx"
+	"ledger/internal/model"
+	"ledger/internal/store"
 )
 
 func seed(t *testing.T) string {
@@ -89,6 +94,9 @@ func TestNotesFiltersAndEscaping(t *testing.T) {
 	if !strings.Contains(notes[0].(map[string]any)["text"].(string), "\r") {
 		t.Fatal("JSON must carry the raw body")
 	}
+	if doc["ledger"] != "demo" {
+		t.Fatalf("notes payload must carry ledger like every other verb: %v", doc)
+	}
 }
 
 func TestTailCursor(t *testing.T) {
@@ -97,5 +105,59 @@ func TestTailCursor(t *testing.T) {
 	doc := mustJSON(t, so)
 	if len(doc["events"].([]any)) != 3 || doc["cursor"] == nil {
 		t.Fatalf("tail: %v", doc)
+	}
+	if doc["ledger"] != "demo" {
+		t.Fatalf("tail payload must carry ledger like every other verb: %v", doc)
+	}
+}
+
+// TestShowTTYNoteSummaryOneLine: show's TTY notes section is a compact
+// summary (first line only, truncated/escaped) — a multi-line body must
+// never spill onto the terminal the way notes/status drill-down's full
+// render does. Bypasses run() (which never sets TTY) to invoke runShow
+// directly with an explicit TTY Ctx.
+func TestShowTTYNoteSummaryOneLine(t *testing.T) {
+	dir := seed(t)
+	run(t, dir, "note", "-k", "handoff", "-m", "line one\nline two\nline three", "--as", "x")
+
+	var buf bytes.Buffer
+	c := &Ctx{Store: store.Store{Repo: gitx.Repo{Dir: dir}}, TTY: true, Stdout: &buf, Stderr: &buf}
+	if err := runShow(c, ""); err != nil {
+		t.Fatal(err)
+	}
+	rendered := buf.String()
+	if strings.Contains(rendered, "line two") || strings.Contains(rendered, "line three") {
+		t.Fatalf("show TTY must summarize a note to its first line, not print the full body: %q", rendered)
+	}
+	if !strings.Contains(rendered, "line one") {
+		t.Fatalf("show TTY must still show the first line: %q", rendered)
+	}
+}
+
+// TestSyncEventsExcludedFromTailAndShowCount: sync events are invisible to
+// fold's schema/spine/state already; tail and show's event count must keep
+// that invisibility rather than leaking merge plumbing into a render.
+func TestSyncEventsExcludedFromTailAndShowCount(t *testing.T) {
+	dir := seed(t)
+	so, _, _ := run(t, dir, "show")
+	before := mustJSON(t, so)["events"].(float64)
+
+	st := store.Store{Repo: gitx.Repo{Dir: dir}}
+	syncEv := model.Event{TS: "2026-08-13T00:00:00", Type: "sync", Author: "sync-bot"}
+	if _, err := st.Append("demo", syncEv, nil, store.ExpectPresent); err != nil {
+		t.Fatal(err)
+	}
+
+	so2, _, _ := run(t, dir, "show")
+	after := mustJSON(t, so2)["events"].(float64)
+	if after != before {
+		t.Fatalf("show's events count must exclude sync events: before=%v after=%v", before, after)
+	}
+
+	tailSo, _, _ := run(t, dir, "tail", "-n", "1")
+	events := mustJSON(t, tailSo)["events"].([]any)
+	last := events[len(events)-1].(map[string]any)
+	if last["type"] == "sync" {
+		t.Fatalf("tail must exclude sync events: %v", events)
 	}
 }

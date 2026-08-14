@@ -178,6 +178,40 @@ func eventLine(ev model.Event) string {
 	return "[" + ev.ID + "] " + ev.TS + " " + ev.Type + " " + ev.Author
 }
 
+// nonSyncEvents drops sync sentinels — invisible to fold's schema/spine/state
+// already; read verbs that walk the raw event list (tail, show's count) keep
+// that same invisibility rather than leaking merge plumbing into a render.
+func nonSyncEvents(evs []model.Event) []model.Event {
+	out := make([]model.Event, 0, len(evs))
+	for _, ev := range evs {
+		if ev.Type != "sync" {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+// truncate90 caps a rendered first line at 90 runes — show's recent-notes
+// section is a summary, not the body; full text stays a `notes --id` away.
+func truncate90(s string) string {
+	r := []rune(s)
+	if len(r) > 90 {
+		return string(r[:90]) + "..."
+	}
+	return s
+}
+
+// noteSummaryLine is show's compact per-note render: age, provenance, id,
+// kind, and a truncated escaped first line — matching the JSON recent_notes
+// shape field-for-field, never the full body noteLines prints.
+func noteSummaryLine(n model.Event, committers map[string]string) string {
+	line := out.Age(n.TS) + " " + provenance(n, committers, false) + "  [" + n.ID + "] " + n.Kind
+	if n.Key != "" {
+		line += " (" + n.Key + ")"
+	}
+	return line + `  "` + truncate90(out.EscapeControls(firstLine(n.Text))) + `"`
+}
+
 func knownKeys(led *fold.Ledger) []string {
 	ks := make([]string, 0, len(led.Spine))
 	for k := range led.Spine {
@@ -322,10 +356,11 @@ func runShow(c *Ctx, ledgerFlag string) error {
 		})
 	}
 
+	eventCount := len(nonSyncEvents(led.Events))
 	payload := map[string]any{
 		"ledger": led.Slug, "scope": led.Meta.Scope, "state": led.State, "rows": rows,
 		"schema": led.Schema, "require_evidence": led.Require, "recent_notes": recentNotes,
-		"events": len(led.Events), "head": led.Head(),
+		"events": eventCount, "head": led.Head(),
 	}
 
 	var lines []string
@@ -337,11 +372,13 @@ func runShow(c *Ctx, ledgerFlag string) error {
 		lines = append(lines, redirectLine(c, led))
 	}
 	lines = append(lines, fmt.Sprintf("%s  scope=%s  base=%s  state=%s  events=%d  head=%s",
-		led.Slug, led.Meta.Scope, led.Meta.Base, led.State, len(led.Events), led.Head()))
+		led.Slug, led.Meta.Scope, led.Meta.Base, led.State, eventCount, led.Head()))
 	for _, r := range rows {
 		lines = append(lines, spineLine(r))
 	}
-	lines = append(lines, noteLines(recent, committers, false)...)
+	for _, n := range recent {
+		lines = append(lines, noteSummaryLine(n, committers))
+	}
 	outEmit(c, payload, lines)
 	return nil
 }
@@ -408,7 +445,7 @@ func runNotes(c *Ctx, kind, key, id string, latest bool, limit int, ledgerFlag s
 	for _, note := range matched {
 		docs = append(docs, noteDocOf(note, committers))
 	}
-	outEmit(c, map[string]any{"notes": docs}, noteLines(matched, committers, latest))
+	outEmit(c, map[string]any{"ledger": led.Slug, "notes": docs}, noteLines(matched, committers, latest))
 	return nil
 }
 
@@ -431,7 +468,7 @@ func runTail(c *Ctx, limit int, ledgerFlag string) error {
 	if err != nil {
 		return err
 	}
-	evs := led.Events
+	evs := nonSyncEvents(led.Events)
 	if limit > 0 && len(evs) > limit {
 		evs = evs[len(evs)-limit:]
 	}
@@ -439,6 +476,6 @@ func runTail(c *Ctx, limit int, ledgerFlag string) error {
 	for _, ev := range evs {
 		lines = append(lines, eventLine(ev))
 	}
-	outEmit(c, map[string]any{"events": eventsJSON(evs), "cursor": led.Head()}, lines)
+	outEmit(c, map[string]any{"ledger": led.Slug, "events": eventsJSON(evs), "cursor": led.Head()}, lines)
 	return nil
 }
