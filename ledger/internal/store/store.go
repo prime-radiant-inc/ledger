@@ -219,14 +219,23 @@ func (s Store) Append(slug string, ev model.Event, extra map[string]string, expe
 // a single ref CAS: either the whole chain lands or none of it does. Used
 // where multiple events must be atomic together on one ref — e.g. `close
 // --as-state superseded`'s close+link pair, which must never be observable
-// mid-write as "closed but not yet linked". Returned ids are in event order.
-func (s Store) AppendChain(slug string, evs []model.Event, expect Expect) ([]string, error) {
+// mid-write as "closed but not yet linked" — and `import`'s full replay,
+// which must never leave a half-created, permanently unusable slug behind
+// (no delete verb, slugs never reused) after a bad input file. firstExtra is
+// attached only to the chain's first commit (e.g. import's meta.json on a
+// from-scratch ledger); pass nil for chains that extend an existing one.
+// Returned ids are in event order.
+func (s Store) AppendChain(slug string, evs []model.Event, firstExtra map[string]string, expect Expect) ([]string, error) {
 	var shas []string
 	_, err := s.casLoop(slug, expect, func(parent string) (string, error) {
 		shas = shas[:0]
 		p := parent
-		for _, ev := range evs {
-			csha, err := s.BuildCommit(slug, p, ev, nil)
+		for i, ev := range evs {
+			var extra map[string]string
+			if i == 0 {
+				extra = firstExtra
+			}
+			csha, err := s.BuildCommit(slug, p, ev, extra)
 			if err != nil {
 				return "", err
 			}

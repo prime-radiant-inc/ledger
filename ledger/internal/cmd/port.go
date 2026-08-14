@@ -92,6 +92,13 @@ func newImportCmd(c *Ctx) *cobra.Command {
 // importing harness's marker) and ImportedFrom, set to the original event id
 // for traceability. Because ids are assigned by the store at commit time,
 // identity does not cross the boundary: only payload equality is guaranteed.
+//
+// Every line is parsed and validated before any git object is written: a
+// malformed line partway through the file must never leave a half-created
+// ledger behind under a slug that (with no delete verb, slugs never reused)
+// would then be permanently unusable. Once the whole file checks out, the
+// entire chain lands under one CAS ref creation via AppendChain — either the
+// full import lands or none of it does.
 func runImport(c *Ctx, path, newSlug string) error {
 	if !model.ValidSlug(newSlug) {
 		return out.Errf("bad_slug", "slugs are lowercase-kebab: [a-z0-9][a-z0-9-]*, max 64 chars", 4,
@@ -114,42 +121,40 @@ func runImport(c *Ctx, path, newSlug string) error {
 	if err := json.Unmarshal([]byte(lines[0]), &header); err != nil || header.LedgerExport != 1 {
 		return out.Errf("bad_export", "re-export with `ledger export`", 4, "'%s' is not a ledger export", path)
 	}
-	meta := header.Meta
-	meta.Slug = newSlug
-	metaJSON, _ := json.MarshalIndent(meta, "", " ")
 
-	count := 0
-	for _, line := range lines[1:] {
+	var evs []model.Event
+	for i, line := range lines[1:] {
 		if line == "" {
 			continue
 		}
 		var raw map[string]any
 		var ev model.Event
 		if err := json.Unmarshal([]byte(line), &raw); err != nil {
-			return out.Errf("bad_export", "re-export with `ledger export`", 4, "malformed event on line %d", count+2)
+			return out.Errf("bad_export", "re-export with `ledger export`", 4, "malformed event on line %d", i+2)
 		}
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
-			return out.Errf("bad_export", "re-export with `ledger export`", 4, "malformed event on line %d", count+2)
+			return out.Errf("bad_export", "re-export with `ledger export`", 4, "malformed event on line %d", i+2)
 		}
 		ev.CommitterOverride = "imported"
 		if id, ok := raw["id"].(string); ok {
 			ev.ImportedFrom = id
 		}
-
-		var extra map[string]string
-		expect := store.ExpectPresent
-		if count == 0 {
-			extra = map[string]string{"meta.json": string(metaJSON)}
-			expect = store.ExpectAbsent
-		}
-		if _, err := c.Store.Append(newSlug, ev, extra, expect); err != nil {
-			return mapStoreErr(err, newSlug)
-		}
-		count++
+		evs = append(evs, ev)
+	}
+	if len(evs) == 0 {
+		return out.Errf("bad_export", "re-export with `ledger export`", 4, "'%s' has no events to import", path)
 	}
 
-	outEmit(c, map[string]any{"imported": count, "ledger": newSlug,
+	meta := header.Meta
+	meta.Slug = newSlug
+	metaJSON, _ := json.MarshalIndent(meta, "", " ")
+
+	if _, err := c.Store.AppendChain(newSlug, evs, map[string]string{"meta.json": string(metaJSON)}, store.ExpectAbsent); err != nil {
+		return mapStoreErr(err, newSlug)
+	}
+
+	outEmit(c, map[string]any{"imported": len(evs), "ledger": newSlug,
 		"note": "event ids did not survive the boundary"},
-		[]string{fmt.Sprintf("imported %d events into %s", count, newSlug)})
+		[]string{fmt.Sprintf("imported %d events into %s", len(evs), newSlug)})
 	return nil
 }
