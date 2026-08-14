@@ -40,6 +40,7 @@ type Event struct {
 	Author            string            `json:"author"`
 	Origin            Origin            `json:"origin"`
 	IdempotencyKey    string            `json:"idempotency_key,omitempty"`
+	ImportedFrom      string            `json:"imported_from,omitempty"`
 	ID                string            `json:"-"`
 	CommitterOverride string            `json:"-"`
 }
