@@ -1,15 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
-	"ledger/internal/gitx"
+	"ledger/internal/cmd"
 )
 
-func main() {
-	if err := gitx.CheckVersion(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-}
+func main() { os.Exit(cmd.Execute()) }
