@@ -32,21 +32,32 @@ type Store struct{ Repo gitx.Repo }
 
 func ref(slug string) string { return "refs/ledger/" + slug }
 
+// Resolution is what Resolve settled on.
+type Resolution struct {
+	Store Store
+	// Note is non-empty only in the same-directory collision case, when a
+	// single directory holds both .ledger.git and .git — callers print which
+	// one was chosen.
+	Note string
+	// Shadowed is the path of a store of the *other* kind sitting strictly
+	// higher in the ancestry, which the choice above shadowed. Ambient
+	// resolution only; empty when nothing of the other kind is up there.
+	Shadowed string
+}
+
 // Resolve implements the spec's store-resolution order:
 // --store flag > $LEDGER_DIR > nearest ancestor holding .ledger.git or .git
-// (.ledger.git beats .git within one directory). note is non-empty only in
-// that same-directory collision case, when a single directory holds both
-// .ledger.git and .git — callers print which one was chosen.
-func Resolve(storeFlag string) (Store, string, error) {
+// (.ledger.git beats .git within one directory).
+func Resolve(storeFlag string) (Resolution, error) {
 	if storeFlag != "" {
-		return storeFor(storeFlag), "", nil
+		return Resolution{Store: storeFor(storeFlag)}, nil
 	}
 	if d := os.Getenv("LEDGER_DIR"); d != "" {
-		return storeFor(d), "", nil
+		return Resolution{Store: storeFor(d)}, nil
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
-		return Store{}, "", err
+		return Resolution{}, err
 	}
 	for dir := cwd; ; dir = filepath.Dir(dir) {
 		lg := filepath.Join(dir, ".ledger.git")
@@ -54,16 +65,41 @@ func Resolve(storeFlag string) (Store, string, error) {
 		lgOK := exists(lg)
 		gtOK := exists(gt)
 		if lgOK && gtOK {
-			return Store{Repo: gitx.Repo{Dir: lg}}, fmt.Sprintf("using store %s (a git repo is also here)", lg), nil
+			return Resolution{Store: Store{Repo: gitx.Repo{Dir: lg}},
+				Note: fmt.Sprintf("using store %s (a git repo is also here)", lg)}, nil
 		}
 		if lgOK {
-			return Store{Repo: gitx.Repo{Dir: lg}}, "", nil
+			return Resolution{Store: Store{Repo: gitx.Repo{Dir: lg}}, Shadowed: shadowedAbove(dir, false)}, nil
 		}
 		if gtOK {
-			return Store{Repo: gitx.Repo{Dir: dir}}, "", nil
+			return Resolution{Store: Store{Repo: gitx.Repo{Dir: dir}}, Shadowed: shadowedAbove(dir, true)}, nil
 		}
 		if dir == filepath.Dir(dir) {
-			return Store{}, "", fmt.Errorf("no git repo or .ledger.git found from %s upward", cwd)
+			return Resolution{}, fmt.Errorf("no git repo or .ledger.git found from %s upward", cwd)
+		}
+	}
+}
+
+// shadowedAbove continues the ancestor walk above the directory Resolve
+// stopped at, looking for a store of the other kind: a bare .ledger.git
+// above a chosen repo (wantBare), or a repo above a chosen bare store.
+// Field failure it exists for: a misplaced `ledger init` put a bare store in
+// a sandbox root, every read inside the project repo resolved to the repo's
+// own empty store, and nothing ever named the other one. Same-kind ancestors
+// are skipped — a repo inside a repo is the ordinary nested-checkout case,
+// where nearest-wins is the intended answer, not a surprise. Stat calls only,
+// and it stops at the filesystem root, exactly where Resolve's own walk does.
+func shadowedAbove(dir string, wantBare bool) string {
+	for d := filepath.Dir(dir); ; d = filepath.Dir(d) {
+		if wantBare {
+			if lg := filepath.Join(d, ".ledger.git"); exists(lg) {
+				return lg
+			}
+		} else if exists(filepath.Join(d, ".git")) {
+			return d
+		}
+		if d == filepath.Dir(d) {
+			return ""
 		}
 	}
 }

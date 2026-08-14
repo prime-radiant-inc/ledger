@@ -97,7 +97,7 @@ func init() { register(newWatchCmd) }
 func newWatchCmd(c *Ctx) *cobra.Command {
 	var o watchOpts
 	cmd := &cobra.Command{Use: "watch", Short: "drain matching events, then block for more",
-		Args: cobra.NoArgs,
+		Args: noPositionals("watch"),
 		RunE: func(cc *cobra.Command, _ []string) error {
 			o.timeoutSet = cc.Flags().Changed("timeout")
 			return runWatch(c, o)

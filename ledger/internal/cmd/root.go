@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -47,14 +48,15 @@ func ExecuteArgs(args []string, stdout, stderr io.Writer) int {
 			// agent must be able to run it before any ledger exists.
 			return nil
 		}
-		st, note, err := store.Resolve(storeFlag)
+		res, err := store.Resolve(storeFlag)
 		if err != nil {
 			return out.Errf("unknown_ledger", "run inside a git repo, or `ledger init` in a plain directory", 4, "%s", err)
 		}
-		if note != "" && ctx.TTY {
-			io.WriteString(stderr, note+"\n")
+		if res.Note != "" && ctx.TTY {
+			io.WriteString(stderr, res.Note+"\n")
 		}
-		ctx.Store = st
+		ctx.Store = res.Store
+		ctx.Shadowed = res.Shadowed
 		return nil
 	}
 	for _, f := range registry {
@@ -88,6 +90,25 @@ func ExecuteArgs(args []string, stdout, stderr io.Writer) int {
 	}
 	out.WriteError(stderr, ctx.TTY, out.Errf("git_failed", "", 1, "%s", msg))
 	return 1
+}
+
+// noPositionals rejects an unexpected positional on a verb that addresses
+// its ledger by flag. Cobra's own NoArgs says `unknown command "csvstat" for
+// "ledger show"`, which the mapping above reads as an unknown *verb* and
+// hints at the verb list — but the caller typed a slug, carrying the
+// positional habit over from set/close (two eval agents did this
+// independently). The fix is the --ledger flag, so the hint is that command,
+// ready to paste. suggest names the verb to put in it: itself for the read
+// verbs, `show` for `ls`, which has no --ledger of its own.
+func noPositionals(suggest string) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return nil
+		}
+		return out.Errf("bad_usage",
+			fmt.Sprintf("did you mean: ledger %s --ledger %s?", suggest, args[0]), 4,
+			"ledger %s takes no positional arguments (got %q)", cmd.Name(), args[0])
+	}
 }
 
 // isCobraUsageErr recognizes cobra's own flag/arg-parsing error text — these

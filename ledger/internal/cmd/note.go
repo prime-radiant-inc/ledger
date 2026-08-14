@@ -18,7 +18,7 @@ func newNoteCmd(c *Ctx) *cobra.Command {
 	var kind, key, fromFile string
 	var o writeOpts
 	cmd := &cobra.Command{Use: "note", Short: "attach a free-text note to a ledger or item",
-		Args: cobra.NoArgs,
+		Args: noPositionals("note"),
 		RunE: func(cc *cobra.Command, _ []string) error {
 			return runNote(c, cc.InOrStdin(), kind, key, fromFile, o)
 		}}
