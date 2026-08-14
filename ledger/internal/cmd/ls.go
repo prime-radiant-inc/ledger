@@ -108,5 +108,6 @@ func lsLine(led *fold.Ledger, lastTS string, events int, idle bool, now time.Tim
 		state = fmt.Sprintf("open, idle %dd", days)
 	}
 	return fmt.Sprintf("%-20s %-44s %-20s last %-10s (%d events)",
-		led.Slug, truncateRunes(led.Meta.Scope, 44), state, out.Age(lastTS), events)
+		out.EscapeControls(led.Slug), out.EscapeControls(truncateRunes(led.Meta.Scope, 44)),
+		out.EscapeControls(state), out.Age(lastTS), events)
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"ledger/internal/gitx"
+	"ledger/internal/model"
 	"ledger/internal/store"
 )
 
@@ -26,6 +27,24 @@ func TestSincePagingAndReset(t *testing.T) {
 	_, se, code := run(t, dir, "since", "ffffffffff")
 	if code != 4 || !strings.Contains(se, "reset_required") {
 		t.Fatalf("%s", se)
+	}
+}
+
+// TestSinceResetHintDropsRedrainClause: the old hint told the caller a
+// cursorless `since` "re-drains from the start", which isn't true of
+// since (it has no state) and conflicts with quickstart rule 6's recovery
+// advice (status + tail, never a full re-drain).
+func TestSinceResetHintDropsRedrainClause(t *testing.T) {
+	dir := seed(t)
+	_, se, code := run(t, dir, "since", "ffffffffff")
+	if code != 4 || !strings.Contains(se, "reset_required") {
+		t.Fatalf("%s", se)
+	}
+	if strings.Contains(se, "re-drains from the start") {
+		t.Fatalf("hint must drop the re-drains clause: %s", se)
+	}
+	if !strings.Contains(se, "ledger tail -n 50 shows recent events") {
+		t.Fatalf("hint must point at tail -n 50: %s", se)
 	}
 }
 
@@ -114,5 +133,35 @@ func TestWatchValueFilter(t *testing.T) {
 		if !found {
 			t.Fatalf("filter leak: %v", e)
 		}
+	}
+}
+
+// TestFollowDocIncludesKindAndTextForNotes: --follow's per-event stream
+// previously reduced a note to {id,key,fields:null,by,ts} — indistinguishable
+// from a set with no fields. Note events must additionally carry kind and a
+// text preview, truncated to 200 runes; set events must carry neither.
+func TestFollowDocIncludesKindAndTextForNotes(t *testing.T) {
+	ev := model.Event{ID: "abc123", Type: "note", Kind: "gotcha", Key: "t1", Author: "x",
+		TS: "2026-08-13T00:00:00", Text: strings.Repeat("a", 250)}
+	doc := followDoc(ev)
+	if doc["kind"] != "gotcha" {
+		t.Fatalf("follow doc must carry kind for note events: %v", doc)
+	}
+	text, _ := doc["text"].(string)
+	if r := []rune(text); len(r) != 203 { // 200 runes + "..." marker
+		t.Fatalf("follow doc text must be truncated to 200 runes: %d runes: %q", len(r), text)
+	}
+	if !strings.HasSuffix(text, "...") {
+		t.Fatalf("truncated text must carry the ellipsis marker: %q", text)
+	}
+
+	setEv := model.Event{ID: "def456", Type: "set", Key: "t1", Author: "x", TS: "2026-08-13T00:00:00",
+		Fields: map[string]string{"status": "open"}}
+	setDoc := followDoc(setEv)
+	if _, ok := setDoc["kind"]; ok {
+		t.Fatalf("set events must not carry kind: %v", setDoc)
+	}
+	if _, ok := setDoc["text"]; ok {
+		t.Fatalf("set events must not carry text: %v", setDoc)
 	}
 }

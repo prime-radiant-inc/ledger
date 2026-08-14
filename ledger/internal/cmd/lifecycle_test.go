@@ -72,12 +72,71 @@ func TestVocabAddAndClosedRules(t *testing.T) {
 	}
 }
 
+// TestVocabAddOnFreeTextField: a nil-vocab (free-text) field takes any
+// value already — vocab add on it isn't merely "not a declared field" (the
+// unknown_field case for an undeclared field), it's a distinct, more
+// specific message: there's no vocabulary to extend.
+func TestVocabAddOnFreeTextField(t *testing.T) {
+	dir := initRepo(t)
+	run(t, dir, "create", "demo", "--scope", "x", "--field", "notes=")
+	_, se, code := run(t, dir, "vocab", "add", "demo", "notes", "whatever")
+	if code != 4 || !strings.Contains(se, "unknown_field") || !strings.Contains(se, "is free-text and needs no vocabulary") {
+		t.Fatalf("%d %s", code, se)
+	}
+}
+
 func TestCloseSupersededNeedsSuccessor(t *testing.T) {
 	dir := initRepo(t)
 	run(t, dir, "create", "old", "--scope", "x")
 	_, se, code := run(t, dir, "close", "old", "--as-state", "superseded")
 	if code != 4 || !strings.Contains(se, "needs_successor") {
 		t.Fatalf("%d %s", code, se)
+	}
+}
+
+// TestCloseSupersededByRequiresSupersededState: --superseded-by only makes
+// sense paired with --as-state superseded; any other state carrying it is
+// a usage mistake, not a silently-ignored flag.
+func TestCloseSupersededByRequiresSupersededState(t *testing.T) {
+	dir := initRepo(t)
+	run(t, dir, "create", "demo", "--scope", "x")
+	_, se, code := run(t, dir, "close", "demo", "--as-state", "abandoned", "--superseded-by", "ghost")
+	if code != 4 || !strings.Contains(se, "bad_value") || !strings.Contains(se, "only superseded closes carry a successor") {
+		t.Fatalf("%d %s", code, se)
+	}
+	// must not have mutated anything: the ledger stays open.
+	so, _, _ := run(t, dir, "ls", "--all")
+	rows := mustJSON(t, so)["ledgers"].([]any)
+	if rows[0].(map[string]any)["state"] != "open" {
+		t.Fatalf("rejected close must not mutate state: %s", so)
+	}
+}
+
+// TestCloseSupersededSuccessorNotPresentLocally: closing as superseded with
+// a successor slug that doesn't exist in this store yet must still succeed
+// (the successor may be inbound via sync) but the payload and TTY output
+// must carry a warning so the caller notices.
+func TestCloseSupersededSuccessorNotPresentLocally(t *testing.T) {
+	dir := initRepo(t)
+	run(t, dir, "create", "old", "--scope", "x")
+	so, _, code := run(t, dir, "close", "old", "--as-state", "superseded", "--superseded-by", "ghost")
+	if code != 0 {
+		t.Fatal(so)
+	}
+	doc := mustJSON(t, so)
+	warning, _ := doc["warning"].(string)
+	if !strings.Contains(warning, "ghost") || !strings.Contains(warning, "not present locally") {
+		t.Fatalf("expected a not-present-locally warning: %v", doc)
+	}
+
+	var buf strings.Builder
+	c := &Ctx{Store: store.Store{Repo: gitx.Repo{Dir: dir}}, TTY: true, Stdout: &buf, Stderr: &buf}
+	run(t, dir, "create", "old2", "--scope", "x")
+	if err := runClose(c, "old2", "superseded", "ghost2", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "warning") || !strings.Contains(buf.String(), "ghost2") {
+		t.Fatalf("TTY output must carry the warning line: %q", buf.String())
 	}
 }
 

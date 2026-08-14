@@ -98,7 +98,9 @@ func spineLine(r row) string {
 	if r.Note != "" {
 		note = `  "` + out.EscapeControls(r.Note) + `"`
 	}
-	return fmt.Sprintf("  %-16s %s=%-12s %-12s %-16s %s%s", r.Key, r.Field, r.Value, r.Branch, r.By, evd, note)
+	return fmt.Sprintf("  %-16s %s=%-12s %-12s %-16s %s%s",
+		out.EscapeControls(r.Key), out.EscapeControls(r.Field), out.EscapeControls(r.Value),
+		out.EscapeControls(r.Branch), out.EscapeControls(r.By), evd, note)
 }
 
 // noteDoc is a note's JSON shape wherever one appears in a read verb's
@@ -127,9 +129,9 @@ func mandatesVia(kind string, latest bool) bool {
 
 func provenance(n model.Event, committers map[string]string, latest bool) string {
 	if mandatesVia(n.Kind, latest) {
-		return "by " + n.Author + " (via " + committers[n.ID] + ")"
+		return "by " + out.EscapeControls(n.Author) + " (via " + out.EscapeControls(committers[n.ID]) + ")"
 	}
-	return "by " + n.Author
+	return "by " + out.EscapeControls(n.Author)
 }
 
 // noteLines renders notes for a TTY: an identity line (age under --latest,
@@ -143,7 +145,7 @@ func noteLines(notes []model.Event, committers map[string]string, latest bool) [
 		if latest {
 			when = out.Age(n.TS)
 		}
-		head := when + " " + provenance(n, committers, latest) + "  [" + n.ID + "] " + n.Kind
+		head := when + " " + provenance(n, committers, latest) + "  [" + n.ID + "] " + out.EscapeControls(n.Kind)
 		if n.Key != "" {
 			head += " (" + n.Key + ")"
 		}
@@ -175,7 +177,7 @@ func eventsJSON(evs []model.Event) []map[string]any {
 }
 
 func eventLine(ev model.Event) string {
-	return "[" + ev.ID + "] " + ev.TS + " " + ev.Type + " " + ev.Author
+	return "[" + ev.ID + "] " + ev.TS + " " + ev.Type + " " + out.EscapeControls(ev.Author)
 }
 
 // nonSyncEvents drops sync sentinels — invisible to fold's schema/spine/state
@@ -206,7 +208,15 @@ func truncateRunes(s string, n int) string {
 // kind, and a truncated escaped first line — matching the JSON recent_notes
 // shape field-for-field, never the full body noteLines prints.
 func noteSummaryLine(n model.Event, committers map[string]string) string {
-	line := out.Age(n.TS) + " " + provenance(n, committers, false) + "  [" + n.ID + "] " + n.Kind
+	return noteSummaryLineAt(out.Age(n.TS), n, committers)
+}
+
+// noteSummaryLineAt is noteSummaryLine's render with the leading identity
+// timestamp taken explicitly rather than derived from Age(n.TS) — Age is
+// relative to wall-clock now, which render's byte-identical-on-rerun
+// contract can't tolerate; render passes the event's own absolute ts instead.
+func noteSummaryLineAt(when string, n model.Event, committers map[string]string) string {
+	line := when + " " + provenance(n, committers, false) + "  [" + n.ID + "] " + out.EscapeControls(n.Kind)
 	if n.Key != "" {
 		line += " (" + n.Key + ")"
 	}
@@ -273,7 +283,7 @@ func runStatus(c *Ctx, key, field string, byBranch bool, ledgerFlag string) erro
 			rows = spineRows(led, field)
 		}
 		payload := map[string]any{"ledger": led.Slug, "scope": led.Meta.Scope, "state": led.State, "rows": rows}
-		lines := make([]string, 0, len(rows)+1)
+		lines := addRedirect(c, led, payload)
 		lines = append(lines, fmt.Sprintf("%s  scope=%s  state=%s", led.Slug, led.Meta.Scope, led.State))
 		for _, r := range rows {
 			lines = append(lines, spineLine(r))
@@ -312,7 +322,8 @@ func runStatus(c *Ctx, key, field string, byBranch bool, ledgerFlag string) erro
 	payload := map[string]any{"ledger": led.Slug, "key": key, "values": values,
 		"notes": notes, "history": eventsJSON(history)}
 
-	lines := []string{key + " on " + led.Slug}
+	lines := addRedirect(c, led, payload)
+	lines = append(lines, key+" on "+led.Slug)
 	for _, f := range fieldNames {
 		lines = append(lines, spineLine(values[f]))
 	}
@@ -364,14 +375,7 @@ func runShow(c *Ctx, ledgerFlag string) error {
 		"events": eventCount, "head": led.Head(),
 	}
 
-	var lines []string
-	if led.SupersededBy != "" {
-		payload["superseded_by"] = led.SupersededBy
-		if len(led.ExtraLinks) > 0 {
-			payload["extra_links"] = led.ExtraLinks
-		}
-		lines = append(lines, redirectLine(c, led))
-	}
+	lines := addRedirect(c, led, payload)
 	lines = append(lines, fmt.Sprintf("%s  scope=%s  base=%s  state=%s  events=%d  head=%s",
 		led.Slug, led.Meta.Scope, led.Meta.Base, led.State, eventCount, led.Head()))
 	for _, r := range rows {
@@ -382,6 +386,22 @@ func runShow(c *Ctx, ledgerFlag string) error {
 	}
 	outEmit(c, payload, lines)
 	return nil
+}
+
+// addRedirect is the superseded-read rule shared by every read verb: when a
+// ledger carries a superseded_by link, its payload gains that link (plus any
+// extra_links from dueling successors) and its TTY render leads with the
+// redirect line — a reader must never have to guess it's looking at a
+// forwarding address.
+func addRedirect(c *Ctx, led *fold.Ledger, payload map[string]any) []string {
+	if led.SupersededBy == "" {
+		return nil
+	}
+	payload["superseded_by"] = led.SupersededBy
+	if len(led.ExtraLinks) > 0 {
+		payload["extra_links"] = led.ExtraLinks
+	}
+	return []string{redirectLine(c, led)}
 }
 
 // redirectLine is show's lead line on a superseded ledger: the redirect, or
@@ -446,7 +466,10 @@ func runNotes(c *Ctx, kind, key, id string, latest bool, limit int, ledgerFlag s
 	for _, note := range matched {
 		docs = append(docs, noteDocOf(note, committers))
 	}
-	outEmit(c, map[string]any{"ledger": led.Slug, "notes": docs}, noteLines(matched, committers, latest))
+	payload := map[string]any{"ledger": led.Slug, "notes": docs}
+	lines := addRedirect(c, led, payload)
+	lines = append(lines, noteLines(matched, committers, latest)...)
+	outEmit(c, payload, lines)
 	return nil
 }
 
@@ -473,10 +496,11 @@ func runTail(c *Ctx, limit int, ledgerFlag string) error {
 	if limit > 0 && len(evs) > limit {
 		evs = evs[len(evs)-limit:]
 	}
-	lines := make([]string, 0, len(evs))
+	payload := map[string]any{"ledger": led.Slug, "events": eventsJSON(evs), "cursor": led.Head()}
+	lines := addRedirect(c, led, payload)
 	for _, ev := range evs {
 		lines = append(lines, eventLine(ev))
 	}
-	outEmit(c, map[string]any{"ledger": led.Slug, "events": eventsJSON(evs), "cursor": led.Head()}, lines)
+	outEmit(c, payload, lines)
 	return nil
 }

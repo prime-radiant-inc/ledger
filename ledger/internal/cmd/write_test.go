@@ -94,6 +94,33 @@ func TestNoteBodySources(t *testing.T) {
 	}
 }
 
+// TestNoteIdempotencyKeyDedupe mirrors set's idempotency semantics for
+// note: a retry (same author, same kind, same --key, same idempotency key)
+// dedupes against the original; a different kind with the same key does not.
+func TestNoteIdempotencyKeyDedupe(t *testing.T) {
+	dir := setup(t)
+	so1, _, code := run(t, dir, "note", "-k", "gotcha", "--key", "t1", "-m", "trap", "--as", "a", "--idempotency-key", "n1")
+	if code != 0 {
+		t.Fatal(so1)
+	}
+	so2, _, code := run(t, dir, "note", "-k", "gotcha", "--key", "t1", "-m", "trap retry", "--as", "a", "--idempotency-key", "n1")
+	if code != 0 {
+		t.Fatal(so2)
+	}
+	d1, d2 := mustJSON(t, so1), mustJSON(t, so2)
+	if d2["deduped"] != true || d2["id"] != d1["id"] {
+		t.Fatalf("same author+kind+key must dedupe: %v", d2)
+	}
+
+	so3, _, code := run(t, dir, "note", "-k", "handoff", "--key", "t1", "-m", "different kind", "--as", "a", "--idempotency-key", "n1")
+	if code != 0 {
+		t.Fatal(so3)
+	}
+	if mustJSON(t, so3)["deduped"] == true {
+		t.Fatal("different kind, same --key, must NOT dedupe")
+	}
+}
+
 func TestNoteFromFileMissing(t *testing.T) {
 	dir := setup(t)
 	_, se, code := run(t, dir, "note", "-k", "handoff", "--from-file", "/no/such/path-ever")

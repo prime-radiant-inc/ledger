@@ -58,3 +58,15 @@ func TestNoOpenLedgerError(t *testing.T) {
 		t.Fatalf("no_open_ledger with create hint: %d %q", code, se)
 	}
 }
+
+// TestCobraUsageErrorsMapToBadUsage: a genuine cobra flag-parse error (an
+// unknown flag, here) must not fall into the generic git_failed bucket
+// (exit 1, empty hint); it's classified as bad_usage, exit 4, with a hint
+// pointing at --help.
+func TestCobraUsageErrorsMapToBadUsage(t *testing.T) {
+	dir := initRepo(t)
+	_, se, code := run(t, dir, "note", "--totally-bogus-flag", "x", "-m", "hi")
+	if code != 4 || !strings.Contains(se, "bad_usage") || !strings.Contains(se, "--help shows usage") {
+		t.Fatalf("unknown flag must map to bad_usage exit 4: %d %q", code, se)
+	}
+}

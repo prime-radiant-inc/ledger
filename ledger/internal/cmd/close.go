@@ -39,6 +39,10 @@ func runClose(c *Ctx, slug, asState, supersededBy, asFlag, mFlag string) error {
 		return out.Errf("needs_successor", "add --superseded-by <slug> (the redirect is the load-bearing pointer)",
 			4, "closing as superseded requires the successor link")
 	}
+	if asState != "superseded" && supersededBy != "" {
+		return out.Errf("bad_value", "drop --superseded-by, or close with --as-state superseded",
+			4, "only superseded closes carry a successor")
+	}
 	led, err := c.Load(slug)
 	if err != nil {
 		return err
@@ -62,8 +66,17 @@ func runClose(c *Ctx, slug, asState, supersededBy, asFlag, mFlag string) error {
 		if err != nil {
 			return mapStoreErr(err, slug)
 		}
-		outEmit(c, map[string]any{"close_id": ids[0], "id": ids[1], "ledger": slug, "closed": asState},
-			[]string{"[" + ids[1] + "] closed " + slug + " as " + asState + " -> " + supersededBy})
+		payload := map[string]any{"close_id": ids[0], "id": ids[1], "ledger": slug, "closed": asState}
+		lines := []string{"[" + ids[1] + "] closed " + slug + " as " + asState + " -> " + supersededBy}
+		// The successor slug is only a string at this point — nothing requires
+		// it to already exist locally (it may still be inbound via sync). That's
+		// allowed, but silent: warn rather than block the close.
+		if _, hErr := c.Store.HeadID(supersededBy); hErr != nil {
+			warning := "successor '" + supersededBy + "' not present locally"
+			payload["warning"] = warning
+			lines = append(lines, "warning: "+warning)
+		}
+		outEmit(c, payload, lines)
 		return nil
 	}
 

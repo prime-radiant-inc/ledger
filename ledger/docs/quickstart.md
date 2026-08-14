@@ -5,8 +5,8 @@ per-verb mechanics live in `ledger <verb> --help`; this is the doctrine
 `--help` doesn't teach. `ledger quickstart --orchestrator` adds the
 fleet-dispatch section.
 
-**All 15 verbs** (top two rows: slug positional or none; bottom three:
-`--ledger <slug>`, ambient when exactly one ledger is open):
+**All 15 verbs** (top two rows: slug positional or none; bottom three take
+`--ledger <slug>`, ambient when one ledger's open — except `ls`, which takes none):
 
 | | | |
 |---|---|---|
@@ -60,7 +60,7 @@ fleet-dispatch section.
 11. **Slugs are never reused; there's no delete.** Practice CLI mechanics
     on a disposable scratch ledger, never one real agents depend on.
 12. **Close what you abandon.** `close <slug> --as-state abandoned` is
-    one call — nobody closing it is the graveyard `ls`'s idle marks.
+    one call; leave it open and forgotten and `ls`'s idle mark catches it.
 13. **Never alias the invocation into an unquoted shell variable** —
     `cmd="ledger set ..."; $cmd` re-splits on every space. Call `ledger`
     directly, every time.

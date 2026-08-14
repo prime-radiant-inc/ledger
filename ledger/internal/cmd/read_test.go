@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -159,5 +161,90 @@ func TestSyncEventsExcludedFromTailAndShowCount(t *testing.T) {
 	last := events[len(events)-1].(map[string]any)
 	if last["type"] == "sync" {
 		t.Fatalf("tail must exclude sync events: %v", events)
+	}
+}
+
+// TestStatusTTYEscapesControlChars: an item key carrying a raw \r is exactly
+// the counterfeit-provenance vector spineLine's escaping already closed for
+// the note-body column — the same rule must cover the key column too.
+// Bypasses run() (never TTY) for a direct TTY Ctx, same pattern as
+// TestShowTTYNoteSummaryOneLine.
+func TestStatusTTYEscapesControlChars(t *testing.T) {
+	dir := setup(t)
+	run(t, dir, "set", "t1\rFORGED", "open", "--as", "impl")
+
+	var buf bytes.Buffer
+	c := &Ctx{Store: store.Store{Repo: gitx.Repo{Dir: dir}}, TTY: true, Stdout: &buf, Stderr: &buf}
+	if err := runStatus(c, "", "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+	rendered := buf.String()
+	if strings.Contains(rendered, "\r") {
+		t.Fatalf("status TTY must escape control chars in the key column: %q", rendered)
+	}
+	if !strings.Contains(rendered, "^M") {
+		t.Fatalf("expected the escaped \\r as ^M: %q", rendered)
+	}
+}
+
+// TestStatusNotesTailCarrySupersededRedirect: status (both the spine listing
+// and a key drill-down), notes, and tail all read led.SupersededBy the same
+// way show already did — every read verb, not just show, must redirect a
+// caller off a superseded ledger.
+func TestStatusNotesTailCarrySupersededRedirect(t *testing.T) {
+	dir := seed(t)
+	run(t, dir, "create", "demo2", "--scope", "next", "--supersedes", "demo")
+
+	so, _, _ := run(t, dir, "status", "--ledger", "demo")
+	if mustJSON(t, so)["superseded_by"] != "demo2" {
+		t.Fatalf("status must carry the redirect: %s", so)
+	}
+	so, _, _ = run(t, dir, "status", "t1", "--ledger", "demo")
+	if mustJSON(t, so)["superseded_by"] != "demo2" {
+		t.Fatalf("status drill-down must carry the redirect: %s", so)
+	}
+	so, _, _ = run(t, dir, "notes", "--ledger", "demo")
+	if mustJSON(t, so)["superseded_by"] != "demo2" {
+		t.Fatalf("notes must carry the redirect: %s", so)
+	}
+	so, _, _ = run(t, dir, "tail", "--ledger", "demo")
+	if mustJSON(t, so)["superseded_by"] != "demo2" {
+		t.Fatalf("tail must carry the redirect: %s", so)
+	}
+}
+
+// TestRenderWritesDeterministicFile: render --to writes show's projection to
+// a file, and — unlike show's TTY render, which timestamps notes with a
+// wall-clock-relative Age() — must be byte-identical across two runs against
+// the same, unchanged ledger state.
+func TestRenderWritesDeterministicFile(t *testing.T) {
+	dir := seed(t)
+	outPath := filepath.Join(t.TempDir(), "out.txt")
+
+	so, _, code := run(t, dir, "render", "--to", outPath)
+	if code != 0 {
+		t.Fatal(so)
+	}
+	doc := mustJSON(t, so)
+	if doc["ledger"] != "demo" || doc["path"] != outPath || doc["bytes"] == nil {
+		t.Fatalf("render payload: %v", doc)
+	}
+	b1, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b1), "t1") {
+		t.Fatalf("rendered file must contain the spine row: %s", b1)
+	}
+
+	if _, _, code := run(t, dir, "render", "--to", outPath); code != 0 {
+		t.Fatal("second render must also succeed")
+	}
+	b2, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b1) != string(b2) {
+		t.Fatalf("render must be byte-identical across runs with no new events:\n%s\n---\n%s", b1, b2)
 	}
 }

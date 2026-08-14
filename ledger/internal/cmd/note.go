@@ -29,6 +29,7 @@ func newNoteCmd(c *Ctx) *cobra.Command {
 	cmd.Flags().StringVar(&o.as, "as", "", "author identity")
 	cmd.Flags().StringVarP(&o.m, "message", "m", "", "note body (short form)")
 	cmd.Flags().StringArrayVar(&o.evidence, "evidence", nil, "TYPE:REF (e.g. commit:abc123); repeatable")
+	cmd.Flags().StringVar(&o.idemKey, "idempotency-key", "", "dedupe key scoped to (author, kind, key)")
 	return cmd
 }
 
@@ -64,8 +65,21 @@ func runNote(c *Ctx, stdin io.Reader, kind, key, fromFile string, o writeOpts) e
 		return err
 	}
 	author := model.ResolveAuthor(o.as)
+	if o.idemKey != "" {
+		// Mirrors set's semantics (author-scoped, item-key-scoped): a note
+		// dedupes against a prior note by the same author, of the same kind,
+		// about the same (possibly absent) item key, carrying the same K.
+		for _, ev := range led.Events {
+			if ev.Type == "note" && ev.IdempotencyKey == o.idemKey && ev.Author == author &&
+				ev.Kind == kind && ev.Key == key {
+				outEmit(c, map[string]any{"id": ev.ID, "ledger": led.Slug, "deduped": true, "by": ev.Author},
+					[]string{"deduped against " + ev.ID})
+				return nil
+			}
+		}
+	}
 	ev := model.NewEvent("note", author, c.Store.Repo)
-	ev.Kind, ev.Key, ev.Text, ev.Evidence = kind, key, body, o.evidence
+	ev.Kind, ev.Key, ev.Text, ev.Evidence, ev.IdempotencyKey = kind, key, body, o.evidence, o.idemKey
 	id, err := c.Store.Append(led.Slug, ev, nil, store.ExpectPresent)
 	if err != nil {
 		return mapStoreErr(err, led.Slug)

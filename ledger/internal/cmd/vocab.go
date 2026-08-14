@@ -35,9 +35,14 @@ func runVocabAdd(c *Ctx, slug, field, value, asFlag, mFlag string) error {
 		return out.Errf("closed", "closed ledgers refuse new vocabulary — ledger create <new-slug> --scope <ref> for further work", 4,
 			"'%s' is %s and refuses vocab changes", led.Slug, led.State)
 	}
-	if _, declared := led.Schema[field]; !declared {
+	vocab, declared := led.Schema[field]
+	if !declared {
 		return out.Errf("unknown_field", "declared fields: "+strings.Join(led.Meta.FieldOrder, ", "), 4,
 			"'%s' is not a declared field on '%s'", field, led.Slug)
+	}
+	if vocab == nil {
+		return out.Errf("unknown_field", "this field takes any value — there's nothing to add", 4,
+			"'%s' is free-text and needs no vocabulary", field)
 	}
 	author := model.ResolveAuthor(asFlag)
 	ev := model.NewEvent("vocab", author, c.Store.Repo)

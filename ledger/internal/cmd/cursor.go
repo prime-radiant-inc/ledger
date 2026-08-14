@@ -59,7 +59,7 @@ func runSince(c *Ctx, cursor string, limit int, ledgerFlag string) error {
 		idx = indexOf(led.Events, cursor)
 		if idx < 0 {
 			return out.Errf("reset_required",
-				"ledger status refolds current state; ledger since (no cursor) re-drains from the start", 4,
+				"ledger status refolds current state; ledger tail -n 50 shows recent events", 4,
 				"cursor '%s' is not on ledger '%s'", cursor, led.Slug)
 		}
 	}
@@ -263,6 +263,13 @@ func watchLines(hits []model.Event) []string {
 
 // followDoc is --follow's per-line JSON shape: enough to act on an event as
 // it lands, without the full envelope a batched watch/since payload carries.
+// Note events additionally carry kind and a body preview (200 runes) — a
+// bare {key,fields:null} tells a streaming consumer nothing about a note.
 func followDoc(ev model.Event) map[string]any {
-	return map[string]any{"id": ev.ID, "key": ev.Key, "fields": ev.Fields, "by": ev.Author, "ts": ev.TS}
+	doc := map[string]any{"id": ev.ID, "key": ev.Key, "fields": ev.Fields, "by": ev.Author, "ts": ev.TS}
+	if ev.Type == "note" {
+		doc["kind"] = ev.Kind
+		doc["text"] = truncateRunes(ev.Text, 200)
+	}
+	return doc
 }

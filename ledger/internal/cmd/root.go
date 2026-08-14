@@ -82,6 +82,26 @@ func ExecuteArgs(args []string, stdout, stderr io.Writer) int {
 		out.WriteError(stderr, ctx.TTY, out.Errf("unknown_verb", "run `ledger --help` for the verb list", 4, "%s", msg))
 		return 4
 	}
+	if isCobraUsageErr(msg) {
+		out.WriteError(stderr, ctx.TTY, out.Errf("bad_usage", "ledger <verb> --help shows usage", 4, "%s", msg))
+		return 4
+	}
 	out.WriteError(stderr, ctx.TTY, out.Errf("git_failed", "", 1, "%s", msg))
 	return 1
+}
+
+// isCobraUsageErr recognizes cobra's own flag/arg-parsing error text — these
+// are never a git or store failure, so they must not fall into the generic
+// git_failed bucket (exit 1, no hint). The substrings are cobra's own
+// wording; there is no typed error to switch on here.
+func isCobraUsageErr(msg string) bool {
+	for _, pat := range []string{
+		"unknown flag", "unknown shorthand flag", "invalid argument",
+		"requires at least", "accepts at most", "required flag",
+	} {
+		if strings.Contains(msg, pat) {
+			return true
+		}
+	}
+	return false
 }
