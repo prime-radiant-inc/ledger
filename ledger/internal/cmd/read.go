@@ -191,12 +191,13 @@ func nonSyncEvents(evs []model.Event) []model.Event {
 	return out
 }
 
-// truncate90 caps a rendered first line at 90 runes — show's recent-notes
-// section is a summary, not the body; full text stays a `notes --id` away.
-func truncate90(s string) string {
+// truncateRunes caps s at n runes, appending "..." when trimmed — shared by
+// show's recent-notes first line (90: a summary, not the body; full text
+// stays a `notes --id` away) and ls's scope column (44).
+func truncateRunes(s string, n int) string {
 	r := []rune(s)
-	if len(r) > 90 {
-		return string(r[:90]) + "..."
+	if len(r) > n {
+		return string(r[:n]) + "..."
 	}
 	return s
 }
@@ -209,7 +210,7 @@ func noteSummaryLine(n model.Event, committers map[string]string) string {
 	if n.Key != "" {
 		line += " (" + n.Key + ")"
 	}
-	return line + `  "` + truncate90(out.EscapeControls(firstLine(n.Text))) + `"`
+	return line + `  "` + truncateRunes(out.EscapeControls(firstLine(n.Text)), 90) + `"`
 }
 
 func knownKeys(led *fold.Ledger) []string {
