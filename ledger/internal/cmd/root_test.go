@@ -69,13 +69,19 @@ func TestNoOpenLedgerError(t *testing.T) {
 // usage error whose fix is the --ledger flag, named in the hint.
 func TestPositionalSlugOnReadVerbSuggestsLedgerFlag(t *testing.T) {
 	dir := setup(t) // ledger "demo" exists here
-	for _, verb := range []string{"show", "tail", "notes", "watch", "render"} {
+	// note rides along: it addresses its ledger by flag exactly like the
+	// reads, and it carries no body flag here — the positional must be
+	// caught by the args check before any body validation runs.
+	for _, verb := range []string{"show", "tail", "notes", "watch", "render", "note"} {
 		_, se, code := run(t, dir, verb, "demo")
 		if code != 4 || !strings.Contains(se, "bad_usage") {
 			t.Fatalf("%s <slug> must be bad_usage exit 4: %d %q", verb, code, se)
 		}
 		if !strings.Contains(se, "did you mean: ledger "+verb+" --ledger demo?") {
 			t.Fatalf("%s <slug> hint must name --ledger: %q", verb, se)
+		}
+		if strings.Contains(se, "empty_body") || strings.Contains(se, "conflicting_body") {
+			t.Fatalf("%s <slug> must fail the args check, not body validation: %q", verb, se)
 		}
 	}
 	// ls has no --ledger of its own; its fix is the verb that does.
