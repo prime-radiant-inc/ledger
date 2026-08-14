@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
 	"ledger/internal/model"
@@ -26,6 +28,13 @@ func newCloseCmd(c *Ctx) *cobra.Command {
 }
 
 func runClose(c *Ctx, slug, asState, supersededBy, asFlag, mFlag string) error {
+	switch asState {
+	case "shipped", "abandoned", "superseded":
+	default:
+		return out.Errf("bad_value",
+			fmt.Sprintf("valid --as-state values: shipped, abandoned, superseded — e.g. ledger close %s --as-state abandoned", slug),
+			4, "'%s' is not a valid close state", asState)
+	}
 	if asState == "superseded" && supersededBy == "" {
 		return out.Errf("needs_successor", "add --superseded-by <slug> (the redirect is the load-bearing pointer)",
 			4, "closing as superseded requires the successor link")
@@ -39,25 +48,30 @@ func runClose(c *Ctx, slug, asState, supersededBy, asFlag, mFlag string) error {
 			"'%s' is already %s", led.Slug, led.State)
 	}
 	author := model.ResolveAuthor(asFlag)
-	ev := model.NewEvent("lifecycle", author, c.Store.Repo)
-	ev.LifecycleKind = "close"
-	ev.Reason = asState
-	ev.Text = mFlag
-	if supersededBy != "" {
-		ev.Successor = supersededBy
-	}
-	id, err := c.Store.Append(slug, ev, nil, store.ExpectPresent)
-	if err != nil {
-		return mapStoreErr(err, slug)
-	}
+
 	if asState == "superseded" {
+		// The close and the successor link must never be observable apart —
+		// a reader between the two writes would see a closed ledger with no
+		// redirect. Land both as one parent-chained pair under a single CAS.
+		closeEv := model.NewEvent("lifecycle", author, c.Store.Repo)
+		closeEv.LifecycleKind, closeEv.Reason, closeEv.Text, closeEv.Successor = "close", asState, mFlag, supersededBy
 		linkEv := model.NewEvent("lifecycle", author, c.Store.Repo)
-		linkEv.LifecycleKind = "superseded_by"
-		linkEv.Successor = supersededBy
-		id, err = c.Store.Append(slug, linkEv, nil, store.ExpectPresent)
+		linkEv.LifecycleKind, linkEv.Successor = "superseded_by", supersededBy
+
+		ids, err := c.Store.AppendChain(slug, []model.Event{closeEv, linkEv}, store.ExpectPresent)
 		if err != nil {
 			return mapStoreErr(err, slug)
 		}
+		outEmit(c, map[string]any{"close_id": ids[0], "id": ids[1], "ledger": slug, "closed": asState},
+			[]string{"[" + ids[1] + "] closed " + slug + " as " + asState + " -> " + supersededBy})
+		return nil
+	}
+
+	ev := model.NewEvent("lifecycle", author, c.Store.Repo)
+	ev.LifecycleKind, ev.Reason, ev.Text = "close", asState, mFlag
+	id, err := c.Store.Append(slug, ev, nil, store.ExpectPresent)
+	if err != nil {
+		return mapStoreErr(err, slug)
 	}
 	outEmit(c, map[string]any{"id": id, "ledger": slug, "closed": asState},
 		[]string{"[" + id + "] closed " + slug + " as " + asState})

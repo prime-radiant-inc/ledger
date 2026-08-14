@@ -4,6 +4,11 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"ledger/internal/fold"
+	"ledger/internal/gitx"
+	"ledger/internal/model"
+	"ledger/internal/store"
 )
 
 func mustJSON(t *testing.T, s string) map[string]any {
@@ -76,6 +81,39 @@ func TestCloseSupersededNeedsSuccessor(t *testing.T) {
 	}
 }
 
+func TestCloseBadState(t *testing.T) {
+	dir := initRepo(t)
+	run(t, dir, "create", "demo", "--scope", "x")
+	_, se, code := run(t, dir, "close", "demo", "--as-state", "banana")
+	if code != 4 || !strings.Contains(se, "bad_value") {
+		t.Fatalf("%d %s", code, se)
+	}
+	// the bad value must not have written anything — the ledger stays open
+	so, _, _ := run(t, dir, "ls", "--all")
+	rows := mustJSON(t, so)["ledgers"].([]any)
+	if len(rows) != 1 || rows[0].(map[string]any)["state"] != "open" {
+		t.Fatalf("bad --as-state must not mutate close state: %s", so)
+	}
+}
+
+func TestCloseSupersededAtomic(t *testing.T) {
+	dir := initRepo(t)
+	run(t, dir, "create", "old", "--scope", "x")
+	run(t, dir, "create", "new", "--scope", "x")
+	so, _, code := run(t, dir, "close", "old", "--as-state", "superseded", "--superseded-by", "new")
+	if code != 0 {
+		t.Fatal(so)
+	}
+	doc := mustJSON(t, so)
+	if doc["id"] == nil || doc["close_id"] == nil {
+		t.Fatalf("close+link payload must carry both ids (link event primary): %v", doc)
+	}
+	so, _, _ = run(t, dir, "ls", "--all")
+	if !strings.Contains(so, "closed:superseded") {
+		t.Fatalf("old must be closed:superseded: %s", so)
+	}
+}
+
 func TestCreateSupersedes(t *testing.T) {
 	dir := initRepo(t)
 	run(t, dir, "create", "old", "--scope", "x")
@@ -98,5 +136,57 @@ func TestCreateSupersedesAlreadyClosed(t *testing.T) {
 	_, _, code := run(t, dir, "create", "recovery", "--scope", "x", "--supersedes", "old")
 	if code != 0 {
 		t.Fatal("supersede against an already-closed predecessor is the wrongful-close recovery and must work")
+	}
+}
+
+// TestCreateSupersedesSuccessorSlugTaken: the successor slug already exists
+// as an unrelated ledger (its meta.json doesn't name this predecessor) — a
+// genuine collision, not a crash half-state, so it must fail exactly like
+// plain create's slug_exists.
+func TestCreateSupersedesSuccessorSlugTaken(t *testing.T) {
+	dir := initRepo(t)
+	run(t, dir, "create", "old", "--scope", "x")
+	run(t, dir, "create", "taken", "--scope", "x") // pre-existing, unrelated ledger
+	_, se, code := run(t, dir, "create", "taken", "--scope", "x", "--supersedes", "old")
+	if code != 4 || !strings.Contains(se, "slug_exists") {
+		t.Fatalf("successor slug already taken by an unrelated ledger: %d %s", code, se)
+	}
+}
+
+// TestCreateSupersedesCompletesDanglingLink manually stages the exact
+// crash half-state createSuperseding must repair: the successor ref exists
+// and its meta.json names the predecessor via Supersedes, but the
+// predecessor never got its superseded_by link. Retrying `create
+// --supersedes` must complete only the missing link and succeed.
+func TestCreateSupersedesCompletesDanglingLink(t *testing.T) {
+	dir := initRepo(t)
+	run(t, dir, "create", "old", "--scope", "x")
+
+	s := store.Store{Repo: gitx.Repo{Dir: dir}}
+	meta := model.Meta{Slug: "new", Scope: "x", Supersedes: "old",
+		Fields:     map[string][]string{"status": {"open", "done", "failed", "blocked"}},
+		FieldOrder: []string{"status"}}
+	mb, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Append("new", model.Event{Type: "create", Author: "x"},
+		map[string]string{"meta.json": string(mb)}, store.ExpectAbsent); err != nil {
+		t.Fatal(err)
+	}
+
+	so, _, code := run(t, dir, "create", "new", "--scope", "x", "--supersedes", "old")
+	if code != 0 {
+		t.Fatal(so)
+	}
+	// recovery appends only the missing link event (per spec: it does not
+	// synthesize a close event that never happened) — assert the redirect
+	// directly via fold rather than through ls's state column.
+	evs, m, err := s.Events("old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if led := fold.Fold("old", evs, m); led.SupersededBy != "new" {
+		t.Fatalf("recovery must complete the predecessor's link: %+v", led)
 	}
 }

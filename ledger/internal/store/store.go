@@ -186,6 +186,50 @@ func (s Store) catBatch(ids []string) (contents []string, present []bool) {
 }
 
 func (s Store) Append(slug string, ev model.Event, extra map[string]string, expect Expect) (string, error) {
+	tip, err := s.casLoop(slug, expect, func(parent string) (string, error) {
+		return s.BuildCommit(slug, parent, ev, extra)
+	})
+	if err != nil {
+		return "", err
+	}
+	return tip[:10], nil
+}
+
+// AppendChain lands N events as one parent-chained sequence of commits under
+// a single ref CAS: either the whole chain lands or none of it does. Used
+// where multiple events must be atomic together on one ref — e.g. `close
+// --as-state superseded`'s close+link pair, which must never be observable
+// mid-write as "closed but not yet linked". Returned ids are in event order.
+func (s Store) AppendChain(slug string, evs []model.Event, expect Expect) ([]string, error) {
+	var shas []string
+	_, err := s.casLoop(slug, expect, func(parent string) (string, error) {
+		shas = shas[:0]
+		p := parent
+		for _, ev := range evs {
+			csha, err := s.BuildCommit(slug, p, ev, nil)
+			if err != nil {
+				return "", err
+			}
+			shas = append(shas, csha)
+			p = csha
+		}
+		return shas[len(shas)-1], nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(shas))
+	for i, sha := range shas {
+		ids[i] = sha[:10]
+	}
+	return ids, nil
+}
+
+// casLoop is the shared CAS-retry skeleton behind Append and AppendChain:
+// re-read the current head, let build construct the new tip commit(s)
+// parented on it, then try to move the ref. build may be called more than
+// once (once per attempt) if another writer wins the race.
+func (s Store) casLoop(slug string, expect Expect, build func(parent string) (tip string, err error)) (string, error) {
 	for attempt := 0; attempt < 30; attempt++ {
 		cur, ok := s.head(slug)
 		if expect == ExpectAbsent && ok {
@@ -198,14 +242,13 @@ func (s Store) Append(slug string, ev model.Event, extra map[string]string, expe
 		if ok {
 			parent = cur
 		}
-		csha, err := s.BuildCommit(slug, parent, ev, extra)
+		tip, err := build(parent)
 		if err != nil {
 			return "", err
 		}
-		old := cur // "" when creating
-		if _, _, code := s.Repo.Git("", "update-ref", ref(slug), csha, old); code == 0 {
+		if _, _, code := s.Repo.Git("", "update-ref", ref(slug), tip, cur); code == 0 {
 			s.GCAuto()
-			return csha[:10], nil
+			return tip, nil
 		}
 		time.Sleep(time.Duration(attempt) * 10 * time.Millisecond)
 	}

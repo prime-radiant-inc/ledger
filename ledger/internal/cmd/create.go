@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -94,78 +95,88 @@ func runCreate(c *Ctx, slug, scope, owner, supersedes, asFlag, mFlag string, fie
 	return nil
 }
 
-// createSuperseding builds the predecessor's close+link commits (or just the
-// link commit when the predecessor is already closed — the wrongful-close
-// recovery path) and the new ledger's creation commit, then lands both refs
-// in one atomic store.Transaction: refs/ledger/<supersedes> moves to the
-// link commit, refs/ledger/<slug> is created fresh. A CAS abort (the
-// predecessor moved under us) retries once from freshly reloaded heads.
-// Crash recovery: if the predecessor's fold already shows SupersededBy ==
-// slug, a prior attempt already landed that side of the transaction — this
-// only needs to (re)create the new ledger, and if that's also already done,
-// it's a no-op success.
+// createSuperseding runs classify-then-write, at most twice: check the
+// successor slug and the predecessor's fold state fresh, then either land
+// the atomic two-ref transaction or take the narrower crash-recovery path.
+// A transaction abort is a pure CAS race (something moved a ref under us,
+// with no genuine collision or recoverable half-state to explain it) — the
+// second pass reclassifies from fresh heads; if that also aborts, the error
+// is a classified CLIError, never git's raw transaction-abort text.
 func (c *Ctx) createSuperseding(slug, supersedes string, ev model.Event, metaJSON, author string) (string, error) {
-	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
-		pred, err := c.Load(supersedes)
-		if err != nil {
-			return "", err
+		id, retry, err := c.attemptSupersede(slug, supersedes, ev, metaJSON, author)
+		if !retry {
+			return id, err
 		}
-
-		if pred.SupersededBy == slug {
-			if id, err := c.Store.HeadID(slug); err == nil {
-				return id, nil // both sides already landed by a prior attempt
-			}
-			newSha, err := c.Store.BuildCommit(slug, "", ev, map[string]string{"meta.json": metaJSON})
-			if err != nil {
-				return "", err
-			}
-			if err := c.Store.Transaction([]store.TxStep{{Ref: "refs/ledger/" + slug, New: newSha, Old: ""}}); err != nil {
-				lastErr = mapStoreErr(err, slug)
-				continue
-			}
-			c.Store.GCAuto()
-			return newSha[:10], nil
-		}
-
-		oldRef := "refs/ledger/" + supersedes
-		oldFull, _, code := c.Store.Repo.Git("", "rev-parse", oldRef)
-		if code != 0 {
-			return "", out.Errf("unknown_ledger", "ledger ls --all", 4, "no ledger '%s' here", supersedes)
-		}
-		linkParent := oldFull
-		if pred.State == "open" {
-			closeEv := model.NewEvent("lifecycle", author, c.Store.Repo)
-			closeEv.LifecycleKind, closeEv.Reason, closeEv.Successor = "close", "superseded", slug
-			closeSha, err := c.Store.BuildCommit(supersedes, oldFull, closeEv, nil)
-			if err != nil {
-				return "", err
-			}
-			linkParent = closeSha
-		}
-		linkEv := model.NewEvent("lifecycle", author, c.Store.Repo)
-		linkEv.LifecycleKind, linkEv.Successor = "superseded_by", slug
-		linkSha, err := c.Store.BuildCommit(supersedes, linkParent, linkEv, nil)
-		if err != nil {
-			return "", err
-		}
-		newSha, err := c.Store.BuildCommit(slug, "", ev, map[string]string{"meta.json": metaJSON})
-		if err != nil {
-			return "", err
-		}
-
-		steps := []store.TxStep{
-			{Ref: "refs/ledger/" + slug, New: newSha, Old: ""},
-			{Ref: oldRef, New: linkSha, Old: oldFull},
-		}
-		if err := c.Store.Transaction(steps); err != nil {
-			lastErr = mapStoreErr(err, slug)
-			continue // retry once from fresh heads
-		}
-		c.Store.GCAuto()
-		return newSha[:10], nil
 	}
-	return "", lastErr
+	return "", out.Errf("cas_exhausted",
+		"re-run the same `ledger create ... --supersedes` command", 1,
+		"the supersede transaction for '%s' could not land after retrying (concurrent writers?)", slug)
+}
+
+// attemptSupersede is one classify-then-write pass. retry=true means the
+// transaction aborted for reasons the classification step didn't already
+// explain (not a real slug collision, not a completed crash half-state) —
+// the caller should reclassify from fresh heads rather than give up.
+func (c *Ctx) attemptSupersede(slug, supersedes string, ev model.Event, metaJSON, author string) (id string, retry bool, err error) {
+	pred, err := c.Load(supersedes)
+	if err != nil {
+		return "", false, err
+	}
+
+	if _, sErr := c.Store.HeadID(slug); sErr == nil {
+		// The successor ref already exists. Classify before touching
+		// anything: is this our own crash-dangled supersede (the successor
+		// landed but the predecessor's link didn't), or a genuine slug
+		// collision that just happens to share this name?
+		_, succMeta, evErr := c.Store.Events(slug)
+		if evErr == nil && succMeta.Supersedes == supersedes && pred.SupersededBy != slug {
+			linkEv := model.NewEvent("lifecycle", author, c.Store.Repo)
+			linkEv.LifecycleKind, linkEv.Successor = "superseded_by", slug
+			if _, aErr := c.Store.Append(supersedes, linkEv, nil, store.ExpectPresent); aErr != nil {
+				return "", false, mapStoreErr(aErr, supersedes)
+			}
+			recoveredID, _ := c.Store.HeadID(slug)
+			return recoveredID, false, nil
+		}
+		return "", false, mapStoreErr(fmt.Errorf("%w: %s", store.ErrSlugExists, slug), slug)
+	}
+
+	oldRef := "refs/ledger/" + supersedes
+	oldFull, _, code := c.Store.Repo.Git("", "rev-parse", oldRef)
+	if code != 0 {
+		return "", false, out.Errf("unknown_ledger", "ledger ls --all", 4, "no ledger '%s' here", supersedes)
+	}
+	linkParent := oldFull
+	if pred.State == "open" {
+		closeEv := model.NewEvent("lifecycle", author, c.Store.Repo)
+		closeEv.LifecycleKind, closeEv.Reason, closeEv.Successor = "close", "superseded", slug
+		closeSha, bErr := c.Store.BuildCommit(supersedes, oldFull, closeEv, nil)
+		if bErr != nil {
+			return "", false, bErr
+		}
+		linkParent = closeSha
+	}
+	linkEv := model.NewEvent("lifecycle", author, c.Store.Repo)
+	linkEv.LifecycleKind, linkEv.Successor = "superseded_by", slug
+	linkSha, lErr := c.Store.BuildCommit(supersedes, linkParent, linkEv, nil)
+	if lErr != nil {
+		return "", false, lErr
+	}
+	newSha, nErr := c.Store.BuildCommit(slug, "", ev, map[string]string{"meta.json": metaJSON})
+	if nErr != nil {
+		return "", false, nErr
+	}
+
+	steps := []store.TxStep{
+		{Ref: "refs/ledger/" + slug, New: newSha, Old: ""},
+		{Ref: oldRef, New: linkSha, Old: oldFull},
+	}
+	if tErr := c.Store.Transaction(steps); tErr != nil {
+		return "", true, nil // pure CAS race: reclassify and retry
+	}
+	c.Store.GCAuto()
+	return newSha[:10], false, nil
 }
 
 func keys(m map[string][]string) string {
