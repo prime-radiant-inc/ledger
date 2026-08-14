@@ -98,15 +98,15 @@ func TestConcurrentAppendCAS(t *testing.T) {
 func TestResolveOrder(t *testing.T) {
 	repo := initRepo(t)
 	t.Setenv("LEDGER_DIR", "")
-	st, note, err := Resolve(repo) // explicit flag wins
-	if err != nil || st.Repo.Dir != repo || note != "" {
-		t.Fatalf("%v %+v %q", err, st, note)
+	r, err := Resolve(repo) // explicit flag wins
+	if err != nil || r.Store.Repo.Dir != repo || r.Note != "" {
+		t.Fatalf("%v %+v", err, r)
 	}
 	other := initRepo(t)
 	t.Setenv("LEDGER_DIR", other)
-	st, _, _ = Resolve("")
-	if st.Repo.Dir != other {
-		t.Fatalf("LEDGER_DIR should win over discovery: %q", st.Repo.Dir)
+	r, _ = Resolve("")
+	if r.Store.Repo.Dir != other {
+		t.Fatalf("LEDGER_DIR should win over discovery: %q", r.Store.Repo.Dir)
 	}
 }
 
@@ -118,9 +118,9 @@ func TestResolveAncestorWalkUp(t *testing.T) {
 	}
 	t.Chdir(sub)
 	t.Setenv("LEDGER_DIR", "")
-	st, note, err := Resolve("")
-	if err != nil || st.Repo.Dir != repo || note != "" {
-		t.Fatalf("%v %+v %q", err, st, note)
+	r, err := Resolve("")
+	if err != nil || r.Store.Repo.Dir != repo || r.Note != "" {
+		t.Fatalf("%v %+v", err, r)
 	}
 }
 
@@ -135,9 +135,101 @@ func TestResolveSameDirCollision(t *testing.T) {
 	}
 	t.Chdir(dir)
 	t.Setenv("LEDGER_DIR", "")
-	st, note, err := Resolve("")
-	if err != nil || st.Repo.Dir != ledgerGit || note == "" {
-		t.Fatalf("%v %+v %q", err, st, note)
+	r, err := Resolve("")
+	if err != nil || r.Store.Repo.Dir != ledgerGit || r.Note == "" {
+		t.Fatalf("%v %+v", err, r)
+	}
+	if r.Shadowed != "" {
+		t.Fatalf("a same-directory collision is the Note case, not a shadowed ancestor: %+v", r)
+	}
+}
+
+// TestResolveShadowedAncestorStore is the field failure the eval reproduced:
+// a misplaced `ledger init` left a bare .ledger.git above a project repo,
+// every read from inside the repo resolved to the repo's own empty store,
+// and nothing ever named the other one. Resolution still picks the repo —
+// it now also reports the store it shadowed, either direction.
+func TestResolveShadowedAncestorStore(t *testing.T) {
+	t.Setenv("LEDGER_DIR", "")
+	root := t.TempDir()
+	bare := filepath.Join(root, ".ledger.git")
+	if err := os.Mkdir(bare, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(root, "proj")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(repo, "a", "b")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(sub)
+	r, err := Resolve("")
+	if err != nil || r.Store.Repo.Dir != repo {
+		t.Fatalf("the repo still wins: %v %+v", err, r)
+	}
+	if r.Shadowed != bare {
+		t.Fatalf("shadowed ancestor store should be %q: %+v", bare, r)
+	}
+
+	// the other direction: a bare store nested inside a repo shadows the repo.
+	nested := filepath.Join(repo, "scratch")
+	nestedBare := filepath.Join(nested, ".ledger.git")
+	if err := os.MkdirAll(nestedBare, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(nested)
+	r, err = Resolve("")
+	if err != nil || r.Store.Repo.Dir != nestedBare {
+		t.Fatalf("the nearest store still wins: %v %+v", err, r)
+	}
+	if r.Shadowed != repo {
+		t.Fatalf("the repo above should be the shadowed store: %+v", r)
+	}
+}
+
+// TestResolveShadowIsAmbientOnly: an explicit --store or $LEDGER_DIR is a
+// choice already made — there is nothing to tell the caller about.
+func TestResolveShadowIsAmbientOnly(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".ledger.git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(root, "proj")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+
+	t.Setenv("LEDGER_DIR", "")
+	if r, _ := Resolve(repo); r.Shadowed != "" {
+		t.Fatalf("--store says nothing about the ancestry: %+v", r)
+	}
+	t.Setenv("LEDGER_DIR", repo)
+	if r, _ := Resolve(""); r.Shadowed != "" {
+		t.Fatalf("$LEDGER_DIR says nothing about the ancestry: %+v", r)
+	}
+}
+
+// TestResolveSameKindAncestorIsNotShadowing: a repo inside a repo (or a bare
+// store under a bare store) is the ordinary nested-checkout case — the
+// nearest one wins by design and a notice would be pure noise.
+func TestResolveSameKindAncestorIsNotShadowing(t *testing.T) {
+	t.Setenv("LEDGER_DIR", "")
+	outer := t.TempDir()
+	if err := os.Mkdir(filepath.Join(outer, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	inner := filepath.Join(outer, "inner")
+	if err := os.MkdirAll(filepath.Join(inner, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(inner)
+	r, err := Resolve("")
+	if err != nil || r.Store.Repo.Dir != inner || r.Shadowed != "" {
+		t.Fatalf("nested repos must stay quiet: %v %+v", err, r)
 	}
 }
 

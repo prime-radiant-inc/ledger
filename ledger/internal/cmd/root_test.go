@@ -8,9 +8,13 @@ import (
 	"testing"
 )
 
-func initRepo(t *testing.T) string {
+func initRepo(t *testing.T) string { return initRepoAt(t, t.TempDir()) }
+
+// initRepoAt makes dir a git repo with one empty commit — separate from
+// initRepo so a test can place the repo somewhere specific (e.g. under a
+// directory that also holds a bare store).
+func initRepoAt(t *testing.T, dir string) string {
 	t.Helper()
-	dir := t.TempDir()
 	for _, args := range [][]string{{"init", "-b", "main"}, {"commit", "--allow-empty", "-m", "init"}} {
 		c := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
 		if out, err := c.CombinedOutput(); err != nil {

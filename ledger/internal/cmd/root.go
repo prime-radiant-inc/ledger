@@ -48,14 +48,15 @@ func ExecuteArgs(args []string, stdout, stderr io.Writer) int {
 			// agent must be able to run it before any ledger exists.
 			return nil
 		}
-		st, note, err := store.Resolve(storeFlag)
+		res, err := store.Resolve(storeFlag)
 		if err != nil {
 			return out.Errf("unknown_ledger", "run inside a git repo, or `ledger init` in a plain directory", 4, "%s", err)
 		}
-		if note != "" && ctx.TTY {
-			io.WriteString(stderr, note+"\n")
+		if res.Note != "" && ctx.TTY {
+			io.WriteString(stderr, res.Note+"\n")
 		}
-		ctx.Store = st
+		ctx.Store = res.Store
+		ctx.Shadowed = res.Shadowed
 		return nil
 	}
 	for _, f := range registry {

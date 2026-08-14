@@ -18,14 +18,44 @@ type Ctx struct {
 	// StoreFlag is the raw --store value (possibly empty), always populated —
 	// even for verbs like init that run before a store necessarily exists.
 	StoreFlag string
+	// Shadowed is the path of a store of the other kind higher in the
+	// ancestry than the one ambient resolution chose (see store.Resolution).
+	// Empty unless there is one — every place that would otherwise dead-end
+	// in "nothing here" names it.
+	Shadowed string
 }
 
 func (c *Ctx) Load(slug string) (*fold.Ledger, error) {
 	evs, meta, err := c.Store.Events(slug)
 	if err != nil {
-		return nil, out.Errf("unknown_ledger", "ledger ls --all  (lists every ledger here)", 4, "no ledger '%s' here", slug)
+		return nil, out.Errf("unknown_ledger", c.shadowHint("ledger ls --all  (lists every ledger here)"),
+			4, "no ledger '%s' here", slug)
 	}
 	return fold.Fold(slug, evs, meta), nil
+}
+
+// shadowHint extends a "there's nothing here" hint with the other store in
+// the ancestry, when there is one. Without it both dead ends — an unknown
+// slug and an empty store — send the reader back into the same empty store
+// they're already in, which is exactly how a whole investigation ledger in
+// an ancestor's .ledger.git stayed invisible in the field.
+func (c *Ctx) shadowHint(hint string) string {
+	if c.Shadowed == "" {
+		return hint
+	}
+	return hint + " — a second store exists at " + c.Shadowed + ": try --store " + c.Shadowed
+}
+
+// noteShadowedStore adds the same breadcrumb to a listing's payload and TTY
+// lines: `ls` is where a reader goes to learn what's here, so it's where a
+// store that isn't being read has to be named.
+func (c *Ctx) noteShadowedStore(payload map[string]any, lines []string) []string {
+	if c.Shadowed == "" {
+		return lines
+	}
+	payload["shadowed_store"] = c.Shadowed
+	return append(lines, "note: another ledger store exists at "+c.Shadowed+
+		" (this one was chosen) — read the other with --store "+c.Shadowed)
 }
 
 func (c *Ctx) PickLedger(ledgerFlag string) (*fold.Ledger, error) {
@@ -62,7 +92,7 @@ func (c *Ctx) PickLedger(ledgerFlag string) (*fold.Ledger, error) {
 		if len(all) > 1 {
 			hint += "; --ledger <slug> targets a closed one directly (notes are still allowed there)"
 		}
-		return nil, out.Errf("no_open_ledger", hint, 4, "no open ledgers in this repo")
+		return nil, out.Errf("no_open_ledger", c.shadowHint(hint), 4, "no open ledgers in this repo")
 	}
 	sort.Slice(opens, func(i, j int) bool {
 		return opens[i].Events[len(opens[i].Events)-1].TS > opens[j].Events[len(opens[j].Events)-1].TS

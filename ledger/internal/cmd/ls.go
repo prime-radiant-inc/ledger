@@ -37,8 +37,9 @@ func runLs(c *Ctx, all bool) error {
 		return err
 	}
 	if len(slugs) == 0 {
-		outEmit(c, map[string]any{"ledgers": []map[string]any{}},
-			[]string{"no ledgers in this repo — ledger create <slug> --scope <ref> starts one"})
+		payload := map[string]any{"ledgers": []map[string]any{}}
+		outEmit(c, payload, c.noteShadowedStore(payload,
+			[]string{"no ledgers in this repo — ledger create <slug> --scope <ref> starts one"}))
 		return nil
 	}
 
@@ -62,8 +63,9 @@ func runLs(c *Ctx, all bool) error {
 	sort.Slice(kept, func(i, j int) bool { return lastEventTime(kept[i]).After(lastEventTime(kept[j])) })
 
 	if len(kept) == 0 {
-		outEmit(c, map[string]any{"ledgers": []map[string]any{}},
-			[]string{"no ledgers match — ledger ls --all also shows ledgers closed more than 30 days ago"})
+		payload := map[string]any{"ledgers": []map[string]any{}}
+		outEmit(c, payload, c.noteShadowedStore(payload,
+			[]string{"no ledgers match — ledger ls --all also shows ledgers closed more than 30 days ago"}))
 		return nil
 	}
 
@@ -80,7 +82,8 @@ func runLs(c *Ctx, all bool) error {
 		})
 		lines = append(lines, lsLine(led, lastTS, events, idle, now))
 	}
-	outEmit(c, map[string]any{"ledgers": rows}, lines)
+	payload := map[string]any{"ledgers": rows}
+	outEmit(c, payload, c.noteShadowedStore(payload, lines))
 	return nil
 }
 
