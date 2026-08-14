@@ -76,3 +76,46 @@ func TestFoldSyncEventSkipped(t *testing.T) {
 		t.Fatalf("sync should not affect state: %q", l.State)
 	}
 }
+
+func TestFoldDuelingCloses(t *testing.T) {
+	meta := model.Meta{}
+	evs := []model.Event{
+		ev("1aaaaaaaaa", "create", nil),
+		ev("2aaaaaaaaa", "lifecycle", func(e *model.Event) { e.LifecycleKind = "close"; e.Reason = "wont_do" }),
+		ev("3aaaaaaaaa", "lifecycle", func(e *model.Event) { e.LifecycleKind = "close"; e.Reason = "duplicate" }),
+	}
+	l := Fold("demo", evs, meta)
+	// First close in total order wins; second close should not overwrite State
+	if l.State != "closed:wont_do" {
+		t.Fatalf("dueling closes: first should win, got %q", l.State)
+	}
+}
+
+func TestFoldVocabForFreeField(t *testing.T) {
+	meta := model.Meta{Fields: map[string][]string{"tag": nil}}
+	evs := []model.Event{
+		ev("1aaaaaaaaa", "create", nil),
+		ev("2aaaaaaaaa", "vocab", func(e *model.Event) { e.Field = "tag"; e.Value = "urgent" }),
+	}
+	l := Fold("demo", evs, meta)
+	// Vocab event for a free field (nil vocab) should be a no-op
+	if len(l.Schema["tag"]) != 0 || l.Schema["tag"] != nil {
+		t.Fatalf("vocab for free field should be no-op, got %v", l.Schema["tag"])
+	}
+}
+
+func TestFoldVocabForUndeclaredField(t *testing.T) {
+	meta := model.Meta{Fields: map[string][]string{"status": {"open"}}}
+	evs := []model.Event{
+		ev("1aaaaaaaaa", "create", nil),
+		ev("2aaaaaaaaa", "vocab", func(e *model.Event) { e.Field = "priority"; e.Value = "high" }),
+	}
+	l := Fold("demo", evs, meta)
+	// Vocab event for an undeclared field should be a no-op
+	if _, ok := l.Schema["priority"]; ok {
+		t.Fatalf("vocab for undeclared field should be no-op, got %v", l.Schema["priority"])
+	}
+	if len(l.Schema["status"]) != 1 || l.Schema["status"][0] != "open" {
+		t.Fatalf("schema should only have original fields, got %v", l.Schema)
+	}
+}
