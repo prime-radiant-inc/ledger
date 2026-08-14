@@ -15,32 +15,45 @@ var slugRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 func ValidSlug(s string) bool { return slugRE.MatchString(s) }
 
 type Origin struct {
-	Host string `json:"host"`; CWD string `json:"cwd"`; PID int `json:"pid"`
-	Branch string `json:"branch"`; Head string `json:"head"`
-	Session string `json:"session,omitempty"`; SessionSource string `json:"session_source,omitempty"`
+	Host          string `json:"host"`
+	CWD           string `json:"cwd"`
+	PID           int    `json:"pid"`
+	Branch        string `json:"branch"`
+	Head          string `json:"head"`
+	Session       string `json:"session,omitempty"`
+	SessionSource string `json:"session_source,omitempty"`
 }
 
 type Event struct {
-	TS string `json:"ts"`; Type string `json:"type"`
-	Key string `json:"key,omitempty"`; Fields map[string]string `json:"fields,omitempty"`
-	Kind string `json:"kind,omitempty"`; Text string `json:"text,omitempty"`
-	Field string `json:"field,omitempty"`; Value string `json:"value,omitempty"`
-	Reason string `json:"reason,omitempty"`; LifecycleKind string `json:"lifecycle_kind,omitempty"`
-	Successor string `json:"successor,omitempty"`
-	Evidence []string `json:"evidence,omitempty"`
-	Author string `json:"author"`; Origin Origin `json:"origin"`
-	IdempotencyKey string `json:"idempotency_key,omitempty"`
-	ID string `json:"-"`
+	TS             string            `json:"ts"`
+	Type           string            `json:"type"`
+	Key            string            `json:"key,omitempty"`
+	Fields         map[string]string `json:"fields,omitempty"`
+	Kind           string            `json:"kind,omitempty"`
+	Text           string            `json:"text,omitempty"`
+	Field          string            `json:"field,omitempty"`
+	Value          string            `json:"value,omitempty"`
+	Reason         string            `json:"reason,omitempty"`
+	LifecycleKind  string            `json:"lifecycle_kind,omitempty"`
+	Successor      string            `json:"successor,omitempty"`
+	Evidence       []string          `json:"evidence,omitempty"`
+	Author         string            `json:"author"`
+	Origin         Origin            `json:"origin"`
+	IdempotencyKey string            `json:"idempotency_key,omitempty"`
+	ID             string            `json:"-"`
 }
 
 type Meta struct {
-	Slug string `json:"slug"`; Scope string `json:"scope"`
-	Created string `json:"created"`; CreatedBy string `json:"created_by"`
-	Owner string `json:"owner,omitempty"`; Supersedes string `json:"supersedes,omitempty"`
-	Base string `json:"base,omitempty"`
-	Fields map[string][]string `json:"fields"`
+	Slug            string              `json:"slug"`
+	Scope           string              `json:"scope"`
+	Created         string              `json:"created"`
+	CreatedBy       string              `json:"created_by"`
+	Owner           string              `json:"owner,omitempty"`
+	Supersedes      string              `json:"supersedes,omitempty"`
+	Base            string              `json:"base,omitempty"`
+	Fields          map[string][]string `json:"fields"`
 	RequireEvidence map[string][]string `json:"require_evidence,omitempty"`
-	FieldOrder []string `json:"field_order"`
+	FieldOrder      []string            `json:"field_order"`
 }
 
 func HarnessMarker() string {
