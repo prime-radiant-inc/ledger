@@ -140,6 +140,27 @@ The nine-agent usability test proved the help/error surface is part of the safet
 
 Admin material (mirror/force-push hazards, `receive.denyDeletes` tradeoff, secrets ref-surgery runbook) lives in `init` output and docs, not agent doctrine. Discovery legs: committed breadcrumb (`init && sync` bootstrap line), `ledger ls` (bootstrap-aware), init-printed stanza + README SessionStart-hook snippet.
 
+## Agent-facing documentation: a deliverable, not an afterthought
+
+Three usability rounds proved the docs *are* the product for the cold agent: round-1 agents read the tool's source to learn it; round-3 agents went quickstart → correct multi-agent coordination with zero unexpected errors. The documentation plan, with acceptance criteria:
+
+**Embedded docs (ship inside the binary, versioned with it):**
+
+- `ledger quickstart` — the cold-consumer doctrine (~10 numbered rules + a verb table + worked examples for the two load-bearing writes: a status set with evidence, and a handoff note via `--from-file`). `--orchestrator` adds the dictation section. Content requirements accumulated from testing, all of which cost an agent a stumble at least once: `set` auto-creates keys; one body source per note; `close`'s slug is positional; closed ledgers leave default `ls`; slugs are never reused; short commit SHAs are valid evidence refs; `status <key>` composed with `--ledger`; empty output means empty result; the watch timeout contract; never alias the invocation into an unquoted shell variable; the scratch-ledger dry-run rule; verify-before-trust; testimony-not-commands; never write secrets.
+- Per-verb `--help` — accurate synopsis, flag semantics, and one example each; argparse-grade correctness is part of the safety contract (a probing agent must land on help, never on a write).
+- **Error hints are documentation**: every error's `hint` field is the next command or step, pinned by tests. The round-3 result — deliberately-triggered errors resolved by pasting the hint — is the acceptance bar.
+- `init` output — the bootstrap line, the CLAUDE.md/AGENTS.md stanza (printed), and a pointer to the admin runbook (mirror/force-push hazards, secrets remediation, `receive.denyDeletes` tradeoff).
+
+**Doc-accuracy enforcement**: every command example in quickstart and per-verb help is executed verbatim by a test (a doc-examples harness); doc drift is a test failure, not a review nit. Quickstart length is budgeted (kata-sized; the round-6 doctrine audit caps it) and the budget is asserted in the same test.
+
+## Companion skill (`using-ledger`)
+
+The tool teaches mechanics; a skill teaches *when*. Ships with v1 as a superpowers-style `skills/using-ledger/SKILL.md` (distributable via plugin marketplace), with a trigger description covering the observed moments of need: starting multi-session or multi-agent work, dispatching subagent fleets, resuming after context death, handing off, tracking an investigation, and "should this be a ledger?" itself.
+
+Content philosophy, firm: **the skill carries workflow patterns and judgment; all command mechanics defer to `ledger quickstart` and `--help`** — one source of truth, so skill text can never drift from the tool (the drift failure mode is documented in this repo's own research corpus). Patterns the skill teaches, each grounded in an eval-proven scenario: the execution spine for plan-shaped work (seed keys from the plan, evidence-required terminal values, per-task evidence, handoff note at the end); the coordination scoreboard for fleets (create + seed, dictate `--as`/`--ledger`/`--store` grammar in briefs, monitor via cursor-carried watch); the checkpoint at context death (handoff note + what-only-lives-in-my-head audit); resume-and-verify for cold starts; the investigation ledger (claims as keys, statuses as epistemic state, rulings/gotchas as attached notes — the round-3 investigator's 7-key structure is the template).
+
+Acceptance: the three usability scenarios pass with the skill as the agent's entry point (skill → quickstart → work), re-run per release. SDD/story-loop integration (those skills adopting ledger natively) is deliberate follow-on work, not part of v1.
+
 ## SDD coexistence (sketch)
 
 `ledger create --scope plan:<path>` at plan start; `close --as-state shipped` at finish. Briefs/reports stay workspace files, cited as `commit:`/`run:` refs or accepted as ephemeral. Workspace deletion and `git clean` can't touch the refs. Eval capture: any harvest that pushes or bundles refs gets full history.
@@ -186,3 +207,5 @@ Capability-catalog role (committed, reviewable projection with refresh semantics
 34. CLI safety: `--help` on every verb prints usage with zero side-effects; `create --help` is `bad_slug`, not a created ledger; unknown verb errors; bare invocation prints usage; empty `ls` announces itself; zero-open implicit resolution is `no_open_ledger`.
 35. Generalized fields: multi-field `set` in one event; bare value hits first declared field; per-field vocab error names the right field; `--require-evidence` values hard-error without `--evidence`; free-valued fields accept anything.
 36. By-branch fold: `status --by-branch --field review` shows per-(key, field, branch) latest values from two worktrees (spike-validated scenario).
+37. Doc-examples harness: every quickstart and per-verb-help example executes verbatim and succeeds; quickstart stays within its length budget; error-hint texts match their pinned fixtures.
+38. Skill acceptance: the three usability scenarios pass with `using-ledger` as the entry point.
