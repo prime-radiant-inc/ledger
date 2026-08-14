@@ -186,10 +186,6 @@ func (s Store) catBatch(ids []string) (contents []string, present []bool) {
 }
 
 func (s Store) Append(slug string, ev model.Event, extra map[string]string, expect Expect) (string, error) {
-	body, err := json.MarshalIndent(ev, "", " ")
-	if err != nil {
-		return "", err
-	}
 	for attempt := 0; attempt < 30; attempt++ {
 		cur, ok := s.head(slug)
 		if expect == ExpectAbsent && ok {
@@ -198,30 +194,13 @@ func (s Store) Append(slug string, ev model.Event, extra map[string]string, expe
 		if expect == ExpectPresent && !ok {
 			return "", fmt.Errorf("%w: %s", ErrUnknownLedger, slug)
 		}
-		entries := []string{}
-		files := map[string]string{"event.json": string(body)}
-		for k, v := range extra {
-			files[k] = v
-		}
-		for name, content := range files {
-			blob, se, code := s.Repo.Git(content, "hash-object", "-w", "--stdin")
-			if code != 0 {
-				return "", fmt.Errorf("git_failed: %s", se)
-			}
-			entries = append(entries, "100644 blob "+blob+"\t"+name)
-		}
-		tree, se, code := s.Repo.Git(strings.Join(entries, "\n")+"\n", "mktree")
-		if code != 0 {
-			return "", fmt.Errorf("git_failed: %s", se)
-		}
-		args := append(gitx.IdentityArgs(ev.Author, committerMarker(ev)),
-			"commit-tree", tree, "-m", ev.Type+":"+ev.Key)
+		parent := ""
 		if ok {
-			args = append(args, "-p", cur)
+			parent = cur
 		}
-		csha, se, code := s.Repo.Git("", args...)
-		if code != 0 {
-			return "", fmt.Errorf("git_failed: %s", se)
+		csha, err := s.BuildCommit(slug, parent, ev, extra)
+		if err != nil {
+			return "", err
 		}
 		old := cur // "" when creating
 		if _, _, code := s.Repo.Git("", "update-ref", ref(slug), csha, old); code == 0 {
@@ -231,6 +210,66 @@ func (s Store) Append(slug string, ev model.Event, extra map[string]string, expe
 		time.Sleep(time.Duration(attempt) * 10 * time.Millisecond)
 	}
 	return "", fmt.Errorf("%w: %s", ErrCASExhausted, slug)
+}
+
+// BuildCommit writes one event's blobs/tree/commit-tree without touching any
+// ref — the shared plumbing behind Append's single-ref CAS loop and the
+// cross-ref supersede transaction in cmd.createSuperseding. parent == ""
+// means a root commit (the ledger's creation commit). The returned sha is
+// full-length (40 hex chars): Append truncates it for its own callers, but
+// the supersede transaction needs the untruncated form for CAS Old values.
+func (s Store) BuildCommit(slug, parent string, ev model.Event, extra map[string]string) (string, error) {
+	body, err := json.MarshalIndent(ev, "", " ")
+	if err != nil {
+		return "", err
+	}
+	entries := []string{}
+	files := map[string]string{"event.json": string(body)}
+	for k, v := range extra {
+		files[k] = v
+	}
+	for name, content := range files {
+		blob, se, code := s.Repo.Git(content, "hash-object", "-w", "--stdin")
+		if code != 0 {
+			return "", fmt.Errorf("git_failed: %s", se)
+		}
+		entries = append(entries, "100644 blob "+blob+"\t"+name)
+	}
+	tree, se, code := s.Repo.Git(strings.Join(entries, "\n")+"\n", "mktree")
+	if code != 0 {
+		return "", fmt.Errorf("git_failed: %s", se)
+	}
+	args := append(gitx.IdentityArgs(ev.Author, committerMarker(ev)),
+		"commit-tree", tree, "-m", ev.Type+":"+ev.Key)
+	if parent != "" {
+		args = append(args, "-p", parent)
+	}
+	csha, se, code := s.Repo.Git("", args...)
+	if code != 0 {
+		return "", fmt.Errorf("git_failed: %s", se)
+	}
+	_ = slug // reserved: commit content doesn't need the slug today, kept for signature symmetry with Append
+	return csha, nil
+}
+
+type TxStep struct{ Ref, New, Old string }
+
+// Transaction commits all steps or none, via git's ref-transaction protocol
+// (start/prepare/commit over `update-ref --stdin`). Any CAS mismatch aborts
+// the whole batch — used by create --supersedes to move the predecessor's
+// ref and create the successor's ref atomically.
+func (s Store) Transaction(steps []TxStep) error {
+	var b strings.Builder
+	b.WriteString("start\n")
+	for _, st := range steps {
+		b.WriteString(fmt.Sprintf("update %s %s %s\n", st.Ref, st.New, st.Old))
+	}
+	b.WriteString("prepare\ncommit\n")
+	_, stderr, code := s.Repo.Git(b.String(), "update-ref", "--stdin")
+	if code != 0 {
+		return fmt.Errorf("transaction aborted: %s", stderr)
+	}
+	return nil
 }
 
 func committerMarker(ev model.Event) string {

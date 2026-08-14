@@ -141,6 +141,36 @@ func TestResolveSameDirCollision(t *testing.T) {
 	}
 }
 
+func TestTransactionAtomicity(t *testing.T) {
+	s := testStore(t)
+	s.Append("a", model.Event{Type: "create", Author: "x"}, map[string]string{"meta.json": "{}"}, ExpectAbsent)
+	headA, _ := s.HeadID("a") // 10 chars; Transaction wants full shas — use rev-parse
+	full, _, _ := s.Repo.Git("", "rev-parse", "refs/ledger/a")
+	_ = headA
+	// build a commit for ref b without updating any ref
+	blob, _, _ := s.Repo.Git("{}", "hash-object", "-w", "--stdin")
+	tree, _, _ := s.Repo.Git("100644 blob "+blob+"\tevent.json\n", "mktree")
+	c1, _, _ := s.Repo.Git("", append(gitx.IdentityArgs("t", "terminal"), "commit-tree", tree, "-m", "x")...)
+	// stale Old for ref a => whole transaction must abort; ref b must NOT be created
+	err := s.Transaction([]TxStep{
+		{Ref: "refs/ledger/b", New: c1, Old: ""},
+		{Ref: "refs/ledger/a", New: c1, Old: strings.Repeat("0", 40)},
+	})
+	if err == nil {
+		t.Fatal("stale CAS must abort")
+	}
+	if _, ok := s.head("b"); ok {
+		t.Fatal("aborted transaction leaked ref b")
+	}
+	// correct Old commits both
+	if err := s.Transaction([]TxStep{
+		{Ref: "refs/ledger/b", New: c1, Old: ""},
+		{Ref: "refs/ledger/a", New: c1, Old: full},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCatBatchTrailingNewlinePreserved(t *testing.T) {
 	s := testStore(t)
 	blob1, _, code := s.Repo.Git("no trailing newline here", "hash-object", "-w", "--stdin")

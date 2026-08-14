@@ -20,14 +20,26 @@ func runLs(c *Ctx, all bool) error {
 	if err != nil {
 		return err
 	}
+	// Minimal slug+state listing so other verbs (create --supersedes, close)
+	// have something to check against; recency sort/idle marking/30d window
+	// arrive in the dedicated ls task.
 	rows := []map[string]any{}
-	_ = all // full filtering in the ls task
-	for range slugs {
+	lines := []string{}
+	for _, s := range slugs {
+		led, err := c.Load(s)
+		if err != nil {
+			continue
+		}
+		if !all && led.State != "open" {
+			continue
+		}
+		rows = append(rows, map[string]any{"slug": s, "state": led.State, "scope": led.Meta.Scope})
+		lines = append(lines, s+" ("+led.State+")")
 	}
-	if len(slugs) == 0 {
+	if len(rows) == 0 {
 		outEmit(c, map[string]any{"ledgers": rows}, []string{"no ledgers in this repo — ledger create <slug> --scope <ref> starts one"})
 		return nil
 	}
-	outEmit(c, map[string]any{"ledgers": rows}, []string{"(ls arrives fully in a later task)"})
+	outEmit(c, map[string]any{"ledgers": rows}, lines)
 	return nil
 }
