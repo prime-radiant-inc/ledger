@@ -35,10 +35,14 @@ func (c *Ctx) PickLedger(ledgerFlag string) (*fold.Ledger, error) {
 	if err != nil {
 		return nil, out.Errf("git_failed", "", 1, "%s", err)
 	}
-	var opens []*fold.Ledger
+	var all, opens []*fold.Ledger
 	for _, s := range slugs {
 		l, err := c.Load(s)
-		if err == nil && l.State == "open" {
+		if err != nil {
+			continue
+		}
+		all = append(all, l)
+		if l.State == "open" {
 			opens = append(opens, l)
 		}
 	}
@@ -46,9 +50,18 @@ func (c *Ctx) PickLedger(ledgerFlag string) (*fold.Ledger, error) {
 	case 1:
 		return opens[0], nil
 	case 0:
-		return nil, out.Errf("no_open_ledger",
-			"ledger create <slug> --scope <what-it-tracks>  starts one; ledger ls --all lists closed ones",
-			4, "no open ledgers in this repo")
+		// No open ledger, but if there's exactly one ledger overall (closed),
+		// resolve to it anyway: the caller's own state check produces the
+		// precise error (set: "closed" with successor hint; note: succeeds —
+		// closed ledgers accept notes on the ambient path too).
+		if len(all) == 1 {
+			return all[0], nil
+		}
+		hint := "ledger create <slug> --scope <what-it-tracks>  starts one; ledger ls --all lists closed ones"
+		if len(all) > 1 {
+			hint += "; --ledger <slug> targets a closed one directly (notes are still allowed there)"
+		}
+		return nil, out.Errf("no_open_ledger", hint, 4, "no open ledgers in this repo")
 	}
 	sort.Slice(opens, func(i, j int) bool {
 		return opens[i].Events[len(opens[i].Events)-1].TS > opens[j].Events[len(opens[j].Events)-1].TS

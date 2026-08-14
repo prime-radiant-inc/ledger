@@ -62,6 +62,22 @@ func TestIdempotencyAuthorScoped(t *testing.T) {
 	}
 }
 
+func TestIdempotencyKeyScopedToItem(t *testing.T) {
+	dir := setup(t)
+	so1, _, code := run(t, dir, "set", "t1", "open", "--as", "a", "--idempotency-key", "shared")
+	if code != 0 {
+		t.Fatal(so1)
+	}
+	so2, _, code := run(t, dir, "set", "t2", "open", "--as", "a", "--idempotency-key", "shared")
+	if code != 0 {
+		t.Fatal(so2)
+	}
+	d1, d2 := mustJSON(t, so1), mustJSON(t, so2)
+	if d2["deduped"] == true || d2["id"] == d1["id"] {
+		t.Fatalf("same author+key but different item key must NOT dedupe: %v", d2)
+	}
+}
+
 func TestNoteBodySources(t *testing.T) {
 	dir := setup(t)
 	_, se, code := run(t, dir, "note", "-k", "handoff", "-m", "short", "--from-file", "/dev/null")
@@ -78,6 +94,14 @@ func TestNoteBodySources(t *testing.T) {
 	}
 }
 
+func TestNoteFromFileMissing(t *testing.T) {
+	dir := setup(t)
+	_, se, code := run(t, dir, "note", "-k", "handoff", "--from-file", "/no/such/path-ever")
+	if code != 4 || !strings.Contains(se, "bad_value") || !strings.Contains(se, "cannot read --from-file") {
+		t.Fatalf("%s", se)
+	}
+}
+
 func TestClosedLedgerRules(t *testing.T) {
 	dir := setup(t)
 	run(t, dir, "close", "demo", "--as-state", "abandoned")
@@ -88,5 +112,24 @@ func TestClosedLedgerRules(t *testing.T) {
 	_, _, code = run(t, dir, "note", "-k", "postmortem", "-m", "lessons", "--ledger", "demo")
 	if code != 0 {
 		t.Fatal("closed ledgers accept notes")
+	}
+}
+
+// TestAmbientSoleClosedLedger: when the only ledger in the repo is closed
+// (no open ledgers at all), PickLedger must still resolve to it ambiently —
+// note succeeds on the closed ledger, set fails with "closed" (not
+// "no_open_ledger", which would misdirect the caller toward `ledger create`).
+func TestAmbientSoleClosedLedger(t *testing.T) {
+	dir := setup(t)
+	run(t, dir, "close", "demo", "--as-state", "abandoned")
+
+	so, _, code := run(t, dir, "note", "-k", "postmortem", "-m", "lessons learned")
+	if code != 0 {
+		t.Fatalf("ambient note on sole closed ledger must succeed: %s", so)
+	}
+
+	_, se, code := run(t, dir, "set", "t1", "open")
+	if code != 4 || !strings.Contains(se, "closed") || strings.Contains(se, "no_open_ledger") {
+		t.Fatalf("ambient set on sole closed ledger must get 'closed', not no_open_ledger: %s", se)
 	}
 }

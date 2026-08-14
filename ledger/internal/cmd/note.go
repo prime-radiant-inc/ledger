@@ -43,12 +43,17 @@ func runNote(c *Ctx, stdin io.Reader, kind, key, fromFile string, o writeOpts) e
 	case fromFile != "":
 		b, err := os.ReadFile(fromFile)
 		if err != nil {
-			return out.Errf("git_failed", "", 1, "%s", err)
+			return out.Errf("bad_value", "check the path", 4, "cannot read --from-file %s: %s", fromFile, err)
 		}
 		body = string(b)
 	default:
-		b, _ := io.ReadAll(stdin)
-		body = string(b)
+		// A TTY stdin would block forever waiting for input that will never
+		// arrive from a non-interactive source; treat it as no body given
+		// rather than hang.
+		if !out.IsTTY(os.Stdin) {
+			b, _ := io.ReadAll(stdin)
+			body = string(b)
+		}
 	}
 	if strings.TrimSpace(body) == "" {
 		return out.Errf("empty_body", `provide it with -m "...", --from-file <path>, or on stdin`, 4, "the note body is empty")

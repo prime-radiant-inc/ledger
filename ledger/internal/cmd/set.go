@@ -80,7 +80,7 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts) error {
 	if o.idemKey != "" {
 		author := model.ResolveAuthor(o.as)
 		for _, ev := range led.Events {
-			if ev.Type == "set" && ev.IdempotencyKey == o.idemKey && ev.Author == author {
+			if ev.Type == "set" && ev.IdempotencyKey == o.idemKey && ev.Author == author && ev.Key == key {
 				outEmit(c, map[string]any{"id": ev.ID, "ledger": led.Slug, "deduped": true, "by": ev.Author},
 					[]string{"deduped against " + ev.ID})
 				return nil
