@@ -25,22 +25,23 @@ type Origin struct {
 }
 
 type Event struct {
-	TS             string            `json:"ts"`
-	Type           string            `json:"type"`
-	Key            string            `json:"key,omitempty"`
-	Fields         map[string]string `json:"fields,omitempty"`
-	Kind           string            `json:"kind,omitempty"`
-	Text           string            `json:"text,omitempty"`
-	Field          string            `json:"field,omitempty"`
-	Value          string            `json:"value,omitempty"`
-	Reason         string            `json:"reason,omitempty"`
-	LifecycleKind  string            `json:"lifecycle_kind,omitempty"`
-	Successor      string            `json:"successor,omitempty"`
-	Evidence       []string          `json:"evidence,omitempty"`
-	Author         string            `json:"author"`
-	Origin         Origin            `json:"origin"`
-	IdempotencyKey string            `json:"idempotency_key,omitempty"`
-	ID             string            `json:"-"`
+	TS                string            `json:"ts"`
+	Type              string            `json:"type"`
+	Key               string            `json:"key,omitempty"`
+	Fields            map[string]string `json:"fields,omitempty"`
+	Kind              string            `json:"kind,omitempty"`
+	Text              string            `json:"text,omitempty"`
+	Field             string            `json:"field,omitempty"`
+	Value             string            `json:"value,omitempty"`
+	Reason            string            `json:"reason,omitempty"`
+	LifecycleKind     string            `json:"lifecycle_kind,omitempty"`
+	Successor         string            `json:"successor,omitempty"`
+	Evidence          []string          `json:"evidence,omitempty"`
+	Author            string            `json:"author"`
+	Origin            Origin            `json:"origin"`
+	IdempotencyKey    string            `json:"idempotency_key,omitempty"`
+	ID                string            `json:"-"`
+	CommitterOverride string            `json:"-"`
 }
 
 type Meta struct {
