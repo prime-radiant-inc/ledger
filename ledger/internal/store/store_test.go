@@ -1,7 +1,9 @@
 package store
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -105,5 +107,53 @@ func TestResolveOrder(t *testing.T) {
 	st, _, _ = Resolve("")
 	if st.Repo.Dir != other {
 		t.Fatalf("LEDGER_DIR should win over discovery: %q", st.Repo.Dir)
+	}
+}
+
+func TestResolveAncestorWalkUp(t *testing.T) {
+	repo := initRepo(t)
+	sub := filepath.Join(repo, "a", "b")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(sub)
+	t.Setenv("LEDGER_DIR", "")
+	st, note, err := Resolve("")
+	if err != nil || st.Repo.Dir != repo || note != "" {
+		t.Fatalf("%v %+v %q", err, st, note)
+	}
+}
+
+func TestResolveSameDirCollision(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ledgerGit := filepath.Join(dir, ".ledger.git")
+	if err := os.Mkdir(ledgerGit, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	t.Setenv("LEDGER_DIR", "")
+	st, note, err := Resolve("")
+	if err != nil || st.Repo.Dir != ledgerGit || note == "" {
+		t.Fatalf("%v %+v %q", err, st, note)
+	}
+}
+
+func TestCatBatchTrailingNewlinePreserved(t *testing.T) {
+	s := testStore(t)
+	blob1, _, code := s.Repo.Git("no trailing newline here", "hash-object", "-w", "--stdin")
+	if code != 0 {
+		t.Fatal("hash-object failed for blob1")
+	}
+	content2 := "trailing newline content\n"
+	blob2, _, code := s.Repo.Git(content2, "hash-object", "-w", "--stdin")
+	if code != 0 {
+		t.Fatal("hash-object failed for blob2")
+	}
+	contents, present := s.catBatch([]string{blob1, blob2})
+	if !present[1] || contents[1] != content2 {
+		t.Fatalf("last blob truncated: present=%v got %q want %q", present[1], contents[1], content2)
 	}
 }

@@ -13,6 +13,15 @@ import (
 type Repo struct{ Dir string }
 
 func (r Repo) Git(stdin string, args ...string) (stdout, stderr string, code int) {
+	so, se, code := r.GitRaw(stdin, args...)
+	return strings.TrimRight(so, "\n"), strings.TrimRight(se, "\n"), code
+}
+
+// GitRaw is Git without trailing-newline trimming. Callers that parse exact
+// byte lengths out of the output (e.g. cat-file --batch content sizes) must
+// use this: trimming can eat bytes that belong to the payload, not the
+// process's own trailing newline.
+func (r Repo) GitRaw(stdin string, args ...string) (stdout, stderr string, code int) {
 	full := args
 	if r.Dir != "" {
 		full = append([]string{"-C", r.Dir}, args...)
@@ -31,7 +40,7 @@ func (r Repo) Git(stdin string, args ...string) (stdout, stderr string, code int
 			code = ee.ExitCode()
 		}
 	}
-	return strings.TrimRight(so.String(), "\n"), strings.TrimRight(se.String(), "\n"), code
+	return so.String(), se.String(), code
 }
 
 var versionOnce sync.Once

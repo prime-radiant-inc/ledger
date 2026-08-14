@@ -34,8 +34,9 @@ func ref(slug string) string { return "refs/ledger/" + slug }
 
 // Resolve implements the spec's store-resolution order:
 // --store flag > $LEDGER_DIR > nearest ancestor holding .ledger.git or .git
-// (.ledger.git beats .git within one directory). note is non-empty when both
-// kinds appear in the ancestry — callers print which store was chosen.
+// (.ledger.git beats .git within one directory). note is non-empty only in
+// that same-directory collision case, when a single directory holds both
+// .ledger.git and .git — callers print which one was chosen.
 func Resolve(storeFlag string) (Store, string, error) {
 	if storeFlag != "" {
 		return storeFor(storeFlag), "", nil
@@ -47,7 +48,6 @@ func Resolve(storeFlag string) (Store, string, error) {
 	if err != nil {
 		return Store{}, "", err
 	}
-	var sawOther bool
 	for dir := cwd; ; dir = filepath.Dir(dir) {
 		lg := filepath.Join(dir, ".ledger.git")
 		gt := filepath.Join(dir, ".git")
@@ -57,20 +57,11 @@ func Resolve(storeFlag string) (Store, string, error) {
 			return Store{Repo: gitx.Repo{Dir: lg}}, fmt.Sprintf("using store %s (a git repo is also here)", lg), nil
 		}
 		if lgOK {
-			note := ""
-			if sawOther {
-				note = "using store " + lg
-			}
-			return Store{Repo: gitx.Repo{Dir: lg}}, note, nil
+			return Store{Repo: gitx.Repo{Dir: lg}}, "", nil
 		}
 		if gtOK {
-			note := ""
-			if sawOther {
-				note = "using repo " + dir
-			}
-			return Store{Repo: gitx.Repo{Dir: dir}}, note, nil
+			return Store{Repo: gitx.Repo{Dir: dir}}, "", nil
 		}
-		sawOther = sawOther || lgOK || gtOK
 		if dir == filepath.Dir(dir) {
 			return Store{}, "", fmt.Errorf("no git repo or .ledger.git found from %s upward", cwd)
 		}
@@ -117,71 +108,68 @@ func (s Store) HeadID(slug string) (string, error) {
 	return h[:10], nil
 }
 
-// Events reads the whole chain with two subprocesses total:
-// one `git log` for (commit, tree) pairs, one `cat-file --batch` for all blobs.
+// Events reads the whole chain with exactly two subprocesses: one `git log`
+// for the commit list, one `cat-file --batch` requesting <sha>:event.json
+// and <sha>:meta.json for every commit. git resolves each rev:path
+// server-side, so no per-commit ls-tree is needed. A commit with no
+// meta.json (every commit but the create) comes back "missing" for that
+// request and is simply skipped.
 func (s Store) Events(slug string) ([]model.Event, model.Meta, error) {
 	var meta model.Meta
-	out, _, code := s.Repo.Git("", "log", "--reverse", "--format=%H %T", ref(slug))
+	out, _, code := s.Repo.Git("", "log", "--reverse", "--format=%H", ref(slug))
 	if code != 0 || out == "" {
 		return nil, meta, fmt.Errorf("%w: %s", ErrUnknownLedger, slug)
 	}
-	type pair struct{ commit, tree string }
-	var pairs []pair
-	for _, line := range strings.Split(out, "\n") {
-		f := strings.Fields(line)
-		pairs = append(pairs, pair{f[0], f[1]})
+	commits := strings.Split(out, "\n")
+	reqs := make([]string, 0, len(commits)*2)
+	for _, c := range commits {
+		reqs = append(reqs, c+":event.json", c+":meta.json")
 	}
-	// Resolve every tree's event.json (and creation meta.json) blob ids via ls-tree
-	// on the batch of trees, then fetch blob contents in one cat-file --batch.
-	var reqs []string
-	blobOf := make([]map[string]string, len(pairs))
-	for i, p := range pairs {
-		lst, _, _ := s.Repo.Git("", "ls-tree", p.tree)
-		m := map[string]string{}
-		for _, l := range strings.Split(lst, "\n") {
-			tab := strings.SplitN(l, "\t", 2)
-			if len(tab) != 2 {
-				continue
-			}
-			m[tab[1]] = strings.Fields(tab[0])[2]
-		}
-		blobOf[i] = m
-		reqs = append(reqs, m["event.json"])
-		if b, ok := m["meta.json"]; ok {
-			reqs = append(reqs, b)
-		}
-	}
-	contents := s.catBatch(reqs)
-	evs := make([]model.Event, 0, len(pairs))
-	for i, p := range pairs {
-		var ev model.Event
-		if err := json.Unmarshal([]byte(contents[blobOf[i]["event.json"]]), &ev); err != nil {
+	contents, present := s.catBatch(reqs)
+	evs := make([]model.Event, 0, len(commits))
+	for i, c := range commits {
+		evIdx, metaIdx := 2*i, 2*i+1
+		if !present[evIdx] {
 			continue // torn/foreign commit: skip, never crash a read
 		}
-		ev.ID = p.commit[:10]
-		if b, ok := blobOf[i]["meta.json"]; ok {
-			json.Unmarshal([]byte(contents[b]), &meta)
+		var ev model.Event
+		if err := json.Unmarshal([]byte(contents[evIdx]), &ev); err != nil {
+			continue
+		}
+		ev.ID = c[:10]
+		if present[metaIdx] {
+			json.Unmarshal([]byte(contents[metaIdx]), &meta)
 		}
 		evs = append(evs, ev)
 	}
 	return evs, meta, nil
 }
 
-func (s Store) catBatch(ids []string) map[string]string {
-	res := map[string]string{}
+// catBatch fetches every id (an object sha, or a "<rev>:<path>" spec) with a
+// single `git cat-file --batch` call. cat-file replies in request order, so
+// results are returned positionally as parallel slices — never keyed by the
+// echoed identifier, which is unreliable when the same id repeats. Uses
+// GitRaw (not Git) because parsing relies on exact declared byte sizes;
+// Git's trailing-newline trim would corrupt a payload that itself ends in
+// "\n". present[i] is false when git reports that request missing.
+func (s Store) catBatch(ids []string) (contents []string, present []bool) {
+	contents = make([]string, len(ids))
+	present = make([]bool, len(ids))
 	if len(ids) == 0 {
-		return res
+		return contents, present
 	}
-	out, _, _ := s.Repo.Git(strings.Join(ids, "\n"), "cat-file", "--batch")
-	// format per object: "<sha> blob <size>\n<content>\n"
+	out, _, _ := s.Repo.GitRaw(strings.Join(ids, "\n"), "cat-file", "--batch")
 	rest := out
-	for rest != "" {
+	for i := range ids {
 		nl := strings.IndexByte(rest, '\n')
 		if nl < 0 {
 			break
 		}
 		hdr := strings.Fields(rest[:nl])
 		rest = rest[nl+1:]
+		if len(hdr) >= 2 && hdr[len(hdr)-1] == "missing" {
+			continue
+		}
 		if len(hdr) < 3 {
 			continue
 		}
@@ -190,10 +178,11 @@ func (s Store) catBatch(ids []string) map[string]string {
 		if size > len(rest) {
 			size = len(rest)
 		}
-		res[hdr[0]] = rest[:size]
+		contents[i] = rest[:size]
+		present[i] = true
 		rest = strings.TrimPrefix(rest[size:], "\n")
 	}
-	return res
+	return contents, present
 }
 
 func (s Store) Append(slug string, ev model.Event, extra map[string]string, expect Expect) (string, error) {
@@ -241,7 +230,7 @@ func (s Store) Append(slug string, ev model.Event, extra map[string]string, expe
 		}
 		time.Sleep(time.Duration(attempt) * 10 * time.Millisecond)
 	}
-	return "", ErrCASExhausted
+	return "", fmt.Errorf("%w: %s", ErrCASExhausted, slug)
 }
 
 func committerMarker(ev model.Event) string {
