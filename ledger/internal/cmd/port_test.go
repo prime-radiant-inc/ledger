@@ -1,0 +1,102 @@
+package cmd
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// execGit runs git -C dir <args...> and returns trimmed stdout.
+func execGit(dir string, args ...string) (string, error) {
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+func TestExportImportRoundtrip(t *testing.T) {
+	dir := seed(t)
+	f := filepath.Join(t.TempDir(), "demo.jsonl")
+	_, _, code := run(t, dir, "export", "demo", "--to", f)
+	if code != 0 {
+		t.Fatal("export")
+	}
+	data, _ := os.ReadFile(f)
+	if !strings.Contains(string(data), "ledger_export") {
+		t.Fatal("header line")
+	}
+	so, _, code := run(t, dir, "import", f, "--slug", "demo-copy")
+	if code != 0 {
+		t.Fatal(so)
+	}
+	// payload equality: spine folds identically
+	a, _, _ := run(t, dir, "status", "--ledger", "demo")
+	b, _, _ := run(t, dir, "status", "--ledger", "demo-copy")
+	da, db := mustJSON(t, a), mustJSON(t, b)
+	ra, rb := da["rows"].([]any), db["rows"].([]any)
+	if len(ra) != len(rb) {
+		t.Fatalf("row counts differ: %d %d", len(ra), len(rb))
+	}
+	for i := range ra {
+		ma, mb := ra[i].(map[string]any), rb[i].(map[string]any)
+		for _, k := range []string{"key", "field", "value", "note", "by"} {
+			if ma[k] != mb[k] {
+				t.Fatalf("payload drift on %s: %v vs %v", k, ma[k], mb[k])
+			}
+		}
+	}
+	_, se, code := run(t, dir, "import", f, "--slug", "demo")
+	if code != 4 || !strings.Contains(se, "slug_exists") {
+		t.Fatalf("import refuses existing slugs: %s", se)
+	}
+}
+
+// TestImportRejectsTruncatedExport: a malformed line partway through an
+// export file must abort the whole import cleanly — no ref left behind under
+// the target slug (there's no delete verb, and slugs are never reused, so a
+// half-created ledger would be a permanent dead end). The same slug must
+// remain importable afterward from a good file.
+func TestImportRejectsTruncatedExport(t *testing.T) {
+	dir := seed(t)
+	good := filepath.Join(t.TempDir(), "good.jsonl")
+	run(t, dir, "export", "demo", "--to", good)
+
+	data, err := os.ReadFile(good)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	last := lines[len(lines)-1]
+	lines[len(lines)-1] = last[:len(last)/2] // truncate mid-JSON
+
+	bad := filepath.Join(t.TempDir(), "bad.jsonl")
+	if err := os.WriteFile(bad, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, se, code := run(t, dir, "import", bad, "--slug", "partial")
+	if code != 4 || !strings.Contains(se, "bad_export") {
+		t.Fatalf("truncated export must fail cleanly: %d %s", code, se)
+	}
+	_, se2, code2 := run(t, dir, "status", "--ledger", "partial")
+	if code2 == 0 || !strings.Contains(se2, "unknown_ledger") {
+		t.Fatalf("a rejected import must leave no ref behind: %d %s", code2, se2)
+	}
+
+	// the slug must still be usable from a good file
+	so, _, code3 := run(t, dir, "import", good, "--slug", "partial")
+	if code3 != 0 {
+		t.Fatalf("slug must remain importable after a rejected import: %s", so)
+	}
+}
+
+func TestImportedCommitterMarker(t *testing.T) {
+	dir := seed(t)
+	f := filepath.Join(t.TempDir(), "d.jsonl")
+	run(t, dir, "export", "demo", "--to", f)
+	run(t, dir, "import", f, "--slug", "d2")
+	out, _ := execGit(dir, "log", "-1", "--format=%cn", "refs/ledger/d2")
+	if out != "imported" {
+		t.Fatalf("import provenance: %q (must render as (imported), never the importing harness)", out)
+	}
+}
