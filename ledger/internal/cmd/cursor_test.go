@@ -1,9 +1,13 @@
 package cmd
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 	"time"
+
+	"ledger/internal/gitx"
+	"ledger/internal/store"
 )
 
 func TestSincePagingAndReset(t *testing.T) {
@@ -62,6 +66,35 @@ func TestWatchCursorlessEmitsStart(t *testing.T) {
 	}
 	if mustJSON(t, so)["starting_cursor"] == nil {
 		t.Fatal("cursorless watch must emit its starting cursor (cold-start rule)")
+	}
+}
+
+// TestWatchFollowCursorlessEmitsStartLine: --follow's per-event JSON stream
+// has no enclosing envelope, so the cold-start announcement (the head a
+// crashed/killed follow consumer must resume from) can't ride the final
+// drain/timeout payload the way it does in non-follow watch — it needs its
+// own leading line. --follow itself loops forever and isn't unit-testable
+// (no process control here), so this exercises the pre-loop setup
+// (resolveStartCursor) directly with follow=true and a non-TTY Ctx, which
+// is the exact call runWatch makes before entering the stream loop.
+func TestWatchFollowCursorlessEmitsStartLine(t *testing.T) {
+	dir := seed(t)
+	var buf bytes.Buffer
+	c := &Ctx{Store: store.Store{Repo: gitx.Repo{Dir: dir}}, TTY: false, Stdout: &buf, Stderr: &buf}
+	led, err := c.Load("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur, start, err := resolveStartCursor(c, led, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start["starting_cursor"] != cur {
+		t.Fatalf("returned start map must carry the resolved cursor: %v (cur=%s)", start, cur)
+	}
+	doc := mustJSON(t, buf.String())
+	if doc["starting_cursor"] != cur {
+		t.Fatalf("follow's leading JSON line must carry starting_cursor so a killed consumer can resume: %q", buf.String())
 	}
 }
 

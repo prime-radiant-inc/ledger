@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"ledger/internal/fold"
 	"ledger/internal/model"
 	"ledger/internal/out"
 )
@@ -111,6 +112,34 @@ func newWatchCmd(c *Ctx) *cobra.Command {
 	return cmd
 }
 
+// resolveStartCursor is watch's cold-start rule: an explicit --since is
+// used as-is (no announcement — the caller already knows its cursor);
+// cursorless, it resolves the current head and announces it, since that's
+// the only way a caller with no prior cursor can resume exactly where this
+// run started watching from. The announcement has two forms: a TTY line
+// (both follow and non-follow), and — only under --follow — a leading JSON
+// line on stdout, because --follow's per-event stream has no enclosing
+// envelope to carry `starting_cursor` in the way the non-follow path's
+// final drain/timeout payload does (see the `start` merge in runWatch).
+func resolveStartCursor(c *Ctx, led *fold.Ledger, since string, follow bool) (string, map[string]any, error) {
+	if since != "" {
+		return since, map[string]any{}, nil
+	}
+	h, err := c.Store.HeadID(led.Slug)
+	if err != nil {
+		return "", nil, mapStoreErr(err, led.Slug)
+	}
+	start := map[string]any{"starting_cursor": h}
+	switch {
+	case c.TTY:
+		fmt.Fprintln(c.Stdout, "starting cursor: "+h)
+	case follow:
+		line, _ := json.Marshal(start)
+		fmt.Fprintln(c.Stdout, string(line))
+	}
+	return h, start, nil
+}
+
 func runWatch(c *Ctx, o watchOpts) error {
 	if o.follow && o.timeoutSet {
 		return out.Errf("bad_value", "drop --timeout — --follow streams until killed", 4, "--follow has no timeout")
@@ -120,21 +149,9 @@ func runWatch(c *Ctx, o watchOpts) error {
 		return err
 	}
 
-	// Cursorless watch starts at the current head and must announce it
-	// (the cold-start rule): a caller with no prior cursor otherwise has no
-	// way to resume exactly where this run started watching from.
-	cur := o.since
-	start := map[string]any{}
-	if cur == "" {
-		h, err := c.Store.HeadID(led.Slug)
-		if err != nil {
-			return mapStoreErr(err, led.Slug)
-		}
-		cur = h
-		start["starting_cursor"] = h
-		if c.TTY {
-			fmt.Fprintln(c.Stdout, "starting cursor: "+h)
-		}
+	cur, start, err := resolveStartCursor(c, led, o.since, o.follow)
+	if err != nil {
+		return err
 	}
 
 	hasDeadline := !o.follow && o.timeout > 0
