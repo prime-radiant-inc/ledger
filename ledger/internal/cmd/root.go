@@ -39,10 +39,12 @@ func ExecuteArgs(args []string, stdout, stderr io.Writer) int {
 	root.PersistentFlags().StringVar(&storeFlag, "store", "", "store location (default: nearest .ledger.git or git repo)")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		ctx.StoreFlag = storeFlag
-		if cmd.Name() == "help" || cmd.Name() == "init" {
+		if cmd.Name() == "help" || cmd.Name() == "init" || cmd.Name() == "quickstart" {
 			// init bootstraps a store rather than requiring one to already
 			// resolve — it may be run in a plain directory with no git repo
-			// and no .ledger.git anywhere in the ancestry yet.
+			// and no .ledger.git anywhere in the ancestry yet. quickstart
+			// prints embedded doctrine and needs no store at all — a cold
+			// agent must be able to run it before any ledger exists.
 			return nil
 		}
 		st, note, err := store.Resolve(storeFlag)
