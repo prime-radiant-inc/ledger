@@ -38,7 +38,11 @@ func ExecuteArgs(args []string, stdout, stderr io.Writer) int {
 	var storeFlag string
 	root.PersistentFlags().StringVar(&storeFlag, "store", "", "store location (default: nearest .ledger.git or git repo)")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
-		if cmd.Name() == "help" {
+		ctx.StoreFlag = storeFlag
+		if cmd.Name() == "help" || cmd.Name() == "init" {
+			// init bootstraps a store rather than requiring one to already
+			// resolve — it may be run in a plain directory with no git repo
+			// and no .ledger.git anywhere in the ancestry yet.
 			return nil
 		}
 		st, note, err := store.Resolve(storeFlag)

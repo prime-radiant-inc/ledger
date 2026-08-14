@@ -15,6 +15,9 @@ type Ctx struct {
 	TTY    bool
 	Stdout io.Writer
 	Stderr io.Writer
+	// StoreFlag is the raw --store value (possibly empty), always populated —
+	// even for verbs like init that run before a store necessarily exists.
+	StoreFlag string
 }
 
 func (c *Ctx) Load(slug string) (*fold.Ledger, error) {
