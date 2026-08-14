@@ -2440,7 +2440,9 @@ func TestLsFiltersAndSort(t *testing.T) {
 
 - [ ] **Step 5: Commit** — `git add ledger/ && git commit -m "ledger: ls with freshness and idle marking"`
 
----### Task 12: export / import
+---
+
+### Task 12: export / import
 
 **Files:**
 - Create: `ledger/internal/cmd/port.go`
