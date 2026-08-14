@@ -166,12 +166,14 @@ func TestSyncEventsExcludedFromTailAndShowCount(t *testing.T) {
 
 // TestStatusTTYEscapesControlChars: an item key carrying a raw \r is exactly
 // the counterfeit-provenance vector spineLine's escaping already closed for
-// the note-body column — the same rule must cover the key column too.
-// Bypasses run() (never TTY) for a direct TTY Ctx, same pattern as
+// the note-body column — the same rule must cover the key column, and the
+// evidence column (--evidence is just as user-controlled as a note body),
+// too. Bypasses run() (never TTY) for a direct TTY Ctx, same pattern as
 // TestShowTTYNoteSummaryOneLine.
 func TestStatusTTYEscapesControlChars(t *testing.T) {
 	dir := setup(t)
 	run(t, dir, "set", "t1\rFORGED", "open", "--as", "impl")
+	run(t, dir, "set", "t2", "done", "--evidence", "commit:abc\rFORGED", "--as", "impl")
 
 	var buf bytes.Buffer
 	c := &Ctx{Store: store.Store{Repo: gitx.Repo{Dir: dir}}, TTY: true, Stdout: &buf, Stderr: &buf}
@@ -180,10 +182,13 @@ func TestStatusTTYEscapesControlChars(t *testing.T) {
 	}
 	rendered := buf.String()
 	if strings.Contains(rendered, "\r") {
-		t.Fatalf("status TTY must escape control chars in the key column: %q", rendered)
+		t.Fatalf("status TTY must escape control chars in the key and evidence columns: %q", rendered)
 	}
 	if !strings.Contains(rendered, "^M") {
 		t.Fatalf("expected the escaped \\r as ^M: %q", rendered)
+	}
+	if !strings.Contains(rendered, "commit:abc^MFORGED") {
+		t.Fatalf("evidence column must carry the escaped, not raw, ref: %q", rendered)
 	}
 }
 

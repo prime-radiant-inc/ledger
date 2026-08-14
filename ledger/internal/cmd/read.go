@@ -90,7 +90,7 @@ func sortRows(rows []row) {
 // the annotation is control-escaped: a note body can otherwise counterfeit a
 // provenance line on a raw terminal.
 func spineLine(r row) string {
-	evd := strings.Join(r.Evidence, " ")
+	evd := out.EscapeControls(strings.Join(r.Evidence, " "))
 	if evd == "" {
 		evd = "(no evidence)"
 	}
