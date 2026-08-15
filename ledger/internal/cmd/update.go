@@ -85,6 +85,14 @@ func newUpdateCmd(c *Ctx) *cobra.Command {
 			if runtime.GOOS == "windows" {
 				permHint = "the install directory isn't writable — retry from an elevated prompt"
 			}
+			// sweep staging files a killed earlier update left behind — Fetch
+			// stages in the install dir (same-filesystem rename), so orphans
+			// would otherwise accumulate there forever
+			if stale, err := filepath.Glob(filepath.Join(filepath.Dir(target), ".ledger-update-*")); err == nil {
+				for _, f := range stale {
+					os.Remove(f)
+				}
+			}
 			asset := selfupdate.AssetName(runtime.GOOS, runtime.GOARCH)
 			newBin, err := selfupdate.Fetch(client, dl, selfupdate.Repo, latest, asset, filepath.Dir(target))
 			if err != nil {
@@ -137,6 +145,17 @@ func passiveUpdateCheck(c *Ctx, verb string) {
 		selfupdate.SaveState(dir, st)
 	}
 	if st.Latest != "" && selfupdate.CompareVersions(Version, st.Latest) < 0 {
-		fmt.Fprintf(c.Stderr, "ledger %s is available (you have %s) — run `ledger update`\n", st.Latest, Version)
+		fix := "run `ledger update`"
+		if target, err := updateTarget(); err == nil {
+			if resolved, rerr := filepath.EvalSymlinks(target); rerr == nil {
+				target = resolved
+			}
+			if selfupdate.ManagedByHomebrew(target) {
+				// `ledger update` refuses brew installs — don't nag toward a
+				// command that will only bounce the user to another one
+				fix = "run `brew upgrade ledger`"
+			}
+		}
+		fmt.Fprintf(c.Stderr, "ledger %s is available (you have %s) — %s\n", st.Latest, Version, fix)
 	}
 }

@@ -41,14 +41,16 @@ func ExecuteArgs(args []string, stdout, stderr io.Writer) int {
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		ctx.StoreFlag = storeFlag
 		switch cmd.Name() {
-		case "help", "init", "quickstart", "version", "update":
+		case "help", "init", "quickstart", "version", "update", "completion", "__complete", "__completeNoDesc":
 			// init bootstraps a store rather than requiring one to already
 			// resolve — it may be run in a plain directory with no git repo
 			// and no .ledger.git anywhere in the ancestry yet. quickstart
 			// prints embedded doctrine and needs no store at all — a cold
 			// agent must be able to run it before any ledger exists. version
 			// and update act on the binary, not a store, and the first thing
-			// a fresh install runs must work in an empty directory.
+			// a fresh install runs must work in an empty directory. cobra's
+			// completion machinery (script generation and the hidden
+			// __complete probes) must also work anywhere a shell runs.
 			return nil
 		}
 		res, err := store.Resolve(storeFlag)

@@ -142,7 +142,10 @@ if [ -z "${BINDIR:-}" ]; then
 fi
 mkdir -p "$BINDIR"
 
-install -m 0755 "$tmpdir/ledger" "$BINDIR/ledger"
+# Stage beside the destination, then rename: atomic on one filesystem, so an
+# interrupted upgrade never leaves a truncated binary where a working one was.
+install -m 0755 "$tmpdir/ledger" "$BINDIR/.ledger.new.$$"
+mv -f "$BINDIR/.ledger.new.$$" "$BINDIR/ledger"
 echo ">> Installed $("$BINDIR/ledger" version 2>/dev/null | head -1 || echo ledger) to $BINDIR/ledger"
 
 case ":$PATH:" in

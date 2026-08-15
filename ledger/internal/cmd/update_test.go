@@ -269,4 +269,28 @@ func TestPassiveCheckGating(t *testing.T) {
 	if se.Len() != 0 || hits.Load() != 1 {
 		t.Fatalf("update verb must skip the passive check: %q, %d hits", se.String(), hits.Load())
 	}
+
+	// a brew-managed binary is nagged toward brew, not toward `ledger
+	// update` (which would refuse it)
+	se.Reset()
+	selfupdate.SaveState(stateDir, selfupdate.State{CheckedAt: time.Now(), Latest: "v0.2.0"})
+	restoreT := updateTarget
+	updateTarget = func() (string, error) {
+		return "/opt/homebrew/Cellar/ledger/0.1.0/bin/ledger", nil
+	}
+	defer func() { updateTarget = restoreT }()
+	passiveUpdateCheck(&Ctx{TTY: true, Stderr: &se}, "show")
+	if !strings.Contains(se.String(), "brew upgrade ledger") || strings.Contains(se.String(), "ledger update") {
+		t.Fatalf("brew-managed nag must point at brew upgrade: %q", se.String())
+	}
+}
+
+// TestCompletionIsStoreless: cobra's completion machinery must work outside
+// any git repo or store — a shell sources it at startup from anywhere.
+func TestCompletionIsStoreless(t *testing.T) {
+	var so, se bytes.Buffer
+	code := ExecuteArgs([]string{"--store", t.TempDir(), "completion", "bash"}, &so, &se)
+	if code != 0 || so.Len() == 0 {
+		t.Fatalf("completion bash in a storeless dir: %d %s", code, se.String())
+	}
 }
