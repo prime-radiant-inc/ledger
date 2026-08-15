@@ -1,6 +1,14 @@
 # Ledger-backed agent memory (design)
 
-2026-08-15, revision 4. Replaces the file-based per-project agent memory
+2026-08-15, revision 5. Rev 5 folds in the eight-agent spike eval
+(`research/ledger-memory-spike-eval.md`: 8/8, zero tool errors; the header
+beat the fixed system prompt in every contested scenario on both model
+classes; hookless installs measurably regress, confirming the SessionStart
+hook is load-bearing): save-echo's retraction warning is suppressed when the
+retraction is the writer's own immediately-preceding event; `archive` takes
+multiple names with one final render; the header's save example shows the
+`[feedback]` hook-prefix convention; the curation nag is worded as a
+judgment call, never a quota. Replaces the file-based per-project agent memory
 (MEMORY.md index + one markdown file per fact) with a memory ledger, dogfooding
 `ledger` v0.1.0 as the first real consumer of the committed-projection pattern
 deferred to v2 in the tool spec. Grounded in Jesse's rulings this session, the
@@ -120,12 +128,16 @@ ships a thin script, and no raw `ledger` write command appears in any
 memory-facing doc:
 
 ```
-ledger-memory save <name> -m "<hook>" [--evidence <ref>] [--body <file>]
+ledger-memory save <name> -m "[feedback] <hook>" [--evidence <ref>] [--body <file>]
 ledger-memory retract <name> -m "wrong because <why>"
-ledger-memory archive <name>
+ledger-memory archive <name> [<name>…]      # bulk-safe: one render at the end
 ledger-memory render
-ledger-memory drill <name>          # show + latest body + key history
+ledger-memory drill <name>                  # show + latest body + key history
 ```
+
+(The `[feedback]`-style prefix in the save example is the taxonomy
+convention: eval agents trained on the old frontmatter `type` field go
+looking for it, and the example is where that instinct lands.)
 
 Contract:
 
@@ -151,6 +163,10 @@ Contract:
   stops depending on the writer's diligence beforehand: the surprise lands
   immediately after, when one `retract` fixes it. Drill-before-overwrite
   remains doctrine, but the mechanism no longer needs it to hold.
+  Eval-tuned: the retraction warning is suppressed when the retraction is
+  this same author's immediately preceding event on the key — that's the
+  normal retract-then-correct flow, and warning on it reads as a false
+  alarm (S2's one friction note).
 - **Bootstrap is a shared preamble** run by every subcommand (both reviewers
   caught rev 3 granting it to `save` while the SessionStart hook needs it in
   `render`). Three states: no `.ledger.git` → run `init` + `create` and
@@ -166,10 +182,12 @@ Contract:
   A crash can never leave a truncated or header-only projection.
 - **Size nag with candidates**: when the projection exceeds ~60 lines, the
   render appends a "curation due" line naming the three oldest facts with no
-  inbound `[[links]]` as archive candidates, so curation is paste-a-command,
-  not survey-the-file. Advisory only; age is anti-signal for memory value
-  (standing rulings are old and load-bearing), so nothing auto-archives, and
-  the failure mode of lapsed curation is growing token cost, not data loss.
+  inbound `[[links]]` as archive candidates — worded "judgment call, not a
+  quota; standing rulings stay", because the heuristic can and does name
+  load-bearing facts (the eval's nag listed a standing preference; the agent
+  rightly declined). Advisory only; age is anti-signal for memory value, so
+  nothing auto-archives, and the failure mode of lapsed curation is growing
+  token cost, not data loss.
 
 ## Projection (MEMORY.md)
 
