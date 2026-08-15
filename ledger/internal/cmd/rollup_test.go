@@ -63,11 +63,27 @@ func TestRollupSubmitAndErrors(t *testing.T) {
 	if code != 4 || !strings.Contains(se, "child_taken") || !strings.Contains(se, rid) {
 		t.Fatalf("child_taken must name owner %s: %d %s", rid, code, se)
 	}
+	errDoc := mustJSON(t, se)
+	if errDoc["error"] != "child_taken" {
+		t.Fatalf("child_taken error field: %v", errDoc)
+	}
+	hint, _ := errDoc["hint"].(string)
+	if !strings.Contains(hint, rid) {
+		t.Fatalf("child_taken hint (not just message) must name owning rollup %s: %v", rid, errDoc)
+	}
 
-	// unknown_event
-	_, se, code = run(t, dir, "rollup", "deadbeef00", "-m", "x", "--as", "curator")
+	// unknown_event: the id must genuinely be absent from the raw chain
+	badID := "deadbeef00"
+	_, se, code = run(t, dir, "rollup", badID, "-m", "x", "--as", "curator")
 	if code != 4 || !strings.Contains(se, "unknown_event") {
 		t.Fatalf("unknown_event: %d %s", code, se)
+	}
+	rawSO, _, _ := run(t, dir, "tail", "--raw", "-n", "50")
+	rawDoc := mustJSON(t, rawSO)
+	for _, e := range rawDoc["events"].([]any) {
+		if e.(map[string]any)["id"] == badID {
+			t.Fatalf("test setup bug: %s unexpectedly present in raw chain: %s", badID, rawSO)
+		}
 	}
 
 	// empty and multi-line summaries refused
@@ -206,5 +222,83 @@ func TestWatchDeliversRollupsUnfiltered(t *testing.T) {
 	}
 	if !strings.Contains(so, `"cursor"`) {
 		t.Fatalf("timeout must still carry a cursor: %s", so)
+	}
+}
+
+// TestRollupIdempotencyKey mirrors set/note's --idempotency-key dedupe: a
+// rollup write is a no-op iff a prior ROLLUP event by the same author
+// carries the same idempotency key. Rollups have no item key, so the scope
+// is just (author, key) — the pair is the whole scope.
+func TestRollupIdempotencyKey(t *testing.T) {
+	dir := setup(t)
+	a := writeEv(t, dir, "k1")
+	b := writeEv(t, dir, "k2")
+
+	so1, _, code := run(t, dir, "rollup", a, "-m", "first", "--as", "curator", "--idempotency-key", "r1")
+	if code != 0 {
+		t.Fatal(so1)
+	}
+	d1 := mustJSON(t, so1)
+
+	// same author + same key -> deduped, with causing sha+author
+	so2, _, code := run(t, dir, "rollup", b, "-m", "second", "--as", "curator", "--idempotency-key", "r1")
+	if code != 0 {
+		t.Fatal(so2)
+	}
+	d2 := mustJSON(t, so2)
+	if d2["deduped"] != true || d2["id"] != d1["id"] || d2["by"] != "curator" {
+		t.Fatalf("same author+key must dedupe against the causing sha+author: %v", d2)
+	}
+
+	// the children named in the deduped call must NOT be claimed by it — b
+	// is still available for a real rollup
+	so3, _, code := run(t, dir, "rollup", b, "-m", "actually roll b", "--as", "curator2")
+	if code != 0 {
+		t.Fatalf("child b must not have been claimed by the deduped rollup: %s", so3)
+	}
+
+	// different author, same key -> lands (author-scoped, not just key-scoped)
+	cID := writeEv(t, dir, "k3")
+	so4, _, code := run(t, dir, "rollup", cID, "-m", "third", "--as", "other", "--idempotency-key", "r1")
+	if code != 0 {
+		t.Fatal(so4)
+	}
+	if mustJSON(t, so4)["deduped"] == true {
+		t.Fatal("different author, same key must NOT dedupe (spec: author-scoped)")
+	}
+}
+
+// TestRollupDuplicateIdsInArgvDeduped: `rollup <a> <a> -m ...` must collapse
+// the repeated id to a single child, both in the envelope and in the event
+// actually stored (checked via tail --raw, not just the response payload).
+func TestRollupDuplicateIdsInArgvDeduped(t *testing.T) {
+	dir := setup(t)
+	a := writeEv(t, dir, "k1")
+	so, _, code := run(t, dir, "rollup", a, a, "-m", "dup ids in argv", "--as", "curator")
+	if code != 0 {
+		t.Fatal(so)
+	}
+	doc := mustJSON(t, so)
+	if doc["children"].(float64) != 1 {
+		t.Fatalf("duplicate ids in argv must collapse to one child in the envelope: %v", doc)
+	}
+	rid := doc["id"].(string)
+
+	rawSO, _, _ := run(t, dir, "tail", "--raw", "-n", "50")
+	rawDoc := mustJSON(t, rawSO)
+	found := false
+	for _, e := range rawDoc["events"].([]any) {
+		m := e.(map[string]any)
+		if m["id"] != rid {
+			continue
+		}
+		found = true
+		children, _ := m["children"].([]any)
+		if len(children) != 1 {
+			t.Fatalf("stored rollup event must have exactly one child, got %v: %v", children, m)
+		}
+	}
+	if !found {
+		t.Fatalf("rollup event %s not found in raw chain: %s", rid, rawSO)
 	}
 }

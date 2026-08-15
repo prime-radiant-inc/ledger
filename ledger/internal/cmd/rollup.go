@@ -15,19 +15,20 @@ import (
 func init() { register(newRollupCmd) }
 
 func newRollupCmd(c *Ctx) *cobra.Command {
-	var msg, as, ledgerFlag string
+	var msg, as, ledgerFlag, idemKey string
 	cmd := &cobra.Command{Use: "rollup [EVENT_ID ...]",
 		Short: "encapsulate a finished thread into one summary line (bare: show roots + instructions)",
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runRollup(c, args, msg, as, ledgerFlag)
+			return runRollup(c, args, msg, as, ledgerFlag, idemKey)
 		}}
 	cmd.Flags().StringVarP(&msg, "message", "m", "", "the one-line summary")
 	cmd.Flags().StringVar(&as, "as", "", "author identity for this write")
 	cmd.Flags().StringVar(&ledgerFlag, "ledger", "", "target ledger")
+	cmd.Flags().StringVar(&idemKey, "idempotency-key", "", "dedupe key scoped to (author, key) — rollups have no item key")
 	return cmd
 }
 
-func runRollup(c *Ctx, ids []string, msg, as, ledgerFlag string) error {
+func runRollup(c *Ctx, ids []string, msg, as, ledgerFlag, idemKey string) error {
 	led, err := c.PickLedger(ledgerFlag)
 	if err != nil {
 		return err
@@ -43,6 +44,18 @@ func runRollup(c *Ctx, ids []string, msg, as, ledgerFlag string) error {
 	if strings.ContainsAny(msg, "\n\r") {
 		return out.Errf("bad_value", "put longer prose in a note, then cite that note's id in the summary line", 4,
 			"a rollup summary is exactly one line")
+	}
+	author := model.ResolveAuthor(as)
+	if idemKey != "" {
+		// Mirrors set/note's semantics, but scoped to (author, key) alone —
+		// a rollup has no item key, so that pair is the whole scope.
+		for _, ev := range led.Events {
+			if ev.Type == "rollup" && ev.IdempotencyKey == idemKey && ev.Author == author {
+				outEmit(c, map[string]any{"id": ev.ID, "ledger": led.Slug, "deduped": true, "by": ev.Author},
+					[]string{"deduped against " + ev.ID})
+				return nil
+			}
+		}
 	}
 	byID := map[string]model.Event{}
 	for _, e := range led.Events {
@@ -68,9 +81,10 @@ func runRollup(c *Ctx, ids []string, msg, as, ledgerFlag string) error {
 		}
 		children = append(children, id)
 	}
-	ev := model.NewEvent("rollup", model.ResolveAuthor(as), c.Store.Repo)
+	ev := model.NewEvent("rollup", author, c.Store.Repo)
 	ev.Children = children
 	ev.Text = msg
+	ev.IdempotencyKey = idemKey
 	id, err := c.Store.Append(led.Slug, ev, nil, store.ExpectPresent)
 	if err != nil {
 		return mapStoreErr(err, led.Slug)
