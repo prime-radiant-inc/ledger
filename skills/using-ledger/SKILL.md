@@ -136,7 +136,11 @@ natural pause, before a handoff note, and at close — never mid-flow.
 Summaries are second-order testimony: verify one against the records
 inside it (`tail --in <id>`) before building on it, and fix a wrong one
 by rolling it up under a corrected line — never expect to edit or delete.
-Leave live work unrolled.
+Leave live work unrolled — and standing rulings, unresolved gotchas, and
+finished work the next task leans on are *worth keeping* unrolled:
+`rollup_due` counts unrolled records, it is not a quota to drive to zero.
+A bridge note that closes one thread and opens another belongs to the
+thread it opens.
 
 ```
 ledger close scratch-slug --as-state abandoned  # or shipped, or superseded
