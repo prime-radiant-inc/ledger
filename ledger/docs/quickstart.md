@@ -18,17 +18,20 @@ fleet-dispatch) — this is the doctrine `--help` doesn't teach.
 
 ## Doctrine
 
-1. **Identity.** `--as <role>` says who's writing. Default: `$LEDGER_AUTHOR`
-   > harness marker > `$USER`. Subagent prompts must set `--as` explicitly.
+1. **Identity.** `--as <role>` says who's writing; roles are free-form.
+   Default: `$LEDGER_AUTHOR` > harness marker > `$USER`. Subagent prompts
+   must set `--as` explicitly.
 2. **Orientation.** Commands resolve against the repo you're standing in —
    run them (and `init`) from inside the project. `ls` lists open ledgers
    plus anything closed in 30 days; `ls --all` reaches further. `show` is
    the full render, `status [key]` the spine; `--ledger` becomes *required*
    once more than one ledger is open. Empty output announces itself.
-3. **`set` auto-creates keys** on first use. `set <key> field=value` names the field;
-   a bare value hits the first declared field. `-m "why"` and `--evidence type:ref`
-   (`commit:`, `run:`, `file:`, free-form) attach provenance. `(no evidence)` is a
-   trust marker, not an error; `--require-evidence` fields hard-error without one.
+3. **`set` auto-creates keys** on first use. `set <key> field=value` names
+   the field; a bare value hits the first declared field. `-m "why"` and
+   `--evidence type:ref` (`commit:`, `run:`, `file:`, free-form — short SHAs
+   count) attach provenance. `(no evidence)` is a trust marker, not an
+   error; `--require-evidence` fields hard-error without one, `show` lists
+   them.
 4. **Vocab is a hard error, not a warning.** An undeclared value refuses and
    names the fix: `ledger vocab add <slug> <field> <value> -m "why"`, then
    retry — growth is a recorded, attributed decision.
@@ -38,10 +41,12 @@ fleet-dispatch) — this is the doctrine `--help` doesn't teach.
    `ledger note -k handoff --key <next-task> --from-file handoff.md`. Read
    back: `notes [-k kind] [--key k] [--latest|-n N]`.
 6. **Cursors.** Every write's id is a cursor. `since [<cursor>]` / `watch
-   --since <cursor>` deliver `cursor..head` once. Unrecognized cursor:
-   `reset_required` — recover via `status` + `tail -n N`, never a re-drain.
+   --since <cursor>` deliver `cursor..head` once; `since` with no cursor
+   drains from the very beginning. Unrecognized cursor: `reset_required` —
+   recover via `status` + `tail -n N`, never a re-drain.
 7. **`watch`** exits 0 with events, 2 on timeout, cursor in the payload
-   either way; default 60s, `--timeout 0`=forever.
+   either way; default 60s, `--timeout 0`=forever. A cursorless `watch`
+   announces its `starting_cursor` first.
 8. **Content search** is a pipe: `ledger tail --raw -n 200 | grep <term>`.
 9. **Roll-ups keep history readable.** `tail` shows roots: each rollup is
    one summary line standing in for the records inside it (`--raw` = the
