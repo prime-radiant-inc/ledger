@@ -190,7 +190,11 @@ func Replace(target, newBin string) error {
 			return err
 		}
 		if err := os.Rename(newBin, target); err != nil {
-			os.Rename(old, target) // best-effort restore
+			if rerr := os.Rename(old, target); rerr != nil {
+				// worst case: nothing at target. Say exactly where the last
+				// good binary still is instead of failing mysteriously.
+				return fmt.Errorf("installing the new binary failed (%v) and restoring the old one failed too (%v) — the previous binary is intact at %s", err, rerr, old)
+			}
 			return err
 		}
 		return nil

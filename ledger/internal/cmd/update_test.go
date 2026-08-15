@@ -141,6 +141,40 @@ func TestUpdateAlreadyCurrentSkipsDownload(t *testing.T) {
 	}
 }
 
+// TestUpdatePermissionErrorGetsPermissionHint: Fetch extracts into the
+// install dir, so an unwritable dir fails there — before Replace. That
+// failure must carry the permissions hint, not the network one.
+func TestUpdatePermissionErrorGetsPermissionHint(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	srv := releaseServer(t, "v9.9.9", []byte("new binary"), nil)
+	defer srv.Close()
+	t.Setenv("LEDGER_UPDATE_URL", srv.URL)
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, selfupdate.BinaryName(runtime.GOOS))
+	if err := os.WriteFile(target, []byte("old binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	restore := updateTarget
+	updateTarget = func() (string, error) { return target, nil }
+	defer func() { updateTarget = restore }()
+
+	var so, se bytes.Buffer
+	code := ExecuteArgs([]string{"update"}, &so, &se)
+	if code != 1 || !strings.Contains(se.String(), "update_failed") {
+		t.Fatalf("unwritable install dir must be update_failed exit 1: %d %s", code, se.String())
+	}
+	if !strings.Contains(se.String(), "sudo") || strings.Contains(se.String(), "network") {
+		t.Fatalf("permission failure must hint at permissions, not the network: %s", se.String())
+	}
+}
+
 func TestUpdateRefusesHomebrewInstall(t *testing.T) {
 	srv := releaseServer(t, "v9.9.9", []byte("bin"), nil)
 	defer srv.Close()

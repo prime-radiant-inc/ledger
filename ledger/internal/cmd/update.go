@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -76,14 +78,25 @@ func newUpdateCmd(c *Ctx) *cobra.Command {
 				return out.Errf("brew_managed", "run: brew upgrade ledger", 4,
 					"this binary was installed by Homebrew (%s); a self-update would be undone by the next brew upgrade", target)
 			}
+			// Fetch extracts into the install dir (keeps the final rename on
+			// one filesystem), so an unwritable dir fails here, not in Replace
+			// — both paths need the permissions hint.
+			permHint := "if the install dir needs root, rerun with sudo"
+			if runtime.GOOS == "windows" {
+				permHint = "the install directory isn't writable — retry from an elevated prompt"
+			}
 			asset := selfupdate.AssetName(runtime.GOOS, runtime.GOARCH)
 			newBin, err := selfupdate.Fetch(client, dl, selfupdate.Repo, latest, asset, filepath.Dir(target))
 			if err != nil {
-				return out.Errf("update_failed", "check your network and try again", 1, "%s", err)
+				hint := "check your network and try again"
+				if errors.Is(err, fs.ErrPermission) {
+					hint = permHint
+				}
+				return out.Errf("update_failed", hint, 1, "%s", err)
 			}
 			if err := selfupdate.Replace(target, newBin); err != nil {
 				os.Remove(newBin)
-				return out.Errf("update_failed", "if the install dir needs root, rerun with sudo", 1, "%s", err)
+				return out.Errf("update_failed", permHint, 1, "%s", err)
 			}
 			out.Emit(c.Stdout, c.TTY, map[string]any{
 				"current": Version, "installed": latest, "updated": true,

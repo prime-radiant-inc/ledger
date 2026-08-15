@@ -107,15 +107,33 @@ if [ ! -f "$tmpdir/ledger" ]; then
     exit 1
 fi
 
+# resolve_links follows a symlink chain by hand — `readlink -f` isn't on
+# older macOS, and the brew check below must see the real Cellar path, not
+# the /opt/homebrew/bin symlink that PATH finds.
+resolve_links() {
+    p="$1"
+    while [ -L "$p" ]; do
+        t=$(readlink "$p") || break
+        case "$t" in
+            /*) p="$t" ;;
+            *)  p="$(dirname "$p")/$t" ;;
+        esac
+    done
+    printf '%s\n' "$p"
+}
+
 # Default install dir: wherever THIS ledger already lives (so this doubles
 # as an upgrade), else ~/.local/bin. "ledger" is also the name of a venerable
 # accounting CLI, so only adopt an existing binary's directory if it answers
-# like ours (JSON envelope with an arch field) and isn't Homebrew-managed.
+# like ours (JSON envelope with an arch field) and isn't Homebrew-managed
+# (overwriting brew's symlink would detach it from brew upgrade/uninstall).
 if [ -z "${BINDIR:-}" ]; then
     BINDIR="$HOME/.local/bin"
     if existing=$(command -v ledger 2>/dev/null); then
-        case "$existing" in
-            */Cellar/*) ;; # brew-managed: leave it to brew
+        case "$(resolve_links "$existing")" in
+            */Cellar/*)
+                echo ">> Existing ledger at $existing is Homebrew-managed; use \`brew upgrade ledger\`." >&2
+                echo ">> Installing to $BINDIR instead." >&2 ;;
             *) if "$existing" version 2>/dev/null | grep -q '"arch"'; then
                    BINDIR=$(dirname "$existing")
                fi ;;
