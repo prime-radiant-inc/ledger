@@ -79,6 +79,60 @@ func TestRollupSubmitAndErrors(t *testing.T) {
 	}
 }
 
+func TestTailRootsAndDrill(t *testing.T) {
+	dir := setup(t)
+	a := writeEv(t, dir, "k1")
+	b := writeEv(t, dir, "k2")
+
+	// pre-rollup: default tail is byte-identical to the raw view minus the raw flag
+	before, _, _ := run(t, dir, "tail", "-n", "50")
+	beforeDoc := mustJSON(t, before)
+	if _, has := beforeDoc["rollup_due"]; has {
+		t.Fatalf("default tail must not grow new fields (byte-identical contract)")
+	}
+
+	so, se, code := run(t, dir, "rollup", a, b, "-m", "k-thread finished", "--as", "curator")
+	if code != 0 {
+		t.Fatalf("%s", se)
+	}
+	rid := mustJSON(t, so)["id"].(string)
+
+	// default tail now collapses: no event with id a or b; one rollup root
+	so, _, _ = run(t, dir, "tail", "-n", "50")
+	if strings.Contains(so, `"id": "`+a+`"`) || strings.Contains(so, `"id": "`+b+`"`) {
+		t.Fatalf("encapsulated events leaked into roots view: %s", so)
+	}
+	if !strings.Contains(so, rid) {
+		t.Fatalf("rollup root missing: %s", so)
+	}
+
+	// --raw still shows everything
+	so, _, _ = run(t, dir, "tail", "--raw", "-n", "50")
+	if !strings.Contains(so, `"`+a+`"`) || !strings.Contains(so, `"raw": true`) {
+		t.Fatalf("raw view must show the full chain: %s", so)
+	}
+
+	// --in opens the rollup
+	so, se, code = run(t, dir, "tail", "--in", rid)
+	if code != 0 {
+		t.Fatalf("--in failed: %s", se)
+	}
+	doc := mustJSON(t, so)
+	if doc["summary"] != "k-thread finished" || len(doc["events"].([]any)) != 2 {
+		t.Fatalf("--in wrong: %v", doc)
+	}
+
+	// --in on a non-rollup id is unknown_event; --raw + --in is bad_value
+	_, se, code = run(t, dir, "tail", "--in", a)
+	if code != 4 || !strings.Contains(se, "unknown_event") {
+		t.Fatalf("--in non-rollup: %d %s", code, se)
+	}
+	_, se, code = run(t, dir, "tail", "--raw", "--in", rid)
+	if code != 4 || !strings.Contains(se, "bad_value") {
+		t.Fatalf("--raw --in: %d %s", code, se)
+	}
+}
+
 func TestRollupOnClosedLedgerAllowed(t *testing.T) {
 	dir := setup(t)
 	a := writeEv(t, dir, "k1")

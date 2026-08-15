@@ -479,27 +479,87 @@ func init() { register(newTailCmd) }
 
 func newTailCmd(c *Ctx) *cobra.Command {
 	var limit int
-	var ledgerFlag string
-	cmd := &cobra.Command{Use: "tail", Short: "the most recent events, oldest first", Args: noPositionals("tail"),
-		RunE: func(_ *cobra.Command, _ []string) error { return runTail(c, limit, ledgerFlag) }}
-	cmd.Flags().IntVarP(&limit, "limit", "n", 20, "how many recent events")
+	var ledgerFlag, inID string
+	var raw bool
+	cmd := &cobra.Command{Use: "tail", Short: "the curated history: roots, oldest first (rollups collapse their contents)",
+		Args: noPositionals("tail"),
+		RunE: func(_ *cobra.Command, _ []string) error { return runTail(c, limit, raw, inID, ledgerFlag) }}
+	cmd.Flags().IntVarP(&limit, "limit", "n", 20, "how many recent roots (or raw events)")
+	cmd.Flags().BoolVar(&raw, "raw", false, "the true event chain, nothing collapsed")
+	cmd.Flags().StringVar(&inID, "in", "", "open one rollup: list the records inside it")
 	cmd.Flags().StringVar(&ledgerFlag, "ledger", "", "target ledger")
 	return cmd
 }
 
-func runTail(c *Ctx, limit int, ledgerFlag string) error {
+func runTail(c *Ctx, limit int, raw bool, inID, ledgerFlag string) error {
+	if raw && inID != "" {
+		return out.Errf("bad_value", "--raw shows the whole chain; --in opens one rollup — pick one", 4,
+			"--raw and --in are mutually exclusive")
+	}
 	led, err := c.PickLedger(ledgerFlag)
 	if err != nil {
 		return err
 	}
-	evs := nonSyncEvents(led.Events)
+	if inID != "" {
+		return runTailIn(c, led, inID)
+	}
+	if raw {
+		evs := nonSyncEvents(led.Events)
+		if limit > 0 && len(evs) > limit {
+			evs = evs[len(evs)-limit:]
+		}
+		docs := eventsJSON(evs)
+		for i, ev := range evs {
+			if led.Losers[ev.ID] {
+				docs[i]["duel_loser"] = true
+			}
+		}
+		payload := map[string]any{"ledger": led.Slug, "raw": true, "events": docs, "cursor": led.Head()}
+		lines := addRedirect(c, led, payload)
+		for _, ev := range evs {
+			l := eventLine(ev)
+			if led.Losers[ev.ID] {
+				l += " [duel-loser]"
+			}
+			lines = append(lines, l)
+		}
+		outEmit(c, payload, lines)
+		return nil
+	}
+	evs := led.Roots()
 	if limit > 0 && len(evs) > limit {
 		evs = evs[len(evs)-limit:]
 	}
 	payload := map[string]any{"ledger": led.Slug, "events": eventsJSON(evs), "cursor": led.Head()}
 	lines := addRedirect(c, led, payload)
 	for _, ev := range evs {
-		lines = append(lines, eventLine(ev))
+		lines = append(lines, rootLine(led, ev))
+	}
+	outEmit(c, payload, lines)
+	return nil
+}
+
+func runTailIn(c *Ctx, led *fold.Ledger, inID string) error {
+	byID := map[string]model.Event{}
+	for _, e := range led.Events {
+		byID[e.ID] = e
+	}
+	r, ok := byID[inID]
+	if !ok || r.Type != "rollup" {
+		return out.Errf("unknown_event", "ledger tail  shows the current roots; rollup lines carry their id", 4,
+			"'%s' is not a rollup on '%s'", inID, led.Slug)
+	}
+	var evs []model.Event
+	for _, cid := range r.Children {
+		if e, ok := byID[cid]; ok {
+			evs = append(evs, e)
+		}
+	}
+	payload := map[string]any{"ledger": led.Slug, "rollup": inID, "summary": r.Text, "events": eventsJSON(evs)}
+	lines := addRedirect(c, led, payload)
+	lines = append(lines, "inside ["+inID+"] \""+out.EscapeControls(r.Text)+"\":")
+	for _, ev := range evs {
+		lines = append(lines, "  "+rootLine(led, ev))
 	}
 	outEmit(c, payload, lines)
 	return nil
