@@ -62,7 +62,7 @@ func runClose(c *Ctx, slug, asState, supersededBy, asFlag, mFlag string) error {
 		linkEv := model.NewEvent("lifecycle", author, c.Store.Repo)
 		linkEv.LifecycleKind, linkEv.Successor = "superseded_by", supersededBy
 
-		ids, err := c.Store.AppendChain(slug, []model.Event{closeEv, linkEv}, nil, store.ExpectPresent)
+		ids, err := c.Store.AppendChain(slug, []model.Event{closeEv, linkEv}, nil, store.ExpectPresent, nil)
 		if err != nil {
 			return mapStoreErr(err, slug)
 		}
