@@ -2,8 +2,15 @@ package cmd
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
+
+	"ledger/internal/fold"
+	"ledger/internal/gitx"
+	"ledger/internal/model"
+	"ledger/internal/store"
 )
 
 func jsonEq(t *testing.T, a, b any) bool {
@@ -301,4 +308,100 @@ func TestRollupDuplicateIdsInArgvDeduped(t *testing.T) {
 	if !found {
 		t.Fatalf("rollup event %s not found in raw chain: %s", rid, rawSO)
 	}
+}
+
+// TestConcurrentRollupDuelAllOrNothing races two rollup writes that both
+// claim child a (one also claims b), appending through store.Store directly
+// to bypass the CLI's write-time child_taken check — the only way to force
+// the duel CAS is meant to resolve. Proves: both appends land (CAS
+// serializes, neither is lost), fold's total order picks exactly one
+// winner, the loser is wholly inert (all-or-nothing: it doesn't keep the
+// child the winner never claimed), and tail --raw flags the loser while
+// tail's roots view excludes it. Assertions are outcome-symmetric: they
+// hold whichever racer lands first in the chain (see fold.Fold's duel
+// resolution: whoever is processed first in event order wins).
+func TestConcurrentRollupDuelAllOrNothing(t *testing.T) {
+	dir := setup(t)
+	a := writeEv(t, dir, "k1")
+	b := writeEv(t, dir, "k2")
+
+	st := store.Store{Repo: gitx.Repo{Dir: dir}}
+	var wg sync.WaitGroup
+	for i, kids := range [][]string{{a}, {a, b}} {
+		wg.Add(1)
+		go func(n int, children []string) {
+			defer wg.Done()
+			ev := model.NewEvent("rollup", "racer-"+strconv.Itoa(n), st.Repo)
+			ev.Children = children
+			ev.Text = "race " + strconv.Itoa(n)
+			if _, err := st.Append("demo", ev, nil, store.ExpectPresent); err != nil {
+				t.Errorf("append %d: %v", n, err)
+			}
+		}(i, kids)
+	}
+	wg.Wait()
+
+	evs, meta, err := st.Events("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	led := fold.Fold("demo", evs, meta)
+	var rollups []model.Event
+	for _, e := range evs {
+		if e.Type == "rollup" {
+			rollups = append(rollups, e)
+		}
+	}
+	if len(rollups) != 2 {
+		t.Fatalf("both racing appends must land (CAS serializes): got %d", len(rollups))
+	}
+	winner, loser := rollups[0], rollups[1] // total order: first in chain wins
+	if !led.Losers[loser.ID] || led.Losers[winner.ID] {
+		t.Fatalf("first-in-total-order must win: losers=%v", led.Losers)
+	}
+	if led.Parent[a] != winner.ID {
+		t.Fatalf("child a owned by %s, want %s", led.Parent[a], winner.ID)
+	}
+	if _, taken := led.Parent[b]; taken && led.Losers[loser.ID] && contains2(loser.Children, b) {
+		t.Fatalf("all-or-nothing: loser must not keep b")
+	}
+
+	// the loser is visible and flagged in tail --raw
+	rawSO, _, _ := run(t, dir, "tail", "--raw", "-n", "50")
+	if !strings.Contains(rawSO, `"duel_loser": true`) {
+		t.Fatalf("raw view must flag the duel loser: %s", rawSO)
+	}
+	rawDoc := mustJSON(t, rawSO)
+	loserFlagged := false
+	for _, e := range rawDoc["events"].([]any) {
+		m := e.(map[string]any)
+		if m["id"] == loser.ID {
+			loserFlagged = m["duel_loser"] == true
+		}
+	}
+	if !loserFlagged {
+		t.Fatalf("raw view's duel_loser flag must land on %s specifically: %s", loser.ID, rawSO)
+	}
+
+	// and absent from roots. Note: the payload's top-level "cursor" field is
+	// always the raw chain tip (led.Head()) for pagination, independent of
+	// --raw — since the loser is the last event appended here, it legitimately
+	// appears there. So check the "events" (roots) list specifically, not the
+	// whole payload string.
+	so, _, _ := run(t, dir, "tail", "-n", "50")
+	doc := mustJSON(t, so)
+	for _, e := range doc["events"].([]any) {
+		if e.(map[string]any)["id"] == loser.ID {
+			t.Fatalf("loser must not be a root: %s", so)
+		}
+	}
+}
+
+func contains2(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
