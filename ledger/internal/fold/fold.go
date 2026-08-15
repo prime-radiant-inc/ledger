@@ -130,7 +130,7 @@ func (l *Ledger) Roots() []model.Event {
 			return int(^uint(0) >> 1) // unknown child id: sort last, never crash
 		}
 		min := pos[id]
-		if e.Type == "rollup" && len(e.Children) > 0 {
+		if e.Type == "rollup" && len(e.Children) > 0 && !l.Losers[id] {
 			min = int(^uint(0) >> 1)
 			for _, c := range e.Children {
 				if p := earliest(c); p < min {
