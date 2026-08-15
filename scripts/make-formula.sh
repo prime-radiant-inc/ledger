@@ -28,6 +28,7 @@ class Ledger < Formula
   desc "Durable, git-backed working-state for coding agents"
   homepage "https://github.com/prime-radiant-inc/ledger"
   version "$version"
+  license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
