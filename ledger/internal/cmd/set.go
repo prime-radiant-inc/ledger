@@ -93,8 +93,11 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts) error {
 	if err != nil {
 		return mapStoreErr(err, led.Slug)
 	}
-	outEmit(c, map[string]any{"id": id, "ledger": led.Slug, "key": key, "fields": fields},
-		[]string{"[" + id + "] " + led.Slug + ": " + key + " " + renderFields(fields)})
+	payload := map[string]any{"id": id, "ledger": led.Slug, "key": key, "fields": fields}
+	if due, ok := dueAfter(c, led.Slug); ok {
+		payload["rollup_due"] = due
+	}
+	outEmit(c, payload, []string{"[" + id + "] " + led.Slug + ": " + key + " " + renderFields(fields)})
 	return nil
 }
 

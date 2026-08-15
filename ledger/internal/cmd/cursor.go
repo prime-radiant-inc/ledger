@@ -237,6 +237,13 @@ func filterHits(evs []model.Event, o watchOpts) []model.Event {
 				continue
 			}
 			hits = append(hits, ev)
+		case "rollup":
+			// delivered on unfiltered watches; --key/--value/--kind are
+			// set/note filters and a filtered watcher shouldn't wake for
+			// curation (cursor still advances past them — spec test 43)
+			if o.key == "" && len(o.values) == 0 && o.kind == "" {
+				hits = append(hits, ev)
+			}
 		}
 	}
 	return hits

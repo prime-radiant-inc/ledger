@@ -88,6 +88,9 @@ func runNote(c *Ctx, stdin io.Reader, kind, key, fromFile string, o writeOpts) e
 	if key != "" {
 		payload["key"] = key
 	}
+	if due, ok := dueAfter(c, led.Slug); ok {
+		payload["rollup_due"] = due
+	}
 	outEmit(c, payload, []string{"[" + id + "] " + led.Slug + ": note(" + kind + ") " + out.EscapeControls(firstLine(body))})
 	return nil
 }

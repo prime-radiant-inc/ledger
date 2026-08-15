@@ -1,9 +1,17 @@
 package cmd
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
+
+func jsonEq(t *testing.T, a, b any) bool {
+	t.Helper()
+	ja, _ := json.Marshal(a)
+	jb, _ := json.Marshal(b)
+	return string(ja) == string(jb)
+}
 
 // writeEv appends a set event and returns its id.
 func writeEv(t *testing.T, dir, key string) string {
@@ -142,5 +150,61 @@ func TestRollupOnClosedLedgerAllowed(t *testing.T) {
 	_, se, code := run(t, dir, "rollup", a, "-m", "post-close curation", "--as", "curator", "--ledger", "demo")
 	if code != 0 {
 		t.Fatalf("rollup must be legal on a closed ledger (note precedent): %s", se)
+	}
+}
+
+func TestRollupDueInWriteEnvelopes(t *testing.T) {
+	dir := setup(t)
+	so, _, _ := run(t, dir, "set", "k1", "status=open", "--as", "w")
+	if _, ok := mustJSON(t, so)["rollup_due"]; !ok {
+		t.Fatalf("set envelope missing rollup_due: %s", so)
+	}
+	so, _, _ = run(t, dir, "note", "-k", "gotcha", "-m", "x", "--as", "w")
+	if _, ok := mustJSON(t, so)["rollup_due"]; !ok {
+		t.Fatalf("note envelope missing rollup_due: %s", so)
+	}
+}
+
+func TestStateFoldUnchangedByRollups(t *testing.T) {
+	dir := setup(t)
+	a := writeEv(t, dir, "k1")
+	before, _, _ := run(t, dir, "show")
+	beforeStatus, _, _ := run(t, dir, "status")
+	if _, se, code := run(t, dir, "rollup", a, "-m", "k1 done", "--as", "c"); code != 0 {
+		t.Fatalf("%s", se)
+	}
+	after, _, _ := run(t, dir, "show")
+	afterStatus, _, _ := run(t, dir, "status")
+	// spec test 43: byte-identical modulo the event count/head lines, which
+	// legitimately advance. Compare rows/spine JSON fields exactly.
+	if mustJSON(t, before)["rows"] == nil ||
+		!jsonEq(t, mustJSON(t, before)["rows"], mustJSON(t, after)["rows"]) ||
+		!jsonEq(t, mustJSON(t, beforeStatus)["rows"], mustJSON(t, afterStatus)["rows"]) {
+		t.Fatalf("state fold changed after rollup:\nbefore %s\nafter %s", before, after)
+	}
+}
+
+func TestWatchDeliversRollupsUnfiltered(t *testing.T) {
+	dir := setup(t)
+	a := writeEv(t, dir, "k1")
+	so, _, _ := run(t, dir, "set", "k2", "status=open", "--as", "w")
+	cur := mustJSON(t, so)["id"].(string)
+	ro, _, _ := run(t, dir, "rollup", a, "-m", "done", "--as", "c")
+	rid := mustJSON(t, ro)["id"].(string)
+
+	so, _, code := run(t, dir, "watch", "--since", cur, "--timeout", "1")
+	if code != 0 {
+		t.Fatalf("watch should drain the rollup event, got exit %d: %s", code, so)
+	}
+	if !strings.Contains(so, rid) {
+		t.Fatalf("unfiltered watch must deliver the rollup: %s", so)
+	}
+	// filtered watch skips rollups but its cursor advances past them
+	so, _, code = run(t, dir, "watch", "--since", cur, "--key", "nothing-matches", "--timeout", "1")
+	if code != 2 {
+		t.Fatalf("filtered watch: want timeout exit 2, got %d: %s", code, so)
+	}
+	if !strings.Contains(so, `"cursor"`) {
+		t.Fatalf("timeout must still carry a cursor: %s", so)
 	}
 }

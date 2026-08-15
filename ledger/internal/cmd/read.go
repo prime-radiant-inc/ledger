@@ -223,6 +223,17 @@ func noteSummaryLineAt(when string, n model.Event, committers map[string]string)
 	return line + `  "` + truncateRunes(out.EscapeControls(firstLine(n.Text)), 90) + `"`
 }
 
+// dueAfter refolds and reports curation debt for a write envelope. Advisory:
+// on any error it returns -1 and the caller omits the field rather than
+// failing a write that already landed.
+func dueAfter(c *Ctx, slug string) (int, bool) {
+	led, err := c.Load(slug)
+	if err != nil {
+		return 0, false
+	}
+	return led.Due(), true
+}
+
 func knownKeys(led *fold.Ledger) []string {
 	ks := make([]string, 0, len(led.Spine))
 	for k := range led.Spine {

@@ -76,6 +76,9 @@ func runClose(c *Ctx, slug, asState, supersededBy, asFlag, mFlag string) error {
 			payload["warning"] = warning
 			lines = append(lines, "warning: "+warning)
 		}
+		if due, ok := dueAfter(c, slug); ok {
+			payload["rollup_due"] = due
+		}
 		outEmit(c, payload, lines)
 		return nil
 	}
@@ -86,7 +89,10 @@ func runClose(c *Ctx, slug, asState, supersededBy, asFlag, mFlag string) error {
 	if err != nil {
 		return mapStoreErr(err, slug)
 	}
-	outEmit(c, map[string]any{"id": id, "ledger": slug, "closed": asState},
-		[]string{"[" + id + "] closed " + slug + " as " + asState})
+	payload := map[string]any{"id": id, "ledger": slug, "closed": asState}
+	if due, ok := dueAfter(c, slug); ok {
+		payload["rollup_due"] = due
+	}
+	outEmit(c, payload, []string{"[" + id + "] closed " + slug + " as " + asState})
 	return nil
 }
