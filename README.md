@@ -8,7 +8,9 @@ session or process: execution spines for multi-session plans, coordination
 scoreboards for agent fleets, handoff checkpoints, investigation logs with
 an evidence trail. It grew out of a study of ~80k real agent sessions, which
 showed agents hand-rolling exactly these records in Markdown files — and
-losing them to deleted worktrees, drifting copies, and racing writers.
+losing them to deleted worktrees, drifting copies, and racing writers. The
+research lives in [`research/`](research/), starting with
+[`research/REPORT.md`](research/REPORT.md).
 
 ## Install
 
@@ -36,8 +38,8 @@ ledger close relay-fix --as-state shipped
 Every write prints its event id; every read is one command. Agents learn
 the tool from `ledger quickstart` (and `--orchestrator` for fleet
 dispatch) — those two documents are the agent-facing manual, and every
-example in them runs verbatim in this repo's test suite, so they cannot
-drift from the binary.
+example in them runs verbatim in the test suite, so they cannot drift
+from the binary.
 
 ## How it stores things
 
@@ -109,14 +111,15 @@ first write.
 
 | Audience | Where |
 |---|---|
-| Agents, day-to-day | `ledger quickstart` (embedded; `docs/quickstart.md`) |
-| Agents dispatching fleets | `ledger quickstart --orchestrator` (`docs/quickstart-orchestrator.md`) |
-| Agents deciding *whether* to use a ledger | `skills/using-ledger/SKILL.md` (repo root) |
-| Humans administering a shared remote | `docs/admin.md` — mirror-push hazards, `denyDeletes`, secrets-incident runbook |
-| The design itself | `docs/superpowers/specs/2026-08-13-ledger-tool-design.md` (repo root) — spec rev 12, with the research and eval reports beside it in `research/` |
+| Agents, day-to-day | `ledger quickstart` (embedded; [`ledger/docs/quickstart.md`](ledger/docs/quickstart.md)) |
+| Agents dispatching fleets | `ledger quickstart --orchestrator` ([`ledger/docs/quickstart-orchestrator.md`](ledger/docs/quickstart-orchestrator.md)) |
+| Agents deciding *whether* to use a ledger | [`skills/using-ledger/SKILL.md`](skills/using-ledger/SKILL.md) |
+| Humans administering a shared remote | [`ledger/docs/admin.md`](ledger/docs/admin.md) — mirror-push hazards, `denyDeletes`, secrets-incident runbook |
+| The design itself | [`docs/superpowers/specs/2026-08-13-ledger-tool-design.md`](docs/superpowers/specs/2026-08-13-ledger-tool-design.md) — spec rev 12 |
+| The research it grew from | [`research/REPORT.md`](research/REPORT.md), deep-dives and eval reports beside it |
 
 ## Never write secrets into a ledger
 
 Events are immutable and, once shared, permanent in every clone. If a
 secret lands: rotate it first, then follow the remediation runbook in
-`docs/admin.md`.
+[`ledger/docs/admin.md`](ledger/docs/admin.md).
