@@ -14,12 +14,34 @@ research lives in [`research/`](research/), starting with
 
 ## Install
 
+Homebrew (macOS + Linux):
+
+```sh
+brew install prime-radiant-inc/tap/ledger
+```
+
+Or the one-liner (macOS + Linux):
+
+```sh
+curl -fsSL https://github.com/prime-radiant-inc/ledger/releases/latest/download/install.sh | bash
+```
+
+On Windows, download `ledger-windows-<arch>.tar.gz` from the
+[releases page](https://github.com/prime-radiant-inc/ledger/releases) and
+put `ledger.exe` on your PATH. Or build from source anywhere:
+
 ```sh
 cd ledger && go build -o ledger .
 ```
 
 One static binary, Go 1.26, one dependency (cobra). It shells out to your
 system `git` (2.40 or newer). Run `ledger init` once per clone.
+
+`ledger update` replaces the binary with the latest release, checksum-verified
+(Homebrew installs update with `brew upgrade` instead, and `ledger update`
+will say so). A released binary also mentions new versions on stderr, at most
+once a day and only at an interactive terminal — agent pipelines never see or
+pay for the check. `LEDGER_NO_UPDATE_CHECK=1` turns it off entirely.
 
 ## A two-minute tour
 
@@ -115,7 +137,7 @@ first write.
 | Agents dispatching fleets | `ledger quickstart --orchestrator` ([`ledger/docs/quickstart-orchestrator.md`](ledger/docs/quickstart-orchestrator.md)) |
 | Agents deciding *whether* to use a ledger | [`skills/using-ledger/SKILL.md`](skills/using-ledger/SKILL.md) |
 | Humans administering a shared remote | [`ledger/docs/admin.md`](ledger/docs/admin.md) — mirror-push hazards, `denyDeletes`, secrets-incident runbook |
-| The design itself | [`docs/superpowers/specs/2026-08-13-ledger-tool-design.md`](docs/superpowers/specs/2026-08-13-ledger-tool-design.md) — spec rev 12 |
+| The design itself | [`docs/superpowers/specs/2026-08-13-ledger-tool-design.md`](docs/superpowers/specs/2026-08-13-ledger-tool-design.md) — spec rev 13 |
 | The research it grew from | [`research/REPORT.md`](research/REPORT.md), deep-dives and eval reports beside it |
 
 ## Never write secrets into a ledger
