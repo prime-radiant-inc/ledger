@@ -40,12 +40,15 @@ func ExecuteArgs(args []string, stdout, stderr io.Writer) int {
 	root.PersistentFlags().StringVar(&storeFlag, "store", "", "store location (default: nearest .ledger.git or git repo)")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		ctx.StoreFlag = storeFlag
-		if cmd.Name() == "help" || cmd.Name() == "init" || cmd.Name() == "quickstart" {
+		switch cmd.Name() {
+		case "help", "init", "quickstart", "version", "update":
 			// init bootstraps a store rather than requiring one to already
 			// resolve — it may be run in a plain directory with no git repo
 			// and no .ledger.git anywhere in the ancestry yet. quickstart
 			// prints embedded doctrine and needs no store at all — a cold
-			// agent must be able to run it before any ledger exists.
+			// agent must be able to run it before any ledger exists. version
+			// and update act on the binary, not a store, and the first thing
+			// a fresh install runs must work in an empty directory.
 			return nil
 		}
 		res, err := store.Resolve(storeFlag)
@@ -58,6 +61,11 @@ func ExecuteArgs(args []string, stdout, stderr io.Writer) int {
 		ctx.Store = res.Store
 		ctx.Shadowed = res.Shadowed
 		return nil
+	}
+	root.PersistentPostRun = func(cmd *cobra.Command, _ []string) {
+		// only reached when the verb succeeded — the daily update notice
+		// never piles onto an error
+		passiveUpdateCheck(ctx, cmd.Name())
 	}
 	for _, f := range registry {
 		root.AddCommand(f(ctx))
