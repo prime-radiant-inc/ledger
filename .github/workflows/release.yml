@@ -1,0 +1,103 @@
+name: Release
+
+# Publishes a GitHub release on every `v*` tag: six prebuilt tarballs
+# (macOS/Linux/Windows x amd64/arm64), checksums.txt, and install.sh (so the
+# curl|sh one-liner always serves the latest installer). After publishing,
+# regenerates the homebrew formula and pushes it to
+# prime-radiant-inc/homebrew-tap using a short-lived GitHub App token.
+#
+# workflow_dispatch runs the whole build without publishing, so the pipeline
+# can be smoke-tested before tagging.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: ledger/go.mod
+
+      - name: Run tests
+        working-directory: ledger
+        run: go test ./...
+
+      - name: Build tarballs
+        run: |
+          set -euo pipefail
+          VERSION="$GITHUB_REF_NAME"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="v0.0.0-smoke"
+          fi
+          bash scripts/build-tarballs.sh "$VERSION" dist
+
+      - name: Stage installer
+        run: |
+          set -euo pipefail
+          # Bake the releasing repo into the published installer so the
+          # `latest/download/install.sh` URL defaults to this repo's releases.
+          sed "s|prime-radiant-inc/ledger|${{ github.repository }}|g" \
+              scripts/install.sh > dist/install.sh
+          chmod +x dist/install.sh
+
+      - name: Create or update GitHub release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          FILES=(dist/ledger-*.tar.gz dist/checksums.txt dist/install.sh)
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${FILES[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${FILES[@]}" \
+              --title "$GITHUB_REF_NAME" --generate-notes
+          fi
+
+      - name: Generate homebrew tap token
+        if: github.event_name == 'push'
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: 2717706
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: prime-radiant-inc
+          repositories: homebrew-tap
+
+      - name: Update homebrew tap
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          bash scripts/make-formula.sh "$GITHUB_REF_NAME" dist/checksums.txt > "$RUNNER_TEMP/ledger.rb"
+          cd "$RUNNER_TEMP"
+          gh repo clone prime-radiant-inc/homebrew-tap tap
+          cd tap
+          gh auth setup-git
+          cp "$RUNNER_TEMP/ledger.rb" Formula/ledger.rb
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/ledger.rb
+          git commit -m "Update ledger to ${GITHUB_REF_NAME#v}"
+          git push
+
+      - name: Workflow dispatch — build only (no release published)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "workflow_dispatch run: build steps completed. Artifacts:"
+          ls -la dist
+          echo
+          echo "No GitHub release created (push a 'v*' tag to publish)."
