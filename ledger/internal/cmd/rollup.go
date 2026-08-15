@@ -12,6 +12,11 @@ import (
 	"ledger/internal/store"
 )
 
+// maxRollupSummaryBytes bounds a rollup's summary line — tied to rootLine's
+// and rollupGuidance's assumption that a summary renders as one unwrapped
+// terminal line; longer prose belongs in a note, cited by id.
+const maxRollupSummaryBytes = 300
+
 func init() { register(newRollupCmd) }
 
 func newRollupCmd(c *Ctx) *cobra.Command {
@@ -45,14 +50,21 @@ func runRollup(c *Ctx, ids []string, msg, as, ledgerFlag, idemKey string) error 
 		return out.Errf("bad_value", "put longer prose in a note, then cite that note's id in the summary line", 4,
 			"a rollup summary is exactly one line")
 	}
+	if len(msg) > maxRollupSummaryBytes {
+		return out.Errf("bad_value", "keep the line under 300 bytes — put longer prose in a note, then cite that note's id", 4,
+			"a rollup summary must be %d bytes or fewer, got %d", maxRollupSummaryBytes, len(msg))
+	}
 	author := model.ResolveAuthor(as)
 	if idemKey != "" {
 		// Mirrors set/note's semantics, but scoped to (author, key) alone —
 		// a rollup has no item key, so that pair is the whole scope.
 		for _, ev := range led.Events {
 			if ev.Type == "rollup" && ev.IdempotencyKey == idemKey && ev.Author == author {
-				outEmit(c, map[string]any{"id": ev.ID, "ledger": led.Slug, "deduped": true, "by": ev.Author},
-					[]string{"deduped against " + ev.ID})
+				payload := map[string]any{"id": ev.ID, "ledger": led.Slug, "deduped": true, "by": ev.Author}
+				if due, ok := dueAfter(c, led.Slug); ok {
+					payload["rollup_due"] = due
+				}
+				outEmit(c, payload, []string{"deduped against " + ev.ID})
 				return nil
 			}
 		}
@@ -89,14 +101,33 @@ func runRollup(c *Ctx, ids []string, msg, as, ledgerFlag, idemKey string) error 
 	if err != nil {
 		return mapStoreErr(err, led.Slug)
 	}
-	due := -1
-	if after, err := c.Load(led.Slug); err == nil {
-		due = after.Due()
+	payload := map[string]any{"id": id, "ledger": led.Slug, "children": len(children)}
+	line := "[" + id + "] " + led.Slug + ": " + strconv.Itoa(len(children)) + " records rolled into one line"
+	if due, ok := dueAfter(c, led.Slug); ok {
+		payload["rollup_due"] = due
+		line += " (" + strconv.Itoa(due) + " still unrolled)"
 	}
-	outEmit(c, map[string]any{"id": id, "ledger": led.Slug, "children": len(children), "rollup_due": due},
-		[]string{"[" + id + "] " + led.Slug + ": " + strconv.Itoa(len(children)) +
-			" records rolled into one line (" + strconv.Itoa(due) + " still unrolled)"})
+	outEmit(c, payload, []string{line})
 	return nil
+}
+
+// rollupGuidance is the submit grammar plus curation discipline printed on a
+// bare `ledger rollup`. It's TTY prose but also carried verbatim in the JSON
+// payload's "guidance" field (F1): non-TTY is the default output shape, and
+// an agent driving that shape never sees the TTY lines, so the grammar and
+// the second-order-testimony rules have to ride the payload too.
+var rollupGuidance = []string{
+	"Roll a FINISHED thread (a resolved hypothesis, a done task arc, a settled",
+	"decision trail) into one line:",
+	`  ledger rollup <id> <id> ... -m "one line" --as <role>`,
+	"The line is a signpost for a cold reader: say what happened and how it",
+	"ended, and carry concrete anchors (key names, evidence kinds, counts) into",
+	"it, keeping each anchor next to the claim it actually backs. Summarize —",
+	"never invent, and never restate another agent's evidenced claim as fact;",
+	"it stays their testimony. A bridge note that closes one thread and opens",
+	"another belongs to the thread it opens. Children may themselves be rollups",
+	"— that's also the fix for a bad summary: roll IT up under a better line.",
+	"Recent live work stays unrolled.",
 }
 
 func rollupRootsView(c *Ctx, led *fold.Ledger) error {
@@ -108,19 +139,9 @@ func rollupRootsView(c *Ctx, led *fold.Ledger) error {
 		rows = append(rows, map[string]any{"id": e.ID, "type": e.Type, "line": line})
 		lines = append(lines, "  "+line)
 	}
-	lines = append(lines, "",
-		"Roll a FINISHED thread (a resolved hypothesis, a done task arc, a settled",
-		"decision trail) into one line:",
-		`  ledger rollup <id> <id> ... -m "one line" --as <role>`,
-		"The line is a signpost for a cold reader: say what happened and how it",
-		"ended, and carry concrete anchors (key names, evidence kinds, counts) into",
-		"it, keeping each anchor next to the claim it actually backs. Summarize —",
-		"never invent, and never restate another agent's evidenced claim as fact;",
-		"it stays their testimony. A bridge note that closes one thread and opens",
-		"another belongs to the thread it opens. Children may themselves be rollups",
-		"— that's also the fix for a bad summary: roll IT up under a better line.",
-		"Recent live work stays unrolled.")
-	outEmit(c, map[string]any{"ledger": led.Slug, "rollup_due": led.Due(), "roots": rows}, lines)
+	lines = append(lines, "")
+	lines = append(lines, rollupGuidance...)
+	outEmit(c, map[string]any{"ledger": led.Slug, "rollup_due": led.Due(), "roots": rows, "guidance": rollupGuidance}, lines)
 	return nil
 }
 

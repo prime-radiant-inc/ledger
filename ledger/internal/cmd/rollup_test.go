@@ -41,8 +41,23 @@ func TestRollupBareShowsRootsAndGrammar(t *testing.T) {
 	if doc["rollup_due"] == nil || doc["roots"] == nil {
 		t.Fatalf("bare rollup payload missing roots/rollup_due: %v", doc)
 	}
-	if !strings.Contains(so, "rollup") { // grammar/instructions present in payload
-		t.Fatalf("no instructions: %s", so)
+	// F1: the submit grammar and curation discipline must ride the JSON
+	// payload itself — non-TTY is the default shape, and an agent driving it
+	// never sees the TTY-only lines.
+	guidanceAny, ok := doc["guidance"].([]any)
+	if !ok || len(guidanceAny) == 0 {
+		t.Fatalf("bare rollup payload missing non-empty guidance array: %v", doc)
+	}
+	var guidance []string
+	for _, g := range guidanceAny {
+		s, ok := g.(string)
+		if !ok {
+			t.Fatalf("guidance entries must be strings: %v", doc)
+		}
+		guidance = append(guidance, s)
+	}
+	if !strings.Contains(strings.Join(guidance, "\n"), `ledger rollup <id> <id> ... -m`) {
+		t.Fatalf("guidance must carry the literal submit grammar: %v", guidance)
 	}
 }
 
@@ -110,6 +125,29 @@ func TestRollupSubmitAndErrors(t *testing.T) {
 	}
 }
 
+// TestRollupSummarySizeBound: F2 — a rollup summary over 300 bytes is
+// refused at write with bad_value; exactly 300 bytes is accepted.
+func TestRollupSummarySizeBound(t *testing.T) {
+	dir := setup(t)
+	a := writeEv(t, dir, "k1")
+	b := writeEv(t, dir, "k2")
+
+	tooLong := strings.Repeat("x", 301)
+	_, se, code := run(t, dir, "rollup", a, "-m", tooLong, "--as", "curator")
+	if code != 4 || !strings.Contains(se, "bad_value") {
+		t.Fatalf("301-byte summary must be refused as bad_value: %d %s", code, se)
+	}
+	if !strings.Contains(se, "300 bytes") {
+		t.Fatalf("hint must name the 300-byte bound: %s", se)
+	}
+
+	exactly300 := strings.Repeat("x", 300)
+	_, se, code = run(t, dir, "rollup", b, "-m", exactly300, "--as", "curator")
+	if code != 0 {
+		t.Fatalf("300-byte summary must be accepted: %s", se)
+	}
+}
+
 func TestTailRootsAndDrill(t *testing.T) {
 	dir := setup(t)
 	a := writeEv(t, dir, "k1")
@@ -120,6 +158,14 @@ func TestTailRootsAndDrill(t *testing.T) {
 	beforeDoc := mustJSON(t, before)
 	if _, has := beforeDoc["rollup_due"]; has {
 		t.Fatalf("default tail must not grow new fields (byte-identical contract)")
+	}
+	// F6: with nothing rolled up yet, roots are exactly the raw chain — the
+	// default view's "events" must deep-equal the raw view's.
+	beforeRaw, _, _ := run(t, dir, "tail", "--raw", "-n", "50")
+	beforeRawDoc := mustJSON(t, beforeRaw)
+	if !jsonEq(t, beforeDoc["events"], beforeRawDoc["events"]) {
+		t.Fatalf("pre-rollup default tail must equal raw tail's events:\ndefault %v\nraw %v",
+			beforeDoc["events"], beforeRawDoc["events"])
 	}
 
 	so, se, code := run(t, dir, "rollup", a, b, "-m", "k-thread finished", "--as", "curator")
@@ -158,6 +204,13 @@ func TestTailRootsAndDrill(t *testing.T) {
 	if code != 4 || !strings.Contains(se, "unknown_event") {
 		t.Fatalf("--in non-rollup: %d %s", code, se)
 	}
+	// F11: the hint must name --in and must not carry the old double space
+	if !strings.Contains(se, "ledger tail shows the current roots; a rollup line's id works with --in") {
+		t.Fatalf("--in non-rollup hint wrong: %s", se)
+	}
+	if strings.Contains(se, "tail  shows") {
+		t.Fatalf("--in non-rollup hint must not carry the old double space: %s", se)
+	}
 	_, se, code = run(t, dir, "tail", "--raw", "--in", rid)
 	if code != 4 || !strings.Contains(se, "bad_value") {
 		t.Fatalf("--raw --in: %d %s", code, se)
@@ -186,6 +239,31 @@ func TestRollupDueInWriteEnvelopes(t *testing.T) {
 	if _, ok := mustJSON(t, so)["rollup_due"]; !ok {
 		t.Fatalf("note envelope missing rollup_due: %s", so)
 	}
+
+	// F10b: create, vocab add, and close envelopes also carry rollup_due.
+	so, _, code := run(t, dir, "create", "demo2", "--scope", "second ledger", "--as", "w")
+	if code != 0 {
+		t.Fatalf("create: %s", so)
+	}
+	if _, ok := mustJSON(t, so)["rollup_due"]; !ok {
+		t.Fatalf("create envelope missing rollup_due: %s", so)
+	}
+
+	so, _, code = run(t, dir, "vocab", "add", "demo", "status", "archived", "-m", "why", "--as", "w")
+	if code != 0 {
+		t.Fatalf("vocab add: %s", so)
+	}
+	if _, ok := mustJSON(t, so)["rollup_due"]; !ok {
+		t.Fatalf("vocab add envelope missing rollup_due: %s", so)
+	}
+
+	so, _, code = run(t, dir, "close", "demo2", "--as-state", "abandoned", "--as", "w")
+	if code != 0 {
+		t.Fatalf("close: %s", so)
+	}
+	if _, ok := mustJSON(t, so)["rollup_due"]; !ok {
+		t.Fatalf("close envelope missing rollup_due: %s", so)
+	}
 }
 
 func TestStateFoldUnchangedByRollups(t *testing.T) {
@@ -204,6 +282,41 @@ func TestStateFoldUnchangedByRollups(t *testing.T) {
 		!jsonEq(t, mustJSON(t, before)["rows"], mustJSON(t, after)["rows"]) ||
 		!jsonEq(t, mustJSON(t, beforeStatus)["rows"], mustJSON(t, afterStatus)["rows"]) {
 		t.Fatalf("state fold changed after rollup:\nbefore %s\nafter %s", before, after)
+	}
+}
+
+// TestSinceDeliversRollup: spec test 43 names `since` explicitly — a rollup
+// event must come back like any other event in a since drain, not be
+// filtered out the way watch's --key/--value/--kind filters skip it.
+func TestSinceDeliversRollup(t *testing.T) {
+	dir := setup(t)
+	a := writeEv(t, dir, "k1")
+	so, _, _ := run(t, dir, "since", "--limit", "1")
+	cur := mustJSON(t, so)["cursor"].(string)
+
+	ro, _, code := run(t, dir, "rollup", a, "-m", "done", "--as", "curator")
+	if code != 0 {
+		t.Fatal(ro)
+	}
+	rid := mustJSON(t, ro)["id"].(string)
+
+	so, _, code = run(t, dir, "since", cur)
+	if code != 0 {
+		t.Fatal(so)
+	}
+	doc := mustJSON(t, so)
+	found := false
+	for _, e := range doc["events"].([]any) {
+		m := e.(map[string]any)
+		if m["id"] == rid {
+			found = true
+			if m["type"] != "rollup" {
+				t.Fatalf("since's rollup event has wrong type: %v", m)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("since must deliver the rollup event %s: %s", rid, so)
 	}
 }
 
@@ -255,6 +368,10 @@ func TestRollupIdempotencyKey(t *testing.T) {
 	d2 := mustJSON(t, so2)
 	if d2["deduped"] != true || d2["id"] != d1["id"] || d2["by"] != "curator" {
 		t.Fatalf("same author+key must dedupe against the causing sha+author: %v", d2)
+	}
+	// F7: a deduped early return still carries rollup_due, same as a normal write
+	if _, ok := d2["rollup_due"]; !ok {
+		t.Fatalf("deduped rollup envelope missing rollup_due: %v", d2)
 	}
 
 	// the children named in the deduped call must NOT be claimed by it — b

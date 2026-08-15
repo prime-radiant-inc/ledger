@@ -224,8 +224,8 @@ func noteSummaryLineAt(when string, n model.Event, committers map[string]string)
 }
 
 // dueAfter refolds and reports curation debt for a write envelope. Advisory:
-// on any error it returns -1 and the caller omits the field rather than
-// failing a write that already landed.
+// on any error it returns ok=false and the caller omits the field rather
+// than failing a write that already landed.
 func dueAfter(c *Ctx, slug string) (int, bool) {
 	led, err := c.Load(slug)
 	if err != nil {
@@ -557,7 +557,7 @@ func runTailIn(c *Ctx, led *fold.Ledger, inID string) error {
 	}
 	r, ok := byID[inID]
 	if !ok || r.Type != "rollup" {
-		return out.Errf("unknown_event", "ledger tail  shows the current roots; rollup lines carry their id", 4,
+		return out.Errf("unknown_event", "ledger tail shows the current roots; a rollup line's id works with --in <id>", 4,
 			"'%s' is not a rollup on '%s'", inID, led.Slug)
 	}
 	var evs []model.Event
