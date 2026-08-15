@@ -1,6 +1,6 @@
 # Ledger-backed agent memory (design)
 
-2026-08-15, revision 3. Replaces the file-based per-project agent memory
+2026-08-15, revision 4. Replaces the file-based per-project agent memory
 (MEMORY.md index + one markdown file per fact) with a memory ledger, dogfooding
 `ledger` v0.1.0 as the first real consumer of the committed-projection pattern
 deferred to v2 in the tool spec. Grounded in Jesse's rulings this session, the
@@ -11,9 +11,17 @@ reach the spine projection), retraction scars against the stale-session
 re-assert race (verified live), a wrapper script as the only write path, and
 the `type` field cut. Rev 3: ships as a standalone **plugin** (Jesse's
 packaging ruling: `ledger` stays a Claude-agnostic CLI; anything
-harness-shaped lives in a plugin that consumes it), and three
-discipline-to-mechanism promotions — a SessionStart render hook, a PreCompact
-audit hook, and save-echo in the wrapper.
+harness-shaped lives in a plugin that consumes it), plus
+discipline-to-mechanism promotions. Rev 4 (post-adversarial-review, both
+reviewers verifying against the binary and the Claude Code hooks contract):
+PreCompact cannot inject prompts, so the compaction trigger became a
+SessionStart `compact`-matcher reminder; content-derived idempotency keys
+verifiably no-op legitimate repeat writes, so they're dropped (duplicate
+events are the cheaper failure); scar data is pinned to one `tail --raw` pass
+(per-key fan-out measured 54x slower; `tail`'s curated view goes blind after
+rollups); bootstrap is a shared preamble with a three-state damage rule;
+evidence carries forward across lifecycle writes; a PreToolUse guard enforces
+wrapper-only writes.
 
 ## Problem
 
@@ -126,20 +134,34 @@ Contract:
   the agent never types `--store`.
 - **Every mutating subcommand ends by rendering.** Renders are idempotent from
   state, so any earlier crash between write and render self-heals on the next
-  invocation. Every ledger write uses an `--idempotency-key` derived from
-  (subcommand, key, content) so a retried tool call cannot double-append.
+  invocation. No `--idempotency-key` anywhere: a content-derived key
+  verifiably turns legitimate repeats (revive-then-re-archive, a deliberate
+  identical re-assert, "confirming this still holds") into silent permanent
+  no-ops, and a duplicate event from a retried tool call is the strictly
+  cheaper failure — the fold doesn't change, the chain just carries one
+  redundant line of testimony.
+- **Evidence carries forward.** `save` and `retract` re-supply the key's prior
+  `--evidence` ref when the caller gives none (`--no-evidence` to drop it
+  deliberately). Verified: the spine reflects only the latest event's own
+  evidence field, so without carry-forward every correction silently strips
+  the fact's trust marker.
 - **Save echoes what it replaced.** `save` on an existing key always prints
   the previous hook line, its age, and any retraction on record ("replaced:
   '<old hook>' (14d, retracted 2d ago: <why>)"). The stale-overwrite race
   stops depending on the writer's diligence beforehand: the surprise lands
   immediately after, when one `retract` fixes it. Drill-before-overwrite
   remains doctrine, but the mechanism no longer needs it to hold.
-- **Bootstrap**: if the memory dir has no `.ledger.git`, `save` runs
-  `init` + `create` first, then proceeds. If `.ledger.git` **exists** but reads
-  come back empty or failing, the script stops with "store may be damaged —
-  tell the human"; it never follows the tool's `no_open_ledger` create hint
-  (panel-verified: a corrupt store misdiagnoses as empty, and auto-create
-  would silently orphan the entire memory).
+- **Bootstrap is a shared preamble** run by every subcommand (both reviewers
+  caught rev 3 granting it to `save` while the SessionStart hook needs it in
+  `render`). Three states: no `.ledger.git` → run `init` + `create` and
+  proceed; `.ledger.git` present, `ls` cleanly empty, and no head SHA recorded
+  in an existing MEMORY.md → fresh-but-initialized, create and proceed;
+  store erroring, or empty while the projection header claims a head → "store
+  may be damaged — tell the human", stop. The script never follows the tool's
+  `no_open_ledger` create hint on an existing store (verified: corruption
+  misdiagnoses as empty, and auto-create would silently orphan the memory).
+  The projection's embedded head SHA is what makes damage distinguishable
+  from freshness.
 - **Atomic projection writes**: compose to a temp file, rename over MEMORY.md.
   A crash can never leave a truncated or header-only projection.
 - **Size nag with candidates**: when the projection exceeds ~60 lines, the
@@ -176,6 +198,19 @@ Composed by the wrapper from `show` and per-key history JSON — **not** from
    would show it plainly `current` with the vaccine invisible. Scars are
    computed from the chain, so they survive any later write.
 
+**Data plumbing, pinned** (reviewer-measured): scars, ages, and the archive
+nag's backlink scan are computed from **one** `tail --raw` pass over the whole
+chain per render, grouped by key client-side, plus one `notes -k body` pass
+filtered to latest-per-key for body links. Never a per-key fan-out
+(`status <key>` per key measured 54x slower at 43 keys), and never `tail`'s
+curated view (rollups make it blind to rolled-up status events). Full-chain
+scans are acceptable at memory scale (hundreds of events, ~0.05s measured);
+if a memory chain ever outgrows that, pagination via `--limit` plus a cached
+cursor is the escape hatch, not a different read primitive. Corollary:
+**rollups are not used on the memory ledger at all** — curation is status
+flips, and the memory skill overrides `using-ledger`'s general
+roll-up-finished-threads doctrine for this store.
+
 **Sanitization**: projection body lines are single-line by construction —
 control characters stripped, newlines collapsed — so a poisoned hook line
 cannot forge header-lookalike structure. Note bodies never render into the
@@ -206,10 +241,19 @@ Contents:
   projection; the stale-projection race cannot survive a session boundary; the
   size nag surfaces at the moment curation is possible. Renders are cheap and
   idempotent, so this is safe to run unconditionally.
-- **PreCompact hook**: injects the audit prompt — "what do you know that lives
-  only in your head? Save it now (`ledger-memory save …`), then let compaction
-  proceed." This turns the research's strongest-evidenced save trigger from
-  skippable doctrine into harness mechanism.
+- **SessionStart `compact` matcher**: after a compaction, injects one line of
+  `additionalContext`: "compaction just ran — if working knowledge was lost
+  from the summary, save what you still know (`ledger-memory save …`)."
+  Rev 3 claimed a PreCompact hook would inject the audit *before* compaction;
+  both adversarial reviewers verified against the hooks contract that
+  PreCompact has no channel to Claude at all (its stdout/stderr reach only
+  the human). The pre-compaction audit therefore stays doctrine (below), and
+  the post-compact reminder is the honest mechanical approximation.
+- **PreToolUse guard**: denies raw `ledger` *write* verbs (`set`, `note`,
+  `vocab`, `close`, `rollup`, `import`) aimed at the memory store, with a
+  redirect to the wrapper — "the only write path" becomes enforcement, not
+  documentation. Reads (`show`, `notes`, `tail`, `status`) pass freely; drill
+  is supposed to be raw.
 - **The skill**, `SKILL.md`, teaching in order:
 
 - **When to save** (unchanged doctrine): user facts, feedback with the why,
@@ -217,8 +261,10 @@ Contents:
   already records; not single-conversation trivia.
 - **The save moment that matters most**: before compaction or session end, run
   the audit — "what do I know that lives only in my head?" — and save what it
-  surfaces. (The PreCompact hook fires this automatically; the doctrine line
-  covers session ends and hookless installs.)
+  surfaces. This is doctrine, not mechanism — the harness offers no
+  pre-compaction injection channel — so the skill states it as the discipline
+  it is; the SessionStart compact-matcher reminder is the mechanical backstop
+  on the far side.
 - **Hook-line quality**, with good/bad examples: name the trap, not the topic
   ("zsh word-splits unquoted $L — use a function" beats "note about zsh").
 - **Write shapes**: the wrapper subcommands only.
@@ -278,6 +324,9 @@ Old `modified` timestamps are not preserved; content and origin are.
   with a hard error would make binary skew loud.
 - `render --to`'s escaping scope (TTY-scoped guarantee, file sink output)
   deserves an explicit statement and test in the tool spec.
+- Raw reads (`tail --raw`, `since`) have no `--key` filter, forcing full-chain
+  scans for per-key history; a cheap per-key lookup would serve any
+  projection-building consumer.
 
 ## Acceptance
 
@@ -293,8 +342,10 @@ Old `modified` timestamps are not preserved; content and origin are.
    self-heals the projection; header head SHA matches store head after.
 
 5. Hooks: a fresh project's first session (SessionStart hook installed, no
-   store) ends its startup with a rendered header-only MEMORY.md; a compaction
-   fires the audit prompt.
+   store) ends its startup with a rendered header-only MEMORY.md; a session
+   resumed from compaction carries the post-compact save reminder in its
+   context; a raw `ledger set` against the memory store is denied by the
+   PreToolUse guard while `ledger show` passes.
 
 One-time launch checklist (not regression criteria): plugin installed, hooks
 active, bootstrap on this project, hand-migration round-trips all facts, old
