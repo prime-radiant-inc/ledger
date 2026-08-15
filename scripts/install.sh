@@ -146,7 +146,9 @@ mkdir -p "$BINDIR"
 # interrupted upgrade never leaves a truncated binary where a working one was.
 install -m 0755 "$tmpdir/ledger" "$BINDIR/.ledger.new.$$"
 mv -f "$BINDIR/.ledger.new.$$" "$BINDIR/ledger"
-echo ">> Installed $("$BINDIR/ledger" version 2>/dev/null | head -1 || echo ledger) to $BINDIR/ledger"
+# non-TTY `ledger version` emits a JSON envelope; pull the version out of it
+ver=$("$BINDIR/ledger" version 2>/dev/null | sed -n 's/.*"version": *"\([^"]*\)".*/\1/p')
+echo ">> Installed ledger${ver:+ $ver} to $BINDIR/ledger"
 
 case ":$PATH:" in
     *":$BINDIR:"*) ;;
