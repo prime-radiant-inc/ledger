@@ -2,7 +2,11 @@
 // Everything mutable folds from events; meta.json holds only creation facts.
 package fold
 
-import "ledger/internal/model"
+import (
+	"sort"
+
+	"ledger/internal/model"
+)
 
 type Ledger struct {
 	Slug         string
@@ -14,12 +18,19 @@ type Ledger struct {
 	SupersededBy string
 	ExtraLinks   []string
 	Events       []model.Event
+	// Parent maps a child event id to the rollup id that encapsulates it —
+	// winners only. Losers holds rollup ids that lost a duel: a rollup with
+	// ANY already-taken child loses wholly (its summary line is a claim
+	// about its entire child set), stays in the raw chain, and is inert.
+	Parent map[string]string
+	Losers map[string]bool
 }
 
 func Fold(slug string, evs []model.Event, meta model.Meta) *Ledger {
 	l := &Ledger{Slug: slug, Meta: meta, State: "open",
 		Schema: map[string][]string{}, Require: map[string][]string{},
-		Spine: map[string]map[string]model.Event{}, Events: evs}
+		Spine: map[string]map[string]model.Event{}, Events: evs,
+		Parent: map[string]string{}, Losers: map[string]bool{}}
 	for f, v := range meta.Fields {
 		if v == nil {
 			l.Schema[f] = nil
@@ -59,6 +70,21 @@ func Fold(slug string, evs []model.Event, meta model.Meta) *Ledger {
 					l.ExtraLinks = append(l.ExtraLinks, ev.Successor)
 				}
 			}
+		case "rollup":
+			taken := false
+			for _, c := range ev.Children {
+				if _, ok := l.Parent[c]; ok {
+					taken = true
+					break
+				}
+			}
+			if taken {
+				l.Losers[ev.ID] = true
+			} else {
+				for _, c := range ev.Children {
+					l.Parent[c] = ev.ID
+				}
+			}
 		}
 	}
 	return l
@@ -79,6 +105,68 @@ func (l *Ledger) Notes() []model.Event {
 		}
 	}
 	return out
+}
+
+// Roots returns every record not encapsulated by anything — the curated
+// history — in causal order: each root sorts by the chain position of its
+// earliest transitive base event, not the rollup commit's own position,
+// which would sort curated threads after the live work they causally
+// precede (spec rev 12; the rollup eval's one real defect).
+func (l *Ledger) Roots() []model.Event {
+	pos := map[string]int{}
+	byID := map[string]model.Event{}
+	for i, e := range l.Events {
+		pos[e.ID] = i
+		byID[e.ID] = e
+	}
+	memo := map[string]int{}
+	var earliest func(id string) int
+	earliest = func(id string) int {
+		if v, ok := memo[id]; ok {
+			return v
+		}
+		e, ok := byID[id]
+		if !ok {
+			return int(^uint(0) >> 1) // unknown child id: sort last, never crash
+		}
+		min := pos[id]
+		if e.Type == "rollup" && len(e.Children) > 0 {
+			min = int(^uint(0) >> 1)
+			for _, c := range e.Children {
+				if p := earliest(c); p < min {
+					min = p
+				}
+			}
+		}
+		memo[id] = min
+		return min
+	}
+	var roots []model.Event
+	for _, e := range l.Events {
+		if e.Type == "sync" || l.Losers[e.ID] {
+			continue
+		}
+		if _, taken := l.Parent[e.ID]; taken {
+			continue
+		}
+		roots = append(roots, e)
+	}
+	sort.SliceStable(roots, func(i, j int) bool {
+		return earliest(roots[i].ID) < earliest(roots[j].ID)
+	})
+	return roots
+}
+
+// Due is the advisory curation debt: unencapsulated non-rollup events.
+// A root rollup is finished work, not debt (spec rev 12).
+func (l *Ledger) Due() int {
+	n := 0
+	for _, e := range l.Roots() {
+		if e.Type != "rollup" {
+			n++
+		}
+	}
+	return n
 }
 
 func contains(xs []string, x string) bool {
