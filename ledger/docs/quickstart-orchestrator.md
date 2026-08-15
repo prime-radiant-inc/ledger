@@ -29,6 +29,11 @@ carries its own `id` — treat it as that event's resume cursor if the
 monitor restarts. `--follow` implies no timeout; combining it with an
 explicit `--timeout` is a bad-value error.
 
+Rollup events ride the stream: an unfiltered watch also delivers
+`type:"rollup"` curation events (someone collapsing a finished thread).
+A filtered watch (`--key`/`--value`/`--kind`) skips them; the cursor
+advances past them either way.
+
 ## Cold-start rule
 
 A cursorless `watch` starts at the *current* head — if a child's first
