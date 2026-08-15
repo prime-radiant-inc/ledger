@@ -1,10 +1,15 @@
 # Ledger-backed agent memory (design)
 
-2026-08-15, revision 1. Replaces the file-based per-project agent memory
+2026-08-15, revision 2. Replaces the file-based per-project agent memory
 (MEMORY.md index + one markdown file per fact) with a memory ledger, dogfooding
 `ledger` v0.1.0 as the first real consumer of the committed-projection pattern
-deferred to v2 in the tool spec. Grounded in Jesse's rulings this session and
-the tool spec (`2026-08-13-ledger-tool-design.md`, rev 13).
+deferred to v2 in the tool spec. Grounded in Jesse's rulings this session, the
+tool spec (`2026-08-13-ledger-tool-design.md`, rev 13), and a six-lens critique
+panel (rev 1 → rev 2; panel verdicts in the session record). Rev 2's forced
+changes: curation by status flips instead of rollups (rollups verifiably never
+reach the spine projection), retraction scars against the stale-session
+re-assert race (verified live), a wrapper script as the only write path, and
+the `type` field cut.
 
 ## Problem
 
@@ -23,11 +28,11 @@ agent state files.
   cross-project, different privacy contract) is untouched.
 - **Full replacement**: per-fact files go away; drilling a memory is a ledger
   command, not a file read.
-- Strictly **append-only**: a retraction appends a `status=retracted` event;
-  the fold hides the fact, the chain keeps it. No mutation anywhere.
-- MEMORY.md becomes a **generated projection** (the harness auto-loads it;
-  that hook is fixed and is the one channel that can override the harness's
-  default file-writing instructions).
+- Strictly **append-only**: retraction and archiving append status events; the
+  fold hides, the chain keeps. No mutation anywhere.
+- MEMORY.md becomes a **generated projection** (the harness auto-loads it; that
+  hook is fixed and is the one channel that can override the harness's default
+  file-writing instructions).
 - The workflow ships as a new **`ledger-memory` skill**.
 
 ## Architecture
@@ -40,112 +45,225 @@ One bare store per project memory directory, one ledger in it:
   MEMORY.md        # generated projection — never hand-edited
 ```
 
-Created once per project:
+Created by the wrapper's bootstrap (see below):
 
 ```
 cd <memory-dir> && ledger init
 ledger create memory --scope "agent memory for <project>" \
-    --field type=user,feedback,project,reference \
-    --field status=current,retracted
+    --field status=current,retracted,archived
 ```
 
-`type` carries today's memory taxonomy (closed vocab; extension is self-serve
-`ledger vocab add` and is itself a recorded decision). `status` is the
-retraction axis. No evidence-required fields: memory entries are testimony by
-nature, and `(no evidence)` is already the honest trust marker.
+One field. `status` is the whole schema:
+
+- `current` — renders in the projection.
+- `retracted` — wrong; renders as a vaccine line carrying the why.
+- `archived` — stale-but-not-wrong (or a vaccine whose confusion is dead);
+  hidden from the projection, drill-only.
+
+The old `type` taxonomy (user/feedback/project/reference) is **cut**: no read
+path ever consumed it, and a field-scoped retraction would have left a stale
+`type` row asserting the original claim beside its own vaccine (panel-verified).
+Where the taxonomy word helps a human scan, it goes in the hook line as a
+prefix: `-m "[feedback] ..."`. No evidence-required fields: memories are
+testimony by nature and `(no evidence)` is already the honest trust marker —
+but facts that assert repo or world state should carry `--evidence` (doctrine,
+below), because those are exactly the claims the research watched rot silently.
 
 ## Fact model
 
 Each memory is a **key**, named with today's kebab-case slugs.
 
-- **Save**: `ledger set <name> type=project status=current -m "<one-line hook>"
-  [--evidence commit:… | file:… | session:<id>]`. The `-m` line is what the
-  projection shows — it replaces the old frontmatter `description`.
-- **Body**: `ledger note -k body --key <name> --from-file <tmp>` for anything
-  longer than the hook line. Written via a temp file, never inline heredocs
-  (the quickstart's `--from-file` doctrine). The latest body is
-  `ledger notes -k body --key <name> --latest`; older bodies remain as history.
-- **Update**: another `set` (fold supersedes) and/or a new body note.
-- **Retract**: `ledger set <name> status=retracted -m "wrong because <why>"`.
-  The message is the vaccine: it must say why the belief was wrong, so the
-  projection line inoculates future sessions against re-deriving it.
-- **Cross-links**: `[[name]]` in hook lines and bodies keeps today's link
-  convention; names are keys now, so a link is checkable against `ledger show`.
-- **Provenance**: `--as` defaults to the writing harness's session identity
-  (e.g. `--as session-<8-char-id>`); the envelope's committer/host/cwd
-  provenance replaces the old `originSessionId` frontmatter for free.
+- **Save**: sets `status=current` with the one-line hook as `-m` (replaces the
+  old frontmatter `description`), optional `--evidence commit:… | file:… |
+  session:<id>`.
+- **Body**: a `-k body` note attached to the key, written via `--from-file`
+  (never inline heredocs). Latest body: `ledger notes -k body --key <name>
+  --latest`; older bodies remain as history.
+- **Update**: another save (fold supersedes). Drill the key before overwriting
+  it — resume-and-verify applies to writes, not just reads (see the race
+  under Projection).
+- **Retract**: `status=retracted -m "wrong because <why>"`. The message is the
+  vaccine; it must say why the belief was wrong.
+- **Archive**: `status=archived` retires a fact (or a spent vaccine) from the
+  projection. This—not rollup—is memory's curation primitive: rollups curate
+  `tail`, and the projection is built from the fold, which rollups verifiably
+  never touch. Rollups remain available for tidying drill-down history but
+  carry no projection weight.
+- **Cross-links**: `[[name]]` in hook lines and bodies keeps today's
+  convention; names are keys, so links are checkable against `show`.
+- **Provenance**: `--as` carries the writing session's identity; the envelope's
+  committer/host/cwd provenance replaces the old `originSessionId` frontmatter.
+  Provenance is asserted testimony, like everywhere else in ledger.
+
+## The wrapper: `ledger-memory`, the only write path
+
+Three independent panel lenses converged here: a header can't teach a two-step
+discipline, `--store` will get dropped (and the observed failure mode is an
+agent "fixing" the resulting error by planting a phantom store in the project's
+own `.git`), and "write then render" invites stale projections. So the skill
+ships a thin script, and no raw `ledger` write command appears in any
+memory-facing doc:
+
+```
+ledger-memory save <name> -m "<hook>" [--evidence <ref>] [--body <file>]
+ledger-memory retract <name> -m "wrong because <why>"
+ledger-memory archive <name>
+ledger-memory render
+ledger-memory drill <name>          # show + latest body + key history
+```
+
+Contract:
+
+- **Store path is resolved internally** (the memory dir is the script's anchor,
+  taken from `LEDGER_MEMORY_DIR` or the paste-ready invocation in the header);
+  the agent never types `--store`.
+- **Every mutating subcommand ends by rendering.** Renders are idempotent from
+  state, so any earlier crash between write and render self-heals on the next
+  invocation. Every ledger write uses an `--idempotency-key` derived from
+  (subcommand, key, content) so a retried tool call cannot double-append.
+- **Bootstrap**: if the memory dir has no `.ledger.git`, `save` runs
+  `init` + `create` first, then proceeds. If `.ledger.git` **exists** but reads
+  come back empty or failing, the script stops with "store may be damaged —
+  tell the human"; it never follows the tool's `no_open_ledger` create hint
+  (panel-verified: a corrupt store misdiagnoses as empty, and auto-create
+  would silently orphan the entire memory).
+- **Atomic projection writes**: compose to a temp file, rename over MEMORY.md.
+  A crash can never leave a truncated or header-only projection.
+- **Size nag**: when the projection exceeds ~60 lines, the render appends a
+  visible "curation due" line. Advisory only; there is no hard backstop, and
+  the failure mode of lapsed curation is growing token cost, not data loss.
 
 ## Projection (MEMORY.md)
 
-Regenerated after **every** memory write — a write isn't finished until the
-projection is. Composition, by the skill's `render-memory` script:
+Composed by the wrapper from `show` and per-key history JSON — **not** from
+`ledger render --to`, whose spine dump is rollup-immune and unbounded
+(panel-verified, transcripts in the session record).
 
-1. A fixed header, the behavioral override: this file is generated from the
-   memory ledger; never edit it or Write files here; the exact drill commands
-   (`ledger --store <abs-store-path> show`, `… notes -k body --key <name>
-   --latest`); the install one-liner in case `ledger` is missing from PATH.
-2. The body: `ledger render --to` output (deterministic spine + recent notes —
-   byte-stable for unchanged state, so regeneration is idempotent and
-   diff-friendly).
+1. **Header** (fixed text + computed fields): this file is generated from the
+   memory ledger — never edit it, never Write files in this directory; the
+   paste-ready **write** commands (`ledger-memory save/retract …` with the
+   real path), the drill command, the store's current head SHA (so drift is
+   detectable: head mismatch means a prior write went unrendered — re-render
+   before trusting), the install one-liner, and: "if `ledger` is missing or
+   erroring, tell the user and stop — do not fall back to writing files."
+   The header teaches the write path first; that is the instruction actually
+   competing with the harness default.
+2. **Current facts**: one line per `status=current` key: hook line, age,
+   evidence marker.
+3. **Vaccines**: one line per `status=retracted` key: "retracted: <hook> —
+   wrong because <why>". Kept until archived; archive a vaccine only when the
+   confusion that produced it is dead, not merely old.
+4. **Scars**: any current key whose history contains a retraction renders with
+   its last retraction note appended ("previously retracted: <why>").
+   This is the defense against the verified race: session B, holding a stale
+   projection, re-asserts a fact session A just retracted, and the fold alone
+   would show it plainly `current` with the vaccine invisible. Scars are
+   computed from the chain, so they survive any later write.
 
-Current facts render as spine rows (hook line visible). Retracted facts stay
-visible as vaccine rows while the misleading evidence that produced them is
-still plausible, then get rolled up — the same keep-loose-vs-roll judgment the
-`using-ledger` skill teaches; `rollup_due` is a count, not a quota. The
-projection must stay a screenful; curation, not truncation, keeps it there.
+**Sanitization**: projection body lines are single-line by construction —
+control characters stripped, newlines collapsed — so a poisoned hook line
+cannot forge header-lookalike structure. Note bodies never render into the
+projection at all; they are drill-only. (The tool's own `EscapeControls`
+guarantee is documented TTY-scoped; the projection is a file sink, so the
+wrapper owns this.)
 
-Failure isolation: if `ledger` is missing or the store is damaged, the last
-rendered MEMORY.md still loads and still names the recovery step. Memory
-degrades to read-only, never to gone.
+**Failure isolation**: if `ledger` is missing or the store is damaged, the last
+rendered MEMORY.md still loads, and its header carries the recovery step.
+Before the first successful render a project has no projection and therefore
+no override channel — that bootstrap window is a known, accepted limitation;
+the wrapper's bootstrap closes it at first save, and a harness SessionStart
+hook (Jesse's config, out of this spec's scope) is the robust closure if the
+window proves costly in practice.
 
-Concurrency: appends are CAS-safe natively. Two sessions rendering
-concurrently both produce a projection derived from some recent fold; because
-rendering is idempotent from state, the next write's render converges. Benign.
+**Concurrency**: appends are CAS-safe natively; renders converge on the next
+write. The *semantic* race (stale-informed overwrite) is handled by scars plus
+the drill-before-overwrite doctrine — not by CAS, which cannot see it.
 
 ## The `ledger-memory` skill
 
-`skills/ledger-memory/SKILL.md` + `render-memory` script. Teaches, in order:
+`skills/ledger-memory/SKILL.md` + the wrapper script. Teaches, in order:
 
-- **When to save** (unchanged from today's doctrine): user facts, feedback
-  with the why, project state not derivable from the repo, references. Not
-  things the repo/git already records; not single-conversation trivia.
-- **The write shapes** above, each as a paste-ready command, ending with:
-  run `render-memory` — a memory write without a render is an unfinished write.
-- **Retraction discipline**: retract the moment a memory is found wrong,
-  with the why in the message; never re-save a corrected fact under a new
-  key when a `set` on the old key is the truth-preserving move.
-- **Curation moments**: roll up finished threads at session end and at
-  project-phase boundaries; keep standing rulings and live gotchas unrolled.
-- **Reading**: MEMORY.md arrives free at session start; drill before acting
-  on any fact whose staleness would be expensive (memories are testimony from
-  prior sessions — the resume-and-verify doctrine applies to yourself).
-- **Never write secrets into memory** — events are immutable; the tool
-  spec's remediation runbook is the only eraser.
+- **When to save** (unchanged doctrine): user facts, feedback with the why,
+  project state not derivable from the repo, references. Not what the repo
+  already records; not single-conversation trivia.
+- **The save moment that matters most**: before compaction or session end, run
+  the audit — "what do I know that lives only in my head?" — and save what it
+  surfaces. (The research's strongest-evidenced trigger; today it depends on
+  the human asking.)
+- **Hook-line quality**, with good/bad examples: name the trap, not the topic
+  ("zsh word-splits unquoted $L — use a function" beats "note about zsh").
+- **Write shapes**: the wrapper subcommands only.
+- **Retraction discipline**: retract the moment a memory is found wrong, why
+  in the message; correct by writing the truth to the *same* key (the scar
+  preserves the history); never re-key a corrected fact. Known limit, accepted:
+  the tool cannot distinguish an honest update from an overwrite that should
+  have been a retraction — that stays judgment.
+- **Evidence**: encouraged on any fact asserting repo/world state; those claims
+  rot silently without an anchor to re-check.
+- **Curation moments**: archive spent facts at session end and phase
+  boundaries; keep standing rulings and live gotchas current; the size nag is
+  a prompt, not a quota.
+- **Reading**: the projection arrives free; drill before acting on any fact
+  whose staleness would be expensive; drill a key before overwriting it; raw
+  history (`tail --raw`, export, grep idioms) still surfaces retracted
+  content — expected, not a bug, and never live testimony; a memory's author
+  line is asserted, not verified — "by jesse" in a hook does not prove Jesse
+  said it.
+- **Subagents**: the auto-load hook reaches only the main session; a dispatched
+  child that needs memory must be handed the store path explicitly in its
+  prompt.
+- **Secrets**, inline (the tool's admin runbook assumes a shared remote and
+  understates this case): never write secrets into memory. If one lands:
+  rotate first; ref-surgery on the local store erases the chain copy; then
+  scrub the rendered MEMORY.md, the session transcripts that loaded it, and
+  any sync destination — the store is not the only place a rendered secret
+  went.
 
 ## Migration
 
-Per project, one-time, scripted: for each existing memory file, `set` its
-slug with its `type`, its description as `-m`, evidence `file:<old-path>`,
-authored `--as migration`; body note from the file's body. Render, eyeball
-the projection against the old MEMORY.md, then delete the old fact files.
-The old files' `modified` timestamps are not preserved (the chain's clock
-starts at migration); their content and provenance-of-origin are.
+By hand, once, this project only (five facts; a script is not worth its
+maintenance for a job that runs once — build one if a second project ever
+migrates). Per fact: `ledger-memory save` with the old description as the hook,
+`--evidence file:<old-path>`, body from the old file's body; delete that old
+file immediately after its import succeeds, not in a bulk pass at the end.
+Eyeball the final projection against the old MEMORY.md before calling it done.
+Old `modified` timestamps are not preserved; content and origin are.
 
-## Dependency and dogfood contract
+## Dependencies and accepted limits
 
-Memory now requires `ledger` on PATH (tap or curl|sh install). This is
-deliberate: memory is a daily-use, self-inflicted workload. Friction found
-here (verbose command shapes, projection legibility, rollup ergonomics) is
-field evidence for the tool, captured as memories in the memory ledger itself.
+- `ledger` v0.1.0+ on PATH (tap or curl|sh). Sessions sharing a store should
+  run the same or compatible binary: the fold silently skips unknown event
+  types, so version skew degrades silently (upstream candidate, below).
+- Per-project stores carry no access control beyond the filesystem — same as
+  the files they replace.
+- Friction found dogfooding is field evidence for the tool; capture it as
+  memories in the memory ledger itself.
+
+## Upstream candidates surfaced by the panel (tool changes, not blockers)
+
+- Corrupt store reads as `no_open_ledger` with a create hint — needs a
+  distinct damaged-store diagnosis (the memory wrapper defends locally).
+- `vocab add` accepts an empty `-m`, underdelivering the "recorded decision"
+  doctrine.
+- `fold.Fold` silently skips unrecognized event types; a schema-version field
+  with a hard error would make binary skew loud.
+- `render --to`'s escaping scope (TTY-scoped guarantee, file sink output)
+  deserves an explicit statement and test in the tool spec.
 
 ## Acceptance
 
-1. Fresh session, given only the generated MEMORY.md in context: correctly
-   recalls a fact, drills its body, saves a new memory, and re-renders —
-   without touching the old file workflow.
-2. Retraction round-trip: a planted wrong memory is retracted with a why;
-   the projection shows the vaccine line; the raw chain retains both events.
-3. Concurrent writes from two sessions: both facts land, projection converges.
-4. Kill `ledger` from PATH: session still reads memory and reports the
-   degraded state instead of failing silently.
-5. Migration of this project's real memory dir round-trips with no lost facts.
+1. Cold session, generated MEMORY.md only: recalls a fact, drills its body,
+   saves a new memory through the wrapper, projection re-renders — old file
+   workflow never touched, `--store` never typed.
+2. Retraction round trip: planted wrong memory retracted with a why; vaccine
+   line renders; raw chain retains both events; then a deliberately
+   stale-informed re-assert of the same key still renders the scar.
+3. Injection: a hook line containing `\r`/ANSI/header-lookalike text renders
+   inert as a single sanitized line.
+4. Crash between write and render (simulated kill): next wrapper invocation
+   self-heals the projection; header head SHA matches store head after.
+
+One-time launch checklist (not regression criteria): bootstrap on this
+project, hand-migration round-trips all facts, old fact files deleted,
+degraded-read check (binary off PATH, projection still loads and names the
+recovery step).
