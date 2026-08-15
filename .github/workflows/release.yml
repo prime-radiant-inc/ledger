@@ -29,6 +29,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: ledger/go.mod
+          cache-dependency-path: ledger/go.sum
 
       - name: Run tests
         working-directory: ledger
