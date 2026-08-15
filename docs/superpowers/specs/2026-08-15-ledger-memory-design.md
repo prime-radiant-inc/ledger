@@ -1,6 +1,6 @@
 # Ledger-backed agent memory (design)
 
-2026-08-15, revision 2. Replaces the file-based per-project agent memory
+2026-08-15, revision 3. Replaces the file-based per-project agent memory
 (MEMORY.md index + one markdown file per fact) with a memory ledger, dogfooding
 `ledger` v0.1.0 as the first real consumer of the committed-projection pattern
 deferred to v2 in the tool spec. Grounded in Jesse's rulings this session, the
@@ -9,7 +9,11 @@ panel (rev 1 → rev 2; panel verdicts in the session record). Rev 2's forced
 changes: curation by status flips instead of rollups (rollups verifiably never
 reach the spine projection), retraction scars against the stale-session
 re-assert race (verified live), a wrapper script as the only write path, and
-the `type` field cut.
+the `type` field cut. Rev 3: ships as a standalone **plugin** (Jesse's
+packaging ruling: `ledger` stays a Claude-agnostic CLI; anything
+harness-shaped lives in a plugin that consumes it), and three
+discipline-to-mechanism promotions — a SessionStart render hook, a PreCompact
+audit hook, and save-echo in the wrapper.
 
 ## Problem
 
@@ -33,7 +37,10 @@ agent state files.
 - MEMORY.md becomes a **generated projection** (the harness auto-loads it; that
   hook is fixed and is the one channel that can override the harness's default
   file-writing instructions).
-- The workflow ships as a new **`ledger-memory` skill**.
+- The workflow ships as a standalone **`ledger-memory` plugin** (skill +
+  wrapper + hooks). `ledger` itself stays a standalone tool with no
+  Claude-specific machinery; the plugin is a consumer, with the same standing
+  as any other.
 
 ## Architecture
 
@@ -121,6 +128,12 @@ Contract:
   state, so any earlier crash between write and render self-heals on the next
   invocation. Every ledger write uses an `--idempotency-key` derived from
   (subcommand, key, content) so a retried tool call cannot double-append.
+- **Save echoes what it replaced.** `save` on an existing key always prints
+  the previous hook line, its age, and any retraction on record ("replaced:
+  '<old hook>' (14d, retracted 2d ago: <why>)"). The stale-overwrite race
+  stops depending on the writer's diligence beforehand: the surprise lands
+  immediately after, when one `retract` fixes it. Drill-before-overwrite
+  remains doctrine, but the mechanism no longer needs it to hold.
 - **Bootstrap**: if the memory dir has no `.ledger.git`, `save` runs
   `init` + `create` first, then proceeds. If `.ledger.git` **exists** but reads
   come back empty or failing, the script stops with "store may be damaged —
@@ -129,8 +142,11 @@ Contract:
   would silently orphan the entire memory).
 - **Atomic projection writes**: compose to a temp file, rename over MEMORY.md.
   A crash can never leave a truncated or header-only projection.
-- **Size nag**: when the projection exceeds ~60 lines, the render appends a
-  visible "curation due" line. Advisory only; there is no hard backstop, and
+- **Size nag with candidates**: when the projection exceeds ~60 lines, the
+  render appends a "curation due" line naming the three oldest facts with no
+  inbound `[[links]]` as archive candidates, so curation is paste-a-command,
+  not survey-the-file. Advisory only; age is anti-signal for memory value
+  (standing rulings are old and load-bearing), so nothing auto-archives, and
   the failure mode of lapsed curation is growing token cost, not data loss.
 
 ## Projection (MEMORY.md)
@@ -170,26 +186,39 @@ wrapper owns this.)
 **Failure isolation**: if `ledger` is missing or the store is damaged, the last
 rendered MEMORY.md still loads, and its header carries the recovery step.
 Before the first successful render a project has no projection and therefore
-no override channel — that bootstrap window is a known, accepted limitation;
-the wrapper's bootstrap closes it at first save, and a harness SessionStart
-hook (Jesse's config, out of this spec's scope) is the robust closure if the
-window proves costly in practice.
+no override channel — the plugin's SessionStart hook closes that window: the
+projection exists from the first session, before any agent decides anything.
+(Without the hook installed, the wrapper's bootstrap-at-first-save is the
+fallback closure, and the window is a known limitation.)
 
 **Concurrency**: appends are CAS-safe natively; renders converge on the next
 write. The *semantic* race (stale-informed overwrite) is handled by scars plus
 the drill-before-overwrite doctrine — not by CAS, which cannot see it.
 
-## The `ledger-memory` skill
+## The `ledger-memory` plugin
 
-`skills/ledger-memory/SKILL.md` + the wrapper script. Teaches, in order:
+A standalone Claude Code plugin (its own repo), consuming the `ledger` CLI.
+Contents:
+
+- **The wrapper script** (above) — the plugin's engine.
+- **SessionStart hook**: runs `ledger-memory render` (bootstrapping the store
+  and projection if absent). Every session starts with a fresh, drift-free
+  projection; the stale-projection race cannot survive a session boundary; the
+  size nag surfaces at the moment curation is possible. Renders are cheap and
+  idempotent, so this is safe to run unconditionally.
+- **PreCompact hook**: injects the audit prompt — "what do you know that lives
+  only in your head? Save it now (`ledger-memory save …`), then let compaction
+  proceed." This turns the research's strongest-evidenced save trigger from
+  skippable doctrine into harness mechanism.
+- **The skill**, `SKILL.md`, teaching in order:
 
 - **When to save** (unchanged doctrine): user facts, feedback with the why,
   project state not derivable from the repo, references. Not what the repo
   already records; not single-conversation trivia.
 - **The save moment that matters most**: before compaction or session end, run
   the audit — "what do I know that lives only in my head?" — and save what it
-  surfaces. (The research's strongest-evidenced trigger; today it depends on
-  the human asking.)
+  surfaces. (The PreCompact hook fires this automatically; the doctrine line
+  covers session ends and hookless installs.)
 - **Hook-line quality**, with good/bad examples: name the trap, not the topic
   ("zsh word-splits unquoted $L — use a function" beats "note about zsh").
 - **Write shapes**: the wrapper subcommands only.
@@ -263,7 +292,11 @@ Old `modified` timestamps are not preserved; content and origin are.
 4. Crash between write and render (simulated kill): next wrapper invocation
    self-heals the projection; header head SHA matches store head after.
 
-One-time launch checklist (not regression criteria): bootstrap on this
-project, hand-migration round-trips all facts, old fact files deleted,
-degraded-read check (binary off PATH, projection still loads and names the
-recovery step).
+5. Hooks: a fresh project's first session (SessionStart hook installed, no
+   store) ends its startup with a rendered header-only MEMORY.md; a compaction
+   fires the audit prompt.
+
+One-time launch checklist (not regression criteria): plugin installed, hooks
+active, bootstrap on this project, hand-migration round-trips all facts, old
+fact files deleted, degraded-read check (binary off PATH, projection still
+loads and names the recovery step).
