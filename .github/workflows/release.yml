@@ -91,8 +91,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/ledger.rb
-          git commit -m "Update ledger to ${GITHUB_REF_NAME#v}"
-          git push
+          if git diff --cached --quiet; then
+            echo "formula unchanged (re-run) — nothing to push"
+          else
+            git commit -m "Update ledger to ${GITHUB_REF_NAME#v}"
+            git push
+          fi
 
       - name: Workflow dispatch — build only (no release published)
         if: github.event_name == 'workflow_dispatch'
