@@ -72,8 +72,11 @@ func runNote(c *Ctx, stdin io.Reader, kind, key, fromFile string, o writeOpts) e
 		for _, ev := range led.Events {
 			if ev.Type == "note" && ev.IdempotencyKey == o.idemKey && ev.Author == author &&
 				ev.Kind == kind && ev.Key == key {
-				outEmit(c, map[string]any{"id": ev.ID, "ledger": led.Slug, "deduped": true, "by": ev.Author},
-					[]string{"deduped against " + ev.ID})
+				payload := map[string]any{"id": ev.ID, "ledger": led.Slug, "deduped": true, "by": ev.Author}
+				if due, ok := dueAfter(c, led.Slug); ok {
+					payload["rollup_due"] = due
+				}
+				outEmit(c, payload, []string{"deduped against " + ev.ID})
 				return nil
 			}
 		}
@@ -87,6 +90,9 @@ func runNote(c *Ctx, stdin io.Reader, kind, key, fromFile string, o writeOpts) e
 	payload := map[string]any{"id": id, "ledger": led.Slug, "kind": kind}
 	if key != "" {
 		payload["key"] = key
+	}
+	if due, ok := dueAfter(c, led.Slug); ok {
+		payload["rollup_due"] = due
 	}
 	outEmit(c, payload, []string{"[" + id + "] " + led.Slug + ": note(" + kind + ") " + out.EscapeControls(firstLine(body))})
 	return nil

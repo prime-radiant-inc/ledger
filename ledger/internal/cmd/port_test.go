@@ -90,6 +90,67 @@ func TestImportRejectsTruncatedExport(t *testing.T) {
 	}
 }
 
+// TestImportRemapsRollupChildren: F3 — import used to keep a rollup's
+// Children verbatim while every event is re-SHAed, so an imported rollup
+// pointed at ids that no longer existed and curated history silently
+// un-collapsed (the "encapsulated" children would show back up as live
+// roots, right alongside the rollup that claims to cover them). Export a
+// ledger with a rollup, import into a fresh slug, and assert tail collapses
+// identically on the copy: the rollup root is present, its children are
+// absent from roots, and `tail --in <new-id>` still opens exactly them.
+func TestImportRemapsRollupChildren(t *testing.T) {
+	dir := seed(t) // demo: t1, t2 already carry sets/notes
+	a := writeEv(t, dir, "k1")
+	b := writeEv(t, dir, "k2")
+	if _, se, code := run(t, dir, "rollup", a, b, "-m", "k-thread finished", "--as", "curator"); code != 0 {
+		t.Fatal(se)
+	}
+
+	f := filepath.Join(t.TempDir(), "demo.jsonl")
+	if _, _, code := run(t, dir, "export", "demo", "--to", f); code != 0 {
+		t.Fatal("export")
+	}
+	so, _, code := run(t, dir, "import", f, "--slug", "demo-rollup-copy")
+	if code != 0 {
+		t.Fatal(so)
+	}
+
+	origTail, _, _ := run(t, dir, "tail", "-n", "50", "--ledger", "demo")
+	copyTail, _, _ := run(t, dir, "tail", "-n", "50", "--ledger", "demo-rollup-copy")
+	origRoots := mustJSON(t, origTail)["events"].([]any)
+	copyRoots := mustJSON(t, copyTail)["events"].([]any)
+	if len(origRoots) != len(copyRoots) {
+		t.Fatalf("root count differs after import (children un-collapsed?): orig %d copy %d\norig: %s\ncopy: %s",
+			len(origRoots), len(copyRoots), origTail, copyTail)
+	}
+
+	var copyRid string
+	rollupRoots := 0
+	for _, e := range copyRoots {
+		m := e.(map[string]any)
+		if m["type"] == "rollup" {
+			rollupRoots++
+			copyRid = m["id"].(string)
+		}
+	}
+	if rollupRoots != 1 {
+		t.Fatalf("imported copy must have exactly one rollup root, got %d: %s", rollupRoots, copyTail)
+	}
+
+	in, se, code := run(t, dir, "tail", "--in", copyRid, "--ledger", "demo-rollup-copy")
+	if code != 0 {
+		t.Fatalf("--in on imported rollup failed: %s", se)
+	}
+	inDoc := mustJSON(t, in)
+	if inDoc["summary"] != "k-thread finished" {
+		t.Fatalf("imported rollup summary drifted: %v", inDoc)
+	}
+	inEvents, _ := inDoc["events"].([]any)
+	if len(inEvents) != 2 {
+		t.Fatalf("--in on imported rollup must open exactly its 2 remapped children: %v", inDoc)
+	}
+}
+
 func TestImportedCommitterMarker(t *testing.T) {
 	dir := seed(t)
 	f := filepath.Join(t.TempDir(), "d.jsonl")

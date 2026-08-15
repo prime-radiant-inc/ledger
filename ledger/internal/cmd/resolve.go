@@ -90,7 +90,7 @@ func (c *Ctx) PickLedger(ledgerFlag string) (*fold.Ledger, error) {
 		}
 		hint := "ledger create <slug> --scope <what-it-tracks>  starts one; ledger ls --all lists closed ones"
 		if len(all) > 1 {
-			hint += "; --ledger <slug> targets a closed one directly (notes are still allowed there)"
+			hint += "; --ledger <slug> targets a closed one directly (notes and rollups are still allowed there)"
 		}
 		return nil, out.Errf("no_open_ledger", c.shadowHint(hint), 4, "no open ledgers in this repo")
 	}

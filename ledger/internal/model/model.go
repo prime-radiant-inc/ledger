@@ -37,6 +37,7 @@ type Event struct {
 	LifecycleKind     string            `json:"lifecycle_kind,omitempty"`
 	Successor         string            `json:"successor,omitempty"`
 	Evidence          []string          `json:"evidence,omitempty"`
+	Children          []string          `json:"children,omitempty"`
 	Author            string            `json:"author"`
 	Origin            Origin            `json:"origin"`
 	IdempotencyKey    string            `json:"idempotency_key,omitempty"`

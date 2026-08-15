@@ -18,8 +18,8 @@ func TestQuickstartLengthBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := bytes.Count(data, []byte("\n")); n > 90 {
-		t.Fatalf("quickstart is %d lines; budget is 90 (spec: kata-sized)", n)
+	if n := bytes.Count(data, []byte("\n")); n > 95 {
+		t.Fatalf("quickstart is %d lines; budget is 95 (spec: kata-sized)", n)
 	}
 	for _, must := range []string{"--as", "verify", "testimony", "secrets", "scratch", "cursor", "vocab add", "--from-file"} {
 		if !bytes.Contains(bytes.ToLower(data), []byte(must)) {

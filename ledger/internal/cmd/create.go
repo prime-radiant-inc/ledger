@@ -90,6 +90,9 @@ func runCreate(c *Ctx, slug, scope, owner, supersedes, asFlag, mFlag string, fie
 	}
 	payload := map[string]any{"id": id, "ledger": slug, "created": true,
 		"fields": fields, "require_evidence": require}
+	if due, ok := dueAfter(c, slug); ok {
+		payload["rollup_due"] = due
+	}
 	lines := []string{"[" + id + "] created " + slug, "  first cursor: " + id}
 	outEmit(c, payload, lines)
 	return nil

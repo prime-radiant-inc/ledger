@@ -260,13 +260,29 @@ func (s Store) Append(slug string, ev model.Event, extra map[string]string, expe
 // (no delete verb, slugs never reused) after a bad input file. firstExtra is
 // attached only to the chain's first commit (e.g. import's meta.json on a
 // from-scratch ledger); pass nil for chains that extend an existing one.
+//
+// remap, when non-nil, is called for every event immediately before its
+// commit is built, given the ids already assigned earlier in this same
+// chain-build attempt (keyed by each earlier event's own ImportedFrom, i.e.
+// its pre-import identity) — the hook import uses to rewrite a rollup's
+// Children from old ids to the new ones its children just received, since
+// children always precede their rollup in chain order and so already have a
+// new id by the time their parent event's commit is built. Pass nil where no
+// such rewrite is needed. priorIDs is rebuilt from scratch on every CAS
+// retry, so remap must stay a pure function of (ev, priorIDs).
+//
 // Returned ids are in event order.
-func (s Store) AppendChain(slug string, evs []model.Event, firstExtra map[string]string, expect Expect) ([]string, error) {
+func (s Store) AppendChain(slug string, evs []model.Event, firstExtra map[string]string, expect Expect,
+	remap func(ev *model.Event, priorIDs map[string]string)) ([]string, error) {
 	var shas []string
 	_, err := s.casLoop(slug, expect, func(parent string) (string, error) {
 		shas = shas[:0]
+		priorIDs := map[string]string{}
 		p := parent
 		for i, ev := range evs {
+			if remap != nil {
+				remap(&ev, priorIDs)
+			}
 			var extra map[string]string
 			if i == 0 {
 				extra = firstExtra
@@ -276,6 +292,9 @@ func (s Store) AppendChain(slug string, evs []model.Event, firstExtra map[string
 				return "", err
 			}
 			shas = append(shas, csha)
+			if ev.ImportedFrom != "" {
+				priorIDs[ev.ImportedFrom] = csha[:10]
+			}
 			p = csha
 		}
 		return shas[len(shas)-1], nil

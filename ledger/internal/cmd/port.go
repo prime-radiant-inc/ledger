@@ -89,9 +89,15 @@ func newImportCmd(c *Ctx) *cobra.Command {
 // runImport replays an export's events onto a brand-new slug, in order,
 // preserving each event's Type and payload untouched — the only changes are
 // the commit's own committer identity (stamped "imported", never the
-// importing harness's marker) and ImportedFrom, set to the original event id
-// for traceability. Because ids are assigned by the store at commit time,
-// identity does not cross the boundary: only payload equality is guaranteed.
+// importing harness's marker), ImportedFrom (set to the original event id,
+// for traceability), and — for rollup events only — Children, rewritten from
+// old ids to new via remapRollupChildren. Because ids are assigned by the
+// store at commit time, raw identity does not otherwise cross the boundary:
+// a cursor or an --id reference from the source ledger is meaningless on the
+// copy. Without the Children rewrite, though, an imported rollup would still
+// point at old ids that resolve to nothing in the new chain — its curated
+// children would silently un-collapse in `tail` — so that one id reference
+// does have to survive the boundary, structurally if not literally.
 //
 // Every line is parsed and validated before any git object is written: a
 // malformed line partway through the file must never leave a half-created
@@ -149,7 +155,8 @@ func runImport(c *Ctx, path, newSlug string) error {
 	meta.Slug = newSlug
 	metaJSON, _ := json.MarshalIndent(meta, "", " ")
 
-	if _, err := c.Store.AppendChain(newSlug, evs, map[string]string{"meta.json": string(metaJSON)}, store.ExpectAbsent); err != nil {
+	if _, err := c.Store.AppendChain(newSlug, evs, map[string]string{"meta.json": string(metaJSON)},
+		store.ExpectAbsent, remapRollupChildren); err != nil {
 		return mapStoreErr(err, newSlug)
 	}
 
@@ -157,4 +164,27 @@ func runImport(c *Ctx, path, newSlug string) error {
 		"note": "event ids did not survive the boundary"},
 		[]string{fmt.Sprintf("imported %d events into %s", len(evs), newSlug)})
 	return nil
+}
+
+// remapRollupChildren is AppendChain's remap hook for import: a rollup's
+// Children list names old (pre-import) event ids, which resolve to nothing
+// once ids are reassigned at commit time. priorIDs is keyed by each earlier
+// event's ImportedFrom (its old id), populated as those events are built —
+// complete for every child by the time its rollup's turn comes, since
+// children always precede the rollup that encapsulates them in chain order.
+// A child id absent from priorIDs (a hand-crafted export payload citing an
+// id that was never itself an event in this file) is left verbatim.
+func remapRollupChildren(ev *model.Event, priorIDs map[string]string) {
+	if ev.Type != "rollup" || len(ev.Children) == 0 {
+		return
+	}
+	remapped := make([]string, len(ev.Children))
+	for i, cid := range ev.Children {
+		if nid, ok := priorIDs[cid]; ok {
+			remapped[i] = nid
+		} else {
+			remapped[i] = cid
+		}
+	}
+	ev.Children = remapped
 }

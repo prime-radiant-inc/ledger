@@ -51,7 +51,10 @@ func runVocabAdd(c *Ctx, slug, field, value, asFlag, mFlag string) error {
 	if err != nil {
 		return mapStoreErr(err, slug)
 	}
-	outEmit(c, map[string]any{"id": id, "ledger": slug, "vocab": map[string]string{field: value}},
-		[]string{"[" + id + "] " + slug + ": vocab " + field + " += " + value})
+	payload := map[string]any{"id": id, "ledger": slug, "vocab": map[string]string{field: value}}
+	if due, ok := dueAfter(c, slug); ok {
+		payload["rollup_due"] = due
+	}
+	outEmit(c, payload, []string{"[" + id + "] " + slug + ": vocab " + field + " += " + value})
 	return nil
 }

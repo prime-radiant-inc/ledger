@@ -42,7 +42,7 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts) error {
 		return err
 	}
 	if led.State != "open" {
-		hint := "closed ledgers accept only notes; for new work: ledger create <new-slug> --scope <ref>"
+		hint := "closed ledgers accept only notes and rollups; for new work: ledger create <new-slug> --scope <ref>"
 		if led.SupersededBy != "" {
 			hint = "this ledger is superseded by '" + led.SupersededBy + "' — write there"
 		}
@@ -81,8 +81,11 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts) error {
 		author := model.ResolveAuthor(o.as)
 		for _, ev := range led.Events {
 			if ev.Type == "set" && ev.IdempotencyKey == o.idemKey && ev.Author == author && ev.Key == key {
-				outEmit(c, map[string]any{"id": ev.ID, "ledger": led.Slug, "deduped": true, "by": ev.Author},
-					[]string{"deduped against " + ev.ID})
+				payload := map[string]any{"id": ev.ID, "ledger": led.Slug, "deduped": true, "by": ev.Author}
+				if due, ok := dueAfter(c, led.Slug); ok {
+					payload["rollup_due"] = due
+				}
+				outEmit(c, payload, []string{"deduped against " + ev.ID})
 				return nil
 			}
 		}
@@ -93,8 +96,11 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts) error {
 	if err != nil {
 		return mapStoreErr(err, led.Slug)
 	}
-	outEmit(c, map[string]any{"id": id, "ledger": led.Slug, "key": key, "fields": fields},
-		[]string{"[" + id + "] " + led.Slug + ": " + key + " " + renderFields(fields)})
+	payload := map[string]any{"id": id, "ledger": led.Slug, "key": key, "fields": fields}
+	if due, ok := dueAfter(c, led.Slug); ok {
+		payload["rollup_due"] = due
+	}
+	outEmit(c, payload, []string{"[" + id + "] " + led.Slug + ": " + key + " " + renderFields(fields)})
 	return nil
 }
 
