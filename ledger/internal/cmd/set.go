@@ -225,14 +225,14 @@ func checkCAS(events []model.Event, key, field, expect, attemptedValue string, r
 	if latest != nil && strings.HasPrefix(latest.ID, expect) {
 		return nil
 	}
-	hint := claimLostHint(ready, field, attemptedValue, false, meta)
 	if latest == nil {
 		// The field was never written at all, so there is no winner to name
-		// — the caller's --expect id could never have been valid. Not a
-		// state the write idioms produce; the write idioms always name an
-		// id they actually read.
-		return out.Errf("claim_lost", hint, 4, "event  by  (%s=) beat you to '%s'", field, key)
+		// — a caller pasting a stale or guessed id on a first-ever write.
+		// Never fabricate a winner; name the actual state and the fix.
+		return out.Errf("claim_lost", "a first write takes --expect none", 4,
+			"'%s' has no prior event on '%s' — nothing matches --expect %s", field, key, expect)
 	}
+	hint := claimLostHint(ready, field, attemptedValue, false, meta)
 	return out.Errf("claim_lost", hint, 4,
 		"event %s by %s (%s=%s) beat you to '%s'", latest.ID, latest.Author, field, latest.Fields[field], key)
 }

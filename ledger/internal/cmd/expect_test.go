@@ -267,6 +267,30 @@ func TestExpectNoneBlockedByCollisionHint(t *testing.T) {
 	}
 }
 
+// TestExpectOnNeverWrittenFieldNamesNoPhantomWinner: --expect <id> on a
+// field with no prior event at all (a stale or guessed id pasted on a
+// first-ever write) must never fabricate a winner's id/author/value — it
+// gets its own claim_lost message naming the actual state and the fix.
+func TestExpectOnNeverWrittenFieldNamesNoPhantomWinner(t *testing.T) {
+	dir := setupReady(t)
+	_, se, code := run(t, dir, "set", "k1", "status=in-progress", "--expect", "deadbeef00", "-m", "claiming", "--as", "a")
+	if code != 4 {
+		t.Fatalf("%d %s", code, se)
+	}
+	doc := mustJSON(t, se)
+	if doc["error"] != "claim_lost" {
+		t.Fatalf("%s", se)
+	}
+	wantMsg := "'status' has no prior event on 'k1' — nothing matches --expect deadbeef00"
+	if doc["message"] != wantMsg {
+		t.Fatalf("exact message: got %q want %q", doc["message"], wantMsg)
+	}
+	wantHint := "a first write takes --expect none"
+	if doc["hint"] != wantHint {
+		t.Fatalf("exact hint: got %q want %q", doc["hint"], wantHint)
+	}
+}
+
 // TestNotesNeverInvalidateExpect: writing a note between reading an id and
 // using it as --expect must never trip claim_lost — notes carry no Fields,
 // so they never appear in board.Build's fold.
