@@ -192,6 +192,47 @@ func TestOverrideBlankMessageBadUsage(t *testing.T) {
 	}
 }
 
+// TestOverrideWithNoStandingSignalIsLegalNoOp: --override with a valid
+// message but no actual standing signal to override is legal — the write
+// lands and the event records no override (nothing to name).
+func TestOverrideWithNoStandingSignalIsLegalNoOp(t *testing.T) {
+	dir := setupReady(t)
+	so, _, code := run(t, dir, "set", "k1", "status=open", "--expect", "none", "-m", "title", "--as", "a")
+	if code != 0 {
+		t.Fatal(so)
+	}
+	seedID := mustJSON(t, so)["id"].(string)
+
+	// own claim: never a signal against its own author, so --override here
+	// has nothing to override.
+	so2, se2, code := run(t, dir, "set", "k1", "status=in-progress", "--expect", seedID,
+		"--override", "-m", "claiming (override unnecessary here)", "--as", "a")
+	if code != 0 {
+		t.Fatalf("--override with no standing signal must still land: %d %s", code, se2)
+	}
+	newID := mustJSON(t, so2)["id"].(string)
+
+	tailOut, tailErr, code := run(t, dir, "tail", "--raw", "--ledger", "issues")
+	if code != 0 {
+		t.Fatal(tailErr)
+	}
+	doc := mustJSON(t, tailOut)
+	events := doc["events"].([]any)
+	var found map[string]any
+	for _, e := range events {
+		ev := e.(map[string]any)
+		if ev["id"] == newID {
+			found = ev
+		}
+	}
+	if found == nil {
+		t.Fatalf("tail must contain the new event's id %q: %s", newID, tailOut)
+	}
+	if _, has := found["override"]; has {
+		t.Fatalf("a legal no-op must record no override: %+v", found)
+	}
+}
+
 // TestMultiSignalMessageAndRecording: multiple standing signals (claim and
 // human) list together in the needs_override message and record together
 // on the event as override: claim,human.
