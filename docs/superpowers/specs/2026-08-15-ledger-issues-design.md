@@ -1,6 +1,14 @@
 # Ledger as issue tracker (design)
 
-2026-08-15, revision 1. What it takes for a ledger to serve as a
+2026-08-15, revision 2. Rev 2 folds in the two-worker spike trial
+(`research/ledger-issues-spike-trial.md`): the "claim discipline needs no
+mechanism" bet was falsified live — both workers passed the verify snapshot
+and duplicated work within 90 seconds of board start — so claiming gains a
+**conditional write** (`--expect`), and verify-after-claim is demoted to a
+fallback. Everything else survived contact: `ready` ordered a dependency
+diamond correctly across concurrent workers with zero tool errors, and
+`blocked`/`waiting_on` was used by both workers (once to decide termination,
+once to sanity-check the DAG). What it takes for a ledger to serve as a
 cross-session issue tracker with agent work-picking, grounded in the kata
 comparison (`~/git/kata`, deliberately-small issue model: two statuses,
 labels, links, triage doctrine, open-by-default filtered list) and the
@@ -100,20 +108,37 @@ envelope:
 Additional `--where` flags compose (e.g. `ready --where labels~=relay`
 scopes picking to a subsystem).
 
-## Claim discipline (doctrine, deliberately no mechanism)
+## Claiming (rev 2: conditional write, mechanism required)
 
-Picking is racy by nature; CAS makes the race lossless and the fold makes
-it deterministic, so claiming is a two-step idiom, not a verb:
+Rev 1 bet that a claim-then-verify idiom sufficed. The spike trial falsified
+it: the verify step is a point-in-time snapshot, and a claim landing after
+one worker's check but before its close is invisible to both sides — both
+workers legitimately "held" the same key and duplicated the work. Claiming
+needs atomicity the fold can't retroactively supply.
 
-1. Claim: `ledger set <key> status=in-progress -m "claiming" --as <you>`.
-2. Verify: `ledger status <key>` — if the latest event is **your** write,
-   the claim held; if someone else's claim landed after yours, yield and
-   re-run `ready`.
+**Addition 5: conditional writes.** `set <key> … --expect <event-id>`
+succeeds only if the key's latest event is still `<event-id>` at append
+time; otherwise `claim_lost`, exit 4, message naming the event that beat
+you. The store's ref-CAS retry loop re-validates the precondition on every
+retry, so the check is genuinely atomic, and claiming becomes first-wins
+(rev 1's fold-latest rule was last-wins — a late claimer silently stole).
+Generally useful for any read-modify-write on a key, not just claims.
+
+The claim idiom becomes: read `ready` (each entry carries its key's latest
+event id), then `set <key> status=in-progress --expect <id> -m "claiming"`.
+A `claim_lost` means someone beat you — re-run `ready`. Verify-after-claim
+remains documented only as the fallback for boards driven through tools
+without `--expect`.
 
 The **claimer's `--as` is the assignee** — no owner field exists. The
 in-progress event's author and provenance answer "who has this" with more
 honesty than an assignee box (it names the session that actually claimed
 it, when, from which host). Unclaiming is `status=open -m "yielding: <why>"`.
+
+Doctrine additions from the trial: the stop condition spells out that
+"blocked only on another worker's in-progress key" counts as finished for
+your session (don't poll); `ready`'s oldest-first ordering breaks timestamp
+ties by chain position (deterministic, document it).
 
 ## Board doctrine (the skill sketch, `using-ledger` addition or sibling)
 
