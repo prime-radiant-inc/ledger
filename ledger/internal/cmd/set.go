@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -17,6 +18,7 @@ type writeOpts struct {
 	ledger, as, m string
 	evidence      []string
 	idemKey       string
+	expect        string
 }
 
 func init() { register(newSetCmd) }
@@ -33,6 +35,8 @@ func newSetCmd(c *Ctx) *cobra.Command {
 	cmd.Flags().StringVarP(&o.m, "message", "m", "", "short annotation")
 	cmd.Flags().StringArrayVar(&o.evidence, "evidence", nil, "TYPE:REF (e.g. commit:abc123); repeatable")
 	cmd.Flags().StringVar(&o.idemKey, "idempotency-key", "", "dedupe key scoped to (author, key)")
+	cmd.Flags().StringVar(&o.expect, "expect", "",
+		"require the key's latest event id (short-SHA prefix ok, e.g. from `ready`) — conditional write, first-wins")
 	return cmd
 }
 
@@ -111,8 +115,23 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts) error {
 	}
 	ev := model.NewEvent("set", model.ResolveAuthor(o.as), c.Store.Repo)
 	ev.Key, ev.Fields, ev.Text, ev.Evidence, ev.IdempotencyKey = key, fields, o.m, o.evidence, o.idemKey
-	id, err := c.Store.Append(led.Slug, ev, nil, store.ExpectPresent)
+	var id string
+	if o.expect != "" {
+		id, err = c.Store.AppendExpect(led.Slug, ev, o.expect, store.ExpectPresent)
+	} else {
+		id, err = c.Store.Append(led.Slug, ev, nil, store.ExpectPresent)
+	}
 	if err != nil {
+		var lost *store.ClaimLostError
+		if errors.As(err, &lost) {
+			w := lost.Winner
+			if w.ID == "" {
+				return out.Errf("claim_lost", "re-run ledger ready and pick again", 4,
+					"'%s' has no recorded event yet — --expect '%s' cannot match", key, o.expect)
+			}
+			return out.Errf("claim_lost", "re-run ledger ready and pick again", 4,
+				"event %s by %s (status=%s) beat you to '%s'", w.ID, w.Author, w.Fields["status"], key)
+		}
 		return mapStoreErr(err, led.Slug)
 	}
 	payload := map[string]any{"id": id, "ledger": led.Slug, "key": key, "fields": fields}

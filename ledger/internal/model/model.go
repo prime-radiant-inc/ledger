@@ -67,6 +67,23 @@ type Meta struct {
 	Terminal map[string][]string `json:"terminal,omitempty"`
 }
 
+// LatestSetEvent is the most recent "set" event touching key in evs (which
+// must be in chronological order) — the per-key version stamp `set
+// --expect` claims against, and the id `ready` hands back to a would-be
+// claimant. Shared by the store's conditional-write precondition (reading
+// a freshly-fetched chain) and cmd's read side (reading the already-folded
+// one), so the "latest event for a key" rule lives in exactly one place.
+func LatestSetEvent(evs []Event, key string) (Event, bool) {
+	var found Event
+	ok := false
+	for _, ev := range evs {
+		if ev.Type == "set" && ev.Key == key {
+			found, ok = ev, true
+		}
+	}
+	return found, ok
+}
+
 func HarnessMarker() string {
 	if os.Getenv("CLAUDECODE") != "" {
 		return "claude-code"

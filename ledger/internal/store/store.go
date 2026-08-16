@@ -251,6 +251,44 @@ func (s Store) Append(slug string, ev model.Event, extra map[string]string, expe
 	return tip[:10], nil
 }
 
+// ClaimLostError is AppendExpect's precondition failure: ev.Key's latest
+// "set" event no longer has the caller's --expect id as a prefix. Winner is
+// the event that landed instead (its zero value when the key has no prior
+// set event at all).
+type ClaimLostError struct{ Winner model.Event }
+
+func (e *ClaimLostError) Error() string { return "claim_lost: " + e.Winner.ID }
+
+// AppendExpect is Append with a conditional-write precondition: the commit
+// only lands if ev.Key's latest "set" event id still has expectID as a
+// prefix. Unlike a check made once before the loop, the precondition here
+// runs inside casLoop's build callback — called fresh on every CAS retry —
+// so it always re-reads the chain from git immediately before attempting to
+// land. If another writer's commit races in between this read and the
+// ref-CAS below, that CAS fails (old != current ref) and casLoop retries,
+// which re-reads and re-validates against the now-current chain rather than
+// trusting stale data. The precondition can therefore never pass against a
+// state that the landing commit's CAS doesn't also certify — genuinely
+// atomic, not a check-then-act race. This makes claiming first-wins, unlike
+// Append's plain last-wins.
+func (s Store) AppendExpect(slug string, ev model.Event, expectID string, expect Expect) (string, error) {
+	tip, err := s.casLoop(slug, expect, func(parent string) (string, error) {
+		evs, _, evErr := s.Events(slug)
+		if evErr != nil {
+			return "", evErr
+		}
+		winner, ok := model.LatestSetEvent(evs, ev.Key)
+		if !ok || !strings.HasPrefix(winner.ID, expectID) {
+			return "", &ClaimLostError{Winner: winner}
+		}
+		return s.BuildCommit(slug, parent, ev, nil)
+	})
+	if err != nil {
+		return "", err
+	}
+	return tip[:10], nil
+}
+
 // AppendChain lands N events as one parent-chained sequence of commits under
 // a single ref CAS: either the whole chain lands or none of it does. Used
 // where multiple events must be atomic together on one ref — e.g. `close

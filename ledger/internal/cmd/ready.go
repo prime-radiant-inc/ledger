@@ -7,13 +7,18 @@ import (
 	"github.com/spf13/cobra"
 
 	"ledger/internal/fold"
+	"ledger/internal/model"
 	"ledger/internal/out"
 )
 
 // readyItem is one unblocked key in ready's envelope: the note/ts/by come
 // from the event that set the availability field (status, by convention).
+// ID is the key's latest set event across every field — the version stamp
+// a claimant hands straight to `set <key> ... --expect <id>`, no second
+// query needed.
 type readyItem struct {
 	Key  string `json:"key"`
+	ID   string `json:"id"`
 	Note string `json:"note"`
 	TS   string `json:"ts"`
 	By   string `json:"by"`
@@ -77,7 +82,8 @@ func runReady(c *Ctx, ledgerFlag string, whereFlags []string) error {
 		}
 		if len(waiting) == 0 {
 			ev := led.Spine[key]["status"]
-			readyItems = append(readyItems, readyItem{Key: key, Note: ev.Text, TS: ev.TS, By: ev.Author})
+			latest, _ := model.LatestSetEvent(led.Events, key) // always found: ev above is one such event
+			readyItems = append(readyItems, readyItem{Key: key, ID: latest.ID, Note: ev.Text, TS: ev.TS, By: ev.Author})
 		} else {
 			blockedItems = append(blockedItems, blockedItem{Key: key, WaitingOn: waiting})
 		}
