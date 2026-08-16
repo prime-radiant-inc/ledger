@@ -1,6 +1,8 @@
 # Ledger as issue tracker (design)
 
-2026-08-15, revision 5. Rev 5 adjudicates the second adversarial round (two
+2026-08-15, revision 6. Rev 6 folds in trial 3 (`research/ledger-issues-spike-trial3.md`: four concurrent writers incl. a live triager on spike v3; zero duplicate work, zero double-closes, eight claim_losts all handled, the contested stale-reclaim serialized by `--expect` exactly as designed, the annotation flowed into claim messages, absolute-path doctrine ended the version-skew accident). Two amendments, both mechanism-replacing-prose where a trial showed prose losing: `ready` quarantines keys carrying the board's human label into a `human_owned` fourth list (the Haiku claimed and "completed" legal signoff off a doctrine parenthetical — third occurrence of the pattern); and terminal→terminal status transitions are `bad_usage` ("reopen first, then re-resolve") — the triager legally flipped an evidenced close to an unevidenced wontfix via the key's CURRENT id, proving `--expect` guards stale reads, not stale decisions, and revision of settled outcomes must be a two-event visible act. Implementation-bug notes for the real build: a malformed claim_lost message on the reclaim path; 1-second event-timestamp resolution making sub-second `--stale-after` misfire.
+
+Previously: revision 5. Rev 5 adjudicates the second adversarial round (two
 fresh reviewers, spec-as-text; verdicts: not implementation-ready, with
 stated fixes — all applied here). The consolidating ruling: three rounds of
 findings each caught another unguarded status write (claim-verify's TOCTOU,
@@ -165,6 +167,11 @@ read verb inherits the discipline):
   rev-4 text left it inferable), each with `by`, `age`, `id` (the claim
   event's id — the input the reclaim idiom needs and rev 4 forgot to
   provide), and `stale: true` when past the board's `--stale-after`.
+- **human_owned** (rev 6): keys carrying the board's `human` label,
+  excluded from `ready` no matter how pickable — trial 3's Haiku claimed
+  and "completed" a legal-signoff key that `ready` offered with only a
+  doctrine parenthetical guarding it. Quarantine is mechanism; the label
+  convention stays doctrine.
 
 `ready` implies `--where status=open`; a caller clause contradicting the
 availability filter is `bad_usage`. Additional `--where` clauses compose
@@ -200,6 +207,16 @@ data-verb list (`--ledger` addressing, standard envelope and exit codes).
   required. The round-2 Critical: an unconditioned triage `wontfix` could
   silently overwrite an active claim; under the invariant the triager gets
   `claim_lost` and sees the claim they were about to bulldoze.
+- **Terminal→terminal transitions are `bad_usage`** (rev 6: "reopen first,
+  then re-resolve"). Trial 3's triager read an already-closed key's CURRENT
+  status id and legally flipped an evidenced close to an unevidenced
+  wontfix in one quiet write — `--expect` guards stale reads, not stale
+  decisions. Revising a settled outcome is a two-event visible act (reopen
+  with the close's id, then re-resolve), which also closes the evidence
+  downgrade (an evidence-required value can never be vacated silently by
+  an evidence-free one). What no mechanism supplies — honoring what the id
+  you fetched actually said — stays doctrine, with trial 3 as the teaching
+  example.
 
 ## Board doctrine (the skill)
 
