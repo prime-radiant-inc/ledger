@@ -183,8 +183,14 @@ func resolveExpectTarget(fields map[string]string, guard []string, slug string, 
 	}
 }
 
-// setPrecondition builds the closure AppendChecked runs against a fresh
-// event read on every CAS attempt (spec rule 7: never a pre-loop snapshot).
+// setPrecondition builds the closure AppendChecked runs against a fresh,
+// backward-windowed event read on every CAS attempt (spec rule 7: never a
+// pre-loop snapshot; spec rule 8: the read narrows to the target key,
+// growing only as far back as this write's own checks require). Which
+// (key, field) facts those checks need is entirely static — knowable from
+// this write's own shape (target, fields, ready, meta.Guard, key) before any
+// event is even read — so it's computed once, outside the returned closure:
+// windowResolved below re-checks it against every attempt's actual window.
 // Checks run in order: rule 3/4 CAS on the target field, then (ready-capable
 // boards only) key grammar on first write, title enforcement on a first
 // status write, blocked-by existence, then rule 5's standing-signal check
@@ -194,7 +200,21 @@ func resolveExpectTarget(fields map[string]string, guard []string, slug string, 
 // computed signal names there for the winning attempt's commit.
 func setPrecondition(key string, fields map[string]string, target, expect string, ready bool, meta model.Meta,
 	text, author string, override bool, overrideOut *string) store.Precondition {
-	return func(events []model.Event) error {
+	_, touchesStatus := fields["status"]
+	blockedByValue, touchesBlockedBy := fields["blocked-by"]
+	var blockedByTokens []string
+	if touchesBlockedBy {
+		blockedByTokens = splitTokens(blockedByValue)
+	}
+	// needKeyExists and needLabels mirror the decision logic's own gates
+	// below exactly (grammar fallback only fires when key doesn't already
+	// match tokenRE; the signal check only runs on a guarded write) — each
+	// is a fact the read must resolve only when the decision logic actually
+	// consults it.
+	needKeyExists := ready && !tokenRE.MatchString(key)
+	needLabels := ready && contains(meta.Guard, target)
+
+	return func(events []model.Event, reachedRoot bool) error {
 		// Reset unconditionally at the top of every attempt: overrideOut
 		// points into the event AppendChecked actually builds from, and
 		// that same event is reused across every CAS retry (never
@@ -204,6 +224,19 @@ func setPrecondition(key string, fields map[string]string, target, expect string
 		// found nothing to override — a stale attribution that never
 		// existed on the state that actually landed.
 		*overrideOut = ""
+
+		if !reachedRoot && !windowResolved(events, key, target, touchesStatus, needKeyExists, needLabels, blockedByTokens) {
+			// The window handed to this attempt hasn't reached far enough
+			// back to provably answer every check below yet, and it isn't
+			// the chain root either — a fact we need might exist further
+			// back, unseen. Ask for more history rather than guess.
+			return store.ErrNeedsMoreHistory
+		}
+
+		// From here on, events is guaranteed to hold everything the checks
+		// below can need — found within the window, or proven absent by
+		// reachedRoot — so the decision logic is exactly as correct here as
+		// it is against a whole-chain read.
 		if target != "" {
 			if err := checkCAS(events, key, target, expect, fields[target], ready, meta); err != nil {
 				return err
@@ -217,7 +250,6 @@ func setPrecondition(key string, fields map[string]string, target, expect string
 			return out.Errf("bad_value", "rename the key to match ^[a-z0-9][a-z0-9-]*$ (lowercase kebab-case)", 4,
 				"key '%s' can't be referenced by blocked-by edges; use kebab-case", key)
 		}
-		_, touchesStatus := fields["status"]
 		if touchesStatus {
 			k := b.Keys[key]
 			firstStatusWrite := k == nil || k.Status == nil
@@ -226,8 +258,8 @@ func setPrecondition(key string, fields map[string]string, target, expect string
 					"'%s' has no title yet — the first status write on a ready-capable board requires a non-empty -m", key)
 			}
 		}
-		if v, touched := fields["blocked-by"]; touched {
-			for _, tok := range splitTokens(v) {
+		if touchesBlockedBy {
+			for _, tok := range blockedByTokens {
 				if _, exists := b.Keys[tok]; !exists {
 					return out.Errf("unknown_key", "", 4, "blocked-by names '%s', which does not exist", tok)
 				}
@@ -245,6 +277,52 @@ func setPrecondition(key string, fields map[string]string, target, expect string
 		}
 		return nil
 	}
+}
+
+// windowResolved reports whether events (a partial backward window, since
+// reachedRoot is only checked by the caller) already contains every
+// (key, field) fact setPrecondition's decision logic will consult for this
+// particular write. Each fact is resolved the moment it's found: events is
+// always a suffix of the full chain (the newest N commits), so if the true
+// latest event for a (key, field) pair exists at all, and it's within this
+// window, it's the one found here — there is no newer occurrence outside a
+// backward window by construction. Finding nothing here is genuinely
+// ambiguous (older than this window, or never written) until reachedRoot
+// settles it, which is exactly why this function is never consulted when
+// reachedRoot is true.
+func windowResolved(events []model.Event, key, target string, touchesStatus, needKeyExists, needLabels bool, blockedByTokens []string) bool {
+	if target != "" && latestFieldEvent(events, key, target) == nil {
+		return false
+	}
+	if needKeyExists && !keyTouched(events, key) {
+		return false
+	}
+	if touchesStatus && latestFieldEvent(events, key, "status") == nil {
+		return false
+	}
+	if needLabels && latestFieldEvent(events, key, "labels") == nil {
+		return false
+	}
+	for _, tok := range blockedByTokens {
+		if !keyTouched(events, tok) {
+			return false
+		}
+	}
+	return true
+}
+
+// keyTouched reports whether any event in events touches name at all, on
+// any field — the resolution proof windowResolved needs for blocked-by
+// token existence and the key-grammar fallback's own existence check: once
+// any event names the key, its existence is settled regardless of which
+// field carried it.
+func keyTouched(events []model.Event, name string) bool {
+	for _, ev := range events {
+		if ev.Type == "set" && ev.Key == name {
+			return true
+		}
+	}
+	return false
 }
 
 // checkCAS is spec rules 3-4, field-scoped: it looks only at the latest

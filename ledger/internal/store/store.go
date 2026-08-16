@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,11 +23,26 @@ const (
 	ExpectAbsent
 )
 
-// Precondition runs against a fresh read of a ledger's full event chain
-// inside every CAS retry attempt of AppendChecked — never a pre-loop
-// snapshot (spec rule 7's atomicity contract). Returning an error aborts
-// the append with that error; nothing is written.
-type Precondition func(events []model.Event) error
+// Precondition runs against a fresh, backward-windowed read of a ledger's
+// event chain inside every CAS retry attempt of AppendChecked — never a
+// pre-loop snapshot (spec rule 7's atomicity contract). events is
+// oldest-first; reachedRoot reports whether events already reaches the
+// ledger's very first commit, i.e. whether this read holds the ledger's
+// FULL history rather than a partial backward window. A Precondition that
+// cannot yet decide from a partial window (some check's inputs haven't
+// shown up in events, and their absence hasn't been proven either) returns
+// ErrNeedsMoreHistory to ask runPrecondition for a bigger window — but MUST
+// decide definitively once reachedRoot is true, since there is no more
+// history to give. Returning any other error aborts the append with that
+// error; nothing is written.
+type Precondition func(events []model.Event, reachedRoot bool) error
+
+// ErrNeedsMoreHistory is the sentinel a Precondition returns to request a
+// larger backward window (spec rule 8's chunked-read contract): this is
+// never a real failure and never reaches AppendChecked's caller —
+// runPrecondition always retries with a bigger window, or the full chain,
+// before giving up.
+var ErrNeedsMoreHistory = errors.New("needs_more_history")
 
 var (
 	ErrUnknownLedger = errors.New("unknown_ledger")
@@ -187,6 +203,63 @@ func (s Store) Events(slug string) ([]model.Event, model.Meta, error) {
 	return evs, meta, nil
 }
 
+// windowSizes is the sanctioned chunked backward-read shape (spec rule 8):
+// runPrecondition tries these in order, each one bounded `git log -n <n>`
+// plus one `cat-file --batch` — never a per-event subprocess — before
+// falling back to Events' whole-chain fold. Growing sizes, not incremental
+// deltas: each retry re-reads from the tip, so a Precondition that resolves
+// from the target key's recent history stops after the FIRST size below and
+// never pays for a bigger one.
+var windowSizes = []int{64, 256, 1024}
+
+// EventsWindow reads the most recent n commits (oldest-first within the
+// window), with the same two-subprocess shape as Events: one bounded `git
+// log -n <n>` for the commit list (also carrying each commit's parent hash,
+// to detect the chain root) plus one `cat-file --batch` for their
+// event.json blobs. meta.json is never requested here — a Precondition
+// never needs it (callers already hold Meta from the ledger's own load), so
+// skipping it halves EventsWindow's cat-file traffic versus Events.
+// reachedRoot reports whether the window's OLDEST commit is the ledger's
+// true root (no parent) — the fact a Precondition needs to tell "not found
+// in this window" apart from "provably absent" (spec rule 8's degenerate
+// absence-proof case). This is the rev-14 windowed-read primitive: the
+// parent spec's only batched read is Events' whole-chain fold: a
+// Precondition whose inputs resolve from a key's recent history never pays
+// for it.
+func (s Store) EventsWindow(slug string, n int) (events []model.Event, reachedRoot bool, err error) {
+	out, _, code := s.Repo.Git("", "log", "--reverse", "-n", strconv.Itoa(n), "--format=%H%x09%P", ref(slug))
+	if code != 0 || out == "" {
+		return nil, false, fmt.Errorf("%w: %s", ErrUnknownLedger, slug)
+	}
+	lines := strings.Split(out, "\n")
+	commits := make([]string, len(lines))
+	for i, line := range lines {
+		c, _, _ := strings.Cut(line, "\t")
+		commits[i] = c
+	}
+	_, parents, _ := strings.Cut(lines[0], "\t") // lines[0] is the window's oldest commit (--reverse)
+	reachedRoot = strings.TrimSpace(parents) == ""
+
+	reqs := make([]string, len(commits))
+	for i, c := range commits {
+		reqs[i] = c + ":event.json"
+	}
+	contents, present := s.catBatch(reqs)
+	events = make([]model.Event, 0, len(commits))
+	for i, c := range commits {
+		if !present[i] {
+			continue // torn/foreign commit: skip, never crash a read
+		}
+		var ev model.Event
+		if err := json.Unmarshal([]byte(contents[i]), &ev); err != nil {
+			continue
+		}
+		ev.ID = c[:10]
+		events = append(events, ev)
+	}
+	return events, reachedRoot, nil
+}
+
 // Committers reads every commit's committer name in one `git log` pass and
 // keys the result by 10-char event id, matching Events' id truncation — the
 // committer name holds the harness marker (terminal/claude-code/codex/etc.),
@@ -258,25 +331,25 @@ func (s Store) Append(slug string, ev model.Event, extra map[string]string, mode
 }
 
 // AppendChecked is Append plus a per-attempt precondition: pre runs against
-// a fresh read of the full chain inside every CAS retry attempt, after the
-// attempt's fresh head read and before the commit is built — never against
-// a snapshot taken before the loop started, and never reused across
-// attempts (spec rule 7). A pre error aborts the append with that error;
-// nothing is written. Append delegates here with pre == nil, which skips
-// the fresh-read-and-check step entirely (no behavior or cost change for
-// existing callers). ev is a pointer, not a value: within one attempt, pre
-// and the commit built from ev are the same struct, so a precondition that
-// computes something tool-derived (rule 5's override record) can attach it
-// to *ev before that attempt's build step reads it. That guarantee is
-// strictly within-attempt, though — *ev is the same struct across every
-// retry (never recreated per attempt), so a precondition writing a
-// per-attempt-computed field onto *ev MUST set it unconditionally on every
-// invocation (including "nothing to record" as an explicit reset), never
-// only inside the branch that has something to write; otherwise a losing
-// attempt's value survives untouched into a later, winning attempt whose
-// own fresh computation found nothing, and the commit built from that
-// winning attempt carries an attribution that never existed on the state
-// that actually landed.
+// a fresh, backward-windowed read (runPrecondition) inside every CAS retry
+// attempt, after the attempt's fresh head read and before the commit is
+// built — never against a snapshot taken before the loop started, and never
+// reused across attempts (spec rule 7). A pre error aborts the append with
+// that error; nothing is written. Append delegates here with pre == nil,
+// which skips the fresh-read-and-check step entirely (no behavior or cost
+// change for existing callers). ev is a pointer, not a value: within one
+// attempt, pre and the commit built from ev are the same struct, so a
+// precondition that computes something tool-derived (rule 5's override
+// record) can attach it to *ev before that attempt's build step reads it.
+// That guarantee is strictly within-attempt, though — *ev is the same
+// struct across every retry (never recreated per attempt), so a
+// precondition writing a per-attempt-computed field onto *ev MUST set it
+// unconditionally on every invocation (including "nothing to record" as an
+// explicit reset), never only inside the branch that has something to
+// write; otherwise a losing attempt's value survives untouched into a
+// later, winning attempt whose own fresh computation found nothing, and
+// the commit built from that winning attempt carries an attribution that
+// never existed on the state that actually landed.
 func (s *Store) AppendChecked(slug string, ev *model.Event, pre Precondition, mode ExpectMode) (string, error) {
 	tip, err := s.casLoop(slug, mode, pre, func(parent string) (string, error) {
 		return s.BuildCommit(slug, parent, *ev, nil)
@@ -346,10 +419,10 @@ func (s Store) AppendChain(slug string, evs []model.Event, firstExtra map[string
 }
 
 // casLoop is the shared CAS-retry skeleton behind Append, AppendChain, and
-// AppendChecked: re-read the current head, run pre (if any) against a fresh
-// read of the full chain, let build construct the new tip commit(s)
-// parented on it, then try to move the ref. build (and pre) may run more
-// than once — once per attempt — if another writer wins the race.
+// AppendChecked: re-read the current head, run pre (if any) against a fresh,
+// windowed read (runPrecondition), let build construct the new tip
+// commit(s) parented on it, then try to move the ref. build (and pre) may
+// run more than once — once per attempt — if another writer wins the race.
 func (s Store) casLoop(slug string, mode ExpectMode, pre Precondition, build func(parent string) (tip string, err error)) (string, error) {
 	for attempt := 0; attempt < 30; attempt++ {
 		cur, ok := s.head(slug)
@@ -360,15 +433,7 @@ func (s Store) casLoop(slug string, mode ExpectMode, pre Precondition, build fun
 			return "", fmt.Errorf("%w: %s", ErrUnknownLedger, slug)
 		}
 		if pre != nil {
-			var events []model.Event
-			if ok {
-				var err error
-				events, _, err = s.Events(slug)
-				if err != nil {
-					return "", err
-				}
-			}
-			if err := pre(events); err != nil {
+			if err := s.runPrecondition(slug, ok, pre); err != nil {
 				return "", err
 			}
 		}
@@ -387,6 +452,35 @@ func (s Store) casLoop(slug string, mode ExpectMode, pre Precondition, build fun
 		time.Sleep(time.Duration(attempt) * 10 * time.Millisecond)
 	}
 	return "", fmt.Errorf("%w: %s", ErrCASExhausted, slug)
+}
+
+// runPrecondition drives pre against progressively larger backward windows
+// (windowSizes) of a fresh read, stopping as soon as pre stops returning
+// ErrNeedsMoreHistory or the window reaches the chain root — whichever
+// comes first (spec rule 8). Exhausting windowSizes without reaching the
+// root falls back to Events' whole-chain read, which is always decisive.
+// ok reports whether the ledger has any commits at all; pre still runs once
+// against an empty, root-reached read when it doesn't (a first-ever
+// write's --expect none case).
+func (s Store) runPrecondition(slug string, ok bool, pre Precondition) error {
+	if !ok {
+		return pre(nil, true)
+	}
+	for _, n := range windowSizes {
+		events, reachedRoot, err := s.EventsWindow(slug, n)
+		if err != nil {
+			return err
+		}
+		result := pre(events, reachedRoot)
+		if reachedRoot || result != ErrNeedsMoreHistory {
+			return result
+		}
+	}
+	events, _, err := s.Events(slug)
+	if err != nil {
+		return err
+	}
+	return pre(events, true)
 }
 
 // BuildCommit writes one event's blobs/tree/commit-tree without touching any

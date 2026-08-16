@@ -345,9 +345,9 @@ func TestOverrideResetsAcrossLosingCASAttempt(t *testing.T) {
 		once     sync.Once
 		attempts int
 	)
-	pre := func(events []model.Event) error {
+	pre := func(events []model.Event, reachedRoot bool) error {
 		attempts++
-		err := realPre(events)
+		err := realPre(events, reachedRoot)
 		once.Do(func() {
 			// A competing write on an unrelated field (never invalidates
 			// status's CAS) forces attempt 1's update-ref to lose the race.
