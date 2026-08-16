@@ -70,6 +70,10 @@ type Meta struct {
 	Fields          map[string][]string `json:"fields"`
 	RequireEvidence map[string][]string `json:"require_evidence,omitempty"`
 	FieldOrder      []string            `json:"field_order"`
+	MultiFields     []string            `json:"multi_fields,omitempty"`
+	Terminal        map[string][]string `json:"terminal,omitempty"`
+	Guard           []string            `json:"guard,omitempty"`
+	StaleAfter      string              `json:"stale_after,omitempty"` // Go time.ParseDuration input, verbatim
 }
 
 func HarnessMarker() string {
