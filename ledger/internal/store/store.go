@@ -264,11 +264,19 @@ func (s Store) Append(slug string, ev model.Event, extra map[string]string, mode
 // attempts (spec rule 7). A pre error aborts the append with that error;
 // nothing is written. Append delegates here with pre == nil, which skips
 // the fresh-read-and-check step entirely (no behavior or cost change for
-// existing callers). ev is a pointer, not a value: pre and the commit built
-// from ev are the same struct within one attempt, so a precondition that
+// existing callers). ev is a pointer, not a value: within one attempt, pre
+// and the commit built from ev are the same struct, so a precondition that
 // computes something tool-derived (rule 5's override record) can attach it
-// to *ev before the build step reads it — correct across retries, since
-// each attempt's pre call immediately precedes that same attempt's build.
+// to *ev before that attempt's build step reads it. That guarantee is
+// strictly within-attempt, though — *ev is the same struct across every
+// retry (never recreated per attempt), so a precondition writing a
+// per-attempt-computed field onto *ev MUST set it unconditionally on every
+// invocation (including "nothing to record" as an explicit reset), never
+// only inside the branch that has something to write; otherwise a losing
+// attempt's value survives untouched into a later, winning attempt whose
+// own fresh computation found nothing, and the commit built from that
+// winning attempt carries an attribution that never existed on the state
+// that actually landed.
 func (s *Store) AppendChecked(slug string, ev *model.Event, pre Precondition, mode ExpectMode) (string, error) {
 	tip, err := s.casLoop(slug, mode, pre, func(parent string) (string, error) {
 		return s.BuildCommit(slug, parent, *ev, nil)

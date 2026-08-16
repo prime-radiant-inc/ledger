@@ -195,6 +195,15 @@ func resolveExpectTarget(fields map[string]string, guard []string, slug string, 
 func setPrecondition(key string, fields map[string]string, target, expect string, ready bool, meta model.Meta,
 	text, author string, override bool, overrideOut *string) store.Precondition {
 	return func(events []model.Event) error {
+		// Reset unconditionally at the top of every attempt: overrideOut
+		// points into the event AppendChecked actually builds from, and
+		// that same event is reused across every CAS retry (never
+		// recreated per attempt). Without this reset, a losing attempt
+		// that recorded an override would leave it stuck on *overrideOut
+		// for a later, winning attempt whose own fresh signal computation
+		// found nothing to override — a stale attribution that never
+		// existed on the state that actually landed.
+		*overrideOut = ""
 		if target != "" {
 			if err := checkCAS(events, key, target, expect, fields[target], ready, meta); err != nil {
 				return err

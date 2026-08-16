@@ -2,8 +2,12 @@ package cmd
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"ledger/internal/model"
+	"ledger/internal/store"
 )
 
 // setupReadyStale makes a ready-capable board (setupReady's canonical
@@ -284,5 +288,104 @@ func TestMultiSignalMessageAndRecording(t *testing.T) {
 	}
 	if !strings.Contains(tailOut, `"override": "claim,human"`) {
 		t.Fatalf("chain must record override: claim,human: %s", tailOut)
+	}
+}
+
+// TestOverrideResetsAcrossLosingCASAttempt: setPrecondition's override
+// bookkeeping must never survive a losing CAS attempt into the winning
+// one's commit. *overrideOut points into the same *model.Event across
+// every retry (AppendChecked never recreates it per attempt) — so if
+// attempt 1 sees a standing claim signal and records it, but a competing
+// write forces a retry and attempt 2's fresh read finds the claim gone
+// stale (a tight --stale-after past a real forced retry, the exact
+// scenario a slow backoff or a competing write can produce), the
+// committed event must carry the attempt-2 truth (no override) — never a
+// stale attribution left over from attempt 1's losing computation.
+//
+// This drives the real setPrecondition closure and the real
+// store.AppendChecked through an actual two-attempt CAS retry, reusing
+// store_test.go's TestAppendCheckedPreconditionRunsFreshPerAttempt
+// technique: a sync.Once inside the wrapped precondition lands a
+// competing write (forcing the ref to move out from under attempt 1's
+// update-ref) and then sleeps past the stale horizon, so attempt 2's own
+// fresh read legitimately finds zero standing signals.
+func TestOverrideResetsAcrossLosingCASAttempt(t *testing.T) {
+	dir := setupReadyStale(t, "300ms")
+	so, _, code := run(t, dir, "set", "k1", "status=open", "--expect", "none", "-m", "title", "--as", "a")
+	if code != 0 {
+		t.Fatal(so)
+	}
+	seedID := mustJSON(t, so)["id"].(string)
+	so2, _, code := run(t, dir, "set", "k1", "status=in-progress", "--expect", seedID, "-m", "claiming", "--as", "alice")
+	if code != 0 {
+		t.Fatal(so2)
+	}
+	claimID := mustJSON(t, so2)["id"].(string)
+
+	res, err := store.Resolve(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := res.Store
+	ctx := &Ctx{Store: s}
+	led, err := ctx.Load("issues")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fields := map[string]string{"status": "in-progress"}
+	ev := model.NewEvent("set", "bob", s.Repo)
+	ev.Key, ev.Fields, ev.Text = "k1", fields, "reclaiming"
+
+	// The real production closure: bob, --override with a real message,
+	// against alice's live claim id.
+	realPre := setPrecondition("k1", fields, "status", claimID, true, led.Meta, ev.Text, "bob", true, &ev.Override)
+
+	var (
+		once     sync.Once
+		attempts int
+	)
+	pre := func(events []model.Event) error {
+		attempts++
+		err := realPre(events)
+		once.Do(func() {
+			// A competing write on an unrelated field (never invalidates
+			// status's CAS) forces attempt 1's update-ref to lose the race.
+			competing := model.NewEvent("set", "carol", s.Repo)
+			competing.Key, competing.Fields = "k1", map[string]string{"labels": "urgent"}
+			if _, cerr := s.Append("issues", competing, nil, store.ExpectPresent); cerr != nil {
+				t.Fatalf("competing append: %v", cerr)
+			}
+			// Deterministically push the claim past the 300ms stale
+			// horizon before attempt 2's fresh read, rather than relying
+			// on casLoop's own backoff timing.
+			time.Sleep(400 * time.Millisecond)
+		})
+		return err
+	}
+
+	id, err := s.AppendChecked("issues", &ev, pre, store.ExpectPresent)
+	if err != nil {
+		t.Fatalf("AppendChecked: %v", err)
+	}
+	if attempts < 2 {
+		t.Fatalf("pre ran %d time(s), want >=2 (the competing write must force a real retry)", attempts)
+	}
+
+	evs, _, err := s.Events("issues")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var landed *model.Event
+	for i := range evs {
+		if evs[i].ID == id {
+			landed = &evs[i]
+		}
+	}
+	if landed == nil {
+		t.Fatalf("committed event %q not found in chain", id)
+	}
+	if landed.Override != "" {
+		t.Fatalf("attempt 2 found the claim stale (no standing signal) — the committed event must carry no override, got %q", landed.Override)
 	}
 }
