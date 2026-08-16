@@ -17,8 +17,13 @@ type Ledger struct {
 	// MultiFields and Terminal are copied straight from meta (spike addition):
 	// declared multi-valued/vocab-free field names, and per-field terminal
 	// values for the `ready` verb's blocked-by resolution.
-	MultiFields  []string
-	Terminal     map[string][]string
+	MultiFields []string
+	Terminal    map[string][]string
+	// Guard and StaleAfter are copied straight from meta (rev 5): guarded
+	// field names, and the board's staleness horizon (a Go duration string,
+	// empty if the board declared none).
+	Guard        []string
+	StaleAfter   string
 	State        string
 	SupersededBy string
 	ExtraLinks   []string
@@ -35,6 +40,7 @@ func Fold(slug string, evs []model.Event, meta model.Meta) *Ledger {
 	l := &Ledger{Slug: slug, Meta: meta, State: "open",
 		Schema: map[string][]string{}, Require: map[string][]string{},
 		MultiFields: append([]string{}, meta.MultiFields...), Terminal: map[string][]string{},
+		Guard: append([]string{}, meta.Guard...), StaleAfter: meta.StaleAfter,
 		Spine: map[string]map[string]model.Event{}, Events: evs,
 		Parent: map[string]string{}, Losers: map[string]bool{}}
 	for f, v := range meta.Fields {
@@ -102,6 +108,11 @@ func Fold(slug string, evs []model.Event, meta model.Meta) *Ledger {
 // IsMultiField reports whether name was declared with `create --multi-field`.
 func (l *Ledger) IsMultiField(name string) bool {
 	return contains(l.MultiFields, name)
+}
+
+// IsGuarded reports whether name was declared with `create --guard`.
+func (l *Ledger) IsGuarded(name string) bool {
+	return contains(l.Guard, name)
 }
 
 func (l *Ledger) Head() string {

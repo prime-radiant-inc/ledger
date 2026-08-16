@@ -251,35 +251,74 @@ func (s Store) Append(slug string, ev model.Event, extra map[string]string, expe
 	return tip[:10], nil
 }
 
-// ClaimLostError is AppendExpect's precondition failure: ev.Key's latest
-// "set" event no longer has the caller's --expect id as a prefix. Winner is
-// the event that landed instead (its zero value when the key has no prior
-// set event at all).
-type ClaimLostError struct{ Winner model.Event }
+// ClaimLostError is AppendExpect's precondition failure: field's latest
+// "set" event on the target key no longer matches the caller's --expect
+// (an id prefix, or "none" meaning "no prior event"). Winner is the event
+// that landed instead (its zero value when the field has no prior event at
+// all — the --expect-non-none-but-nothing-there case).
+type ClaimLostError struct {
+	Field  string
+	Winner model.Event
+}
 
-func (e *ClaimLostError) Error() string { return "claim_lost: " + e.Winner.ID }
+func (e *ClaimLostError) Error() string { return "claim_lost: " + e.Field + "@" + e.Winner.ID }
 
-// AppendExpect is Append with a conditional-write precondition: the commit
-// only lands if ev.Key's latest "set" event id still has expectID as a
-// prefix. Unlike a check made once before the loop, the precondition here
-// runs inside casLoop's build callback — called fresh on every CAS retry —
-// so it always re-reads the chain from git immediately before attempting to
-// land. If another writer's commit races in between this read and the
-// ref-CAS below, that CAS fails (old != current ref) and casLoop retries,
-// which re-reads and re-validates against the now-current chain rather than
-// trusting stale data. The precondition can therefore never pass against a
-// state that the landing commit's CAS doesn't also certify — genuinely
-// atomic, not a check-then-act race. This makes claiming first-wins, unlike
-// Append's plain last-wins.
-func (s Store) AppendExpect(slug string, ev model.Event, expectID string, expect Expect) (string, error) {
+// latestFieldEvent is the most recent "set" event that touched field on key
+// within evs (chronological) — the field-scoped version stamp a guarded
+// write's --expect claims against. A set that touched a *different* field on
+// the same key doesn't count: that's what makes the precondition
+// field-scoped rather than key-scoped, so an unrelated field's write (e.g. a
+// triage label) never invalidates an in-flight claim on another field (e.g.
+// status).
+func latestFieldEvent(evs []model.Event, key, field string) (model.Event, bool) {
+	var found model.Event
+	ok := false
+	for _, ev := range evs {
+		if ev.Type != "set" || ev.Key != key {
+			continue
+		}
+		if _, touched := ev.Fields[field]; touched {
+			found, ok = ev, true
+		}
+	}
+	return found, ok
+}
+
+// AppendExpect is Append with a conditional-write precondition, field-scoped
+// to ev.Key's field: the commit only lands if field's latest set-event id on
+// this key still has expectSpec as a prefix, or — when expectSpec is
+// "none" — if field has no prior set-event on this key at all (the
+// first-touch sentinel). Unlike a check made once before the loop, the
+// precondition here runs inside casLoop's build callback — called fresh on
+// every CAS retry — so it always re-reads the chain from git immediately
+// before attempting to land. If another writer's commit races in between
+// this read and the ref-CAS below, that CAS fails (old != current ref) and
+// casLoop retries, which re-reads and re-validates against the now-current
+// chain rather than trusting stale data. The precondition can therefore
+// never pass against a state that the landing commit's CAS doesn't also
+// certify — genuinely atomic, not a check-then-act race. This makes
+// claiming (and first-edge writes under "none") first-wins, unlike Append's
+// plain last-wins.
+//
+// Performance note: this re-reads the full chain per retry attempt, same as
+// the v2 spike. Narrowing that read to the target key/field, or reusing the
+// fold casLoop's caller already holds, is real-implementation scope, not
+// this throwaway spike's.
+func (s Store) AppendExpect(slug string, ev model.Event, field, expectSpec string, expect Expect) (string, error) {
 	tip, err := s.casLoop(slug, expect, func(parent string) (string, error) {
 		evs, _, evErr := s.Events(slug)
 		if evErr != nil {
 			return "", evErr
 		}
-		winner, ok := model.LatestSetEvent(evs, ev.Key)
-		if !ok || !strings.HasPrefix(winner.ID, expectID) {
-			return "", &ClaimLostError{Winner: winner}
+		winner, ok := latestFieldEvent(evs, ev.Key, field)
+		var lost bool
+		if expectSpec == "none" {
+			lost = ok // a prior event exists: "none" claimed it didn't
+		} else {
+			lost = !ok || !strings.HasPrefix(winner.ID, expectSpec)
+		}
+		if lost {
+			return "", &ClaimLostError{Field: field, Winner: winner}
 		}
 		return s.BuildCommit(slug, parent, ev, nil)
 	})

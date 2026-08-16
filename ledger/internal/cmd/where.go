@@ -48,17 +48,31 @@ func declaredFields(led *fold.Ledger) []string {
 	return names
 }
 
-// validateWhere rejects a --where naming a field the ledger never declared.
+// validateWhere rejects: a --where naming a field the ledger never declared
+// (unknown_field); a ~= clause on a field that isn't a multi-field
+// (bad_usage — token membership only makes sense there); and two exact-match
+// (=) clauses naming the same field (bad_usage — unsatisfiable by
+// construction, since a field can't equal two different values at once).
 func validateWhere(led *fold.Ledger, clauses []whereClause) error {
+	seenExact := map[string]bool{}
 	for _, cl := range clauses {
-		if _, ok := led.Schema[cl.Field]; ok {
-			continue
+		_, isEnum := led.Schema[cl.Field]
+		isMulti := led.IsMultiField(cl.Field)
+		if !isEnum && !isMulti {
+			return out.Errf("unknown_field", "declared fields: "+strings.Join(declaredFields(led), ", "), 4,
+				"--where names '%s', which is not a declared field on '%s'", cl.Field, led.Slug)
 		}
-		if led.IsMultiField(cl.Field) {
-			continue
+		if cl.Token && !isMulti {
+			return out.Errf("bad_usage", "ledger show --help", 4,
+				"--where '%s~=...' is token membership, but '%s' is not a multi-field", cl.Field, cl.Field)
 		}
-		return out.Errf("bad_usage", "declared fields: "+strings.Join(declaredFields(led), ", "), 4,
-			"--where names '%s', which is not a declared field on '%s'", cl.Field, led.Slug)
+		if !cl.Token {
+			if seenExact[cl.Field] {
+				return out.Errf("bad_usage", "a field can equal only one value — drop one of the --where clauses", 4,
+					"two --where clauses both test '%s=...' — unsatisfiable together", cl.Field)
+			}
+			seenExact[cl.Field] = true
+		}
 	}
 	return nil
 }

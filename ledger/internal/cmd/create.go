@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -15,12 +16,13 @@ import (
 func init() { register(newCreateCmd) }
 
 func newCreateCmd(c *Ctx) *cobra.Command {
-	var scope, owner, supersedes, asFlag, mFlag string
-	var fields, reqEv, multiFields, terminal []string
+	var scope, owner, supersedes, asFlag, mFlag, staleAfter string
+	var fields, reqEv, multiFields, terminal, guard []string
 	cmd := &cobra.Command{Use: "create <slug>", Short: "start a new ledger with declared fields",
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runCreate(c, args[0], scope, owner, supersedes, asFlag, mFlag, fields, reqEv, multiFields, terminal)
+			return runCreate(c, args[0], scope, owner, supersedes, asFlag, mFlag, staleAfter,
+				fields, reqEv, multiFields, terminal, guard)
 		}}
 	cmd.Flags().StringVar(&scope, "scope", "", "what this ledger tracks")
 	cmd.MarkFlagRequired("scope")
@@ -28,6 +30,8 @@ func newCreateCmd(c *Ctx) *cobra.Command {
 	cmd.Flags().StringArrayVar(&reqEv, "require-evidence", nil, "FIELD=V1,V2: these values hard-error without --evidence")
 	cmd.Flags().StringArrayVar(&multiFields, "multi-field", nil, "NAME: a multi-valued, vocab-free field (comma-token list); repeatable")
 	cmd.Flags().StringArrayVar(&terminal, "terminal", nil, "FIELD=V1,V2: values that resolve a blocked-by edge (used by `ready`); repeatable")
+	cmd.Flags().StringArrayVar(&guard, "guard", nil, "FIELD: this field takes conditional writes only (set --expect required); repeatable")
+	cmd.Flags().StringVar(&staleAfter, "stale-after", "", "Go duration (e.g. 2h): `ready`'s in_progress staleness horizon")
 	cmd.Flags().StringVar(&owner, "owner", "", "recorded owner (not enforced in v1)")
 	cmd.Flags().StringVar(&supersedes, "supersedes", "", "predecessor slug to close and link")
 	cmd.Flags().StringVar(&asFlag, "as", "", "author identity")
@@ -35,8 +39,8 @@ func newCreateCmd(c *Ctx) *cobra.Command {
 	return cmd
 }
 
-func runCreate(c *Ctx, slug, scope, owner, supersedes, asFlag, mFlag string,
-	fieldSpecs, reqSpecs, multiFieldSpecs, terminalSpecs []string) error {
+func runCreate(c *Ctx, slug, scope, owner, supersedes, asFlag, mFlag, staleAfterSpec string,
+	fieldSpecs, reqSpecs, multiFieldSpecs, terminalSpecs, guardSpecs []string) error {
 	if !model.ValidSlug(slug) {
 		return out.Errf("bad_slug", "slugs are lowercase-kebab: [a-z0-9][a-z0-9-]*, max 64 chars", 4,
 			"'%s' is not a valid slug", slug)
@@ -63,11 +67,17 @@ func runCreate(c *Ctx, slug, scope, owner, supersedes, asFlag, mFlag string,
 	require := map[string][]string{}
 	for _, spec := range reqSpecs {
 		f, vals, _ := strings.Cut(spec, "=")
-		if _, ok := fields[f]; !ok {
+		vocab, ok := fields[f]
+		if !ok {
 			return out.Errf("unknown_field", "declared fields: "+keys(fields), 4,
 				"--require-evidence names '%s', which is not a declared field", f)
 		}
-		require[f] = strings.Split(vals, ",")
+		vv := strings.Split(vals, ",")
+		if bad, ok := firstNotIn(vv, vocab); !ok {
+			return out.Errf("bad_value", "declared vocabulary for '"+f+"': "+strings.Join(vocab, ", "), 4,
+				"--require-evidence names value '%s' for field '%s', which is not in its declared vocabulary", bad, f)
+		}
+		require[f] = vv
 	}
 	var multiFields []string
 	seenMulti := map[string]bool{}
@@ -80,11 +90,39 @@ func runCreate(c *Ctx, slug, scope, owner, supersedes, asFlag, mFlag string,
 	terminal := map[string][]string{}
 	for _, spec := range terminalSpecs {
 		f, vals, _ := strings.Cut(spec, "=")
-		if _, ok := fields[f]; !ok {
+		vocab, ok := fields[f]
+		if !ok {
 			return out.Errf("unknown_field", "declared fields: "+keys(fields), 4,
 				"--terminal names '%s', which is not a declared field", f)
 		}
-		terminal[f] = strings.Split(vals, ",")
+		vv := strings.Split(vals, ",")
+		if bad, ok := firstNotIn(vv, vocab); !ok {
+			return out.Errf("bad_value", "declared vocabulary for '"+f+"': "+strings.Join(vocab, ", "), 4,
+				"--terminal names value '%s' for field '%s', which is not in its declared vocabulary", bad, f)
+		}
+		terminal[f] = vv
+	}
+	var guard []string
+	seenGuard := map[string]bool{}
+	for _, f := range guardSpecs {
+		_, inFields := fields[f]
+		if !inFields && !contains(multiFields, f) {
+			return out.Errf("unknown_field",
+				"declared fields: "+keys(fields)+"; multi-fields: "+strings.Join(multiFields, ", "), 4,
+				"--guard names '%s', which is not a declared field or multi-field", f)
+		}
+		if !seenGuard[f] {
+			seenGuard[f] = true
+			guard = append(guard, f)
+		}
+	}
+	var staleAfter string
+	if staleAfterSpec != "" {
+		if _, dErr := time.ParseDuration(staleAfterSpec); dErr != nil {
+			return out.Errf("bad_value", "Go duration syntax, e.g. 2h, 30m, 90s", 4,
+				"--stale-after '%s' is not a valid duration: %s", staleAfterSpec, dErr)
+		}
+		staleAfter = staleAfterSpec
 	}
 	author := model.ResolveAuthor(asFlag)
 	ev := model.NewEvent("create", author, c.Store.Repo)
@@ -92,7 +130,7 @@ func runCreate(c *Ctx, slug, scope, owner, supersedes, asFlag, mFlag string,
 	base, _, _ := c.Store.Repo.Git("", "rev-parse", "--short", "HEAD")
 	meta := model.Meta{Slug: slug, Scope: scope, Created: ev.TS, CreatedBy: author,
 		Owner: owner, Supersedes: supersedes, Base: base, Fields: fields, RequireEvidence: require,
-		FieldOrder: fieldOrder, MultiFields: multiFields, Terminal: terminal}
+		FieldOrder: fieldOrder, MultiFields: multiFields, Terminal: terminal, Guard: guard, StaleAfter: staleAfter}
 	mb, _ := json.MarshalIndent(meta, "", " ")
 
 	var id string
@@ -109,7 +147,8 @@ func runCreate(c *Ctx, slug, scope, owner, supersedes, asFlag, mFlag string,
 		}
 	}
 	payload := map[string]any{"id": id, "ledger": slug, "created": true,
-		"fields": fields, "require_evidence": require, "multi_fields": multiFields, "terminal": terminal}
+		"fields": fields, "require_evidence": require, "multi_fields": multiFields, "terminal": terminal,
+		"guard": guard, "stale_after": staleAfter}
 	if due, ok := dueAfter(c, slug); ok {
 		payload["rollup_due"] = due
 	}
@@ -200,6 +239,20 @@ func (c *Ctx) attemptSupersede(slug, supersedes string, ev model.Event, metaJSON
 	}
 	c.Store.GCAuto()
 	return newSha[:10], false, nil
+}
+
+// firstNotIn returns the first element of vv absent from vocab, and whether
+// every element of vv was present (true = all valid; the string is "" then).
+// vocab == nil (a free-text field) never contains anything, so any vv fails —
+// the correct outcome: --terminal/--require-evidence need a real vocab to be
+// a subset of.
+func firstNotIn(vv, vocab []string) (string, bool) {
+	for _, v := range vv {
+		if !contains(vocab, v) {
+			return v, false
+		}
+	}
+	return "", true
 }
 
 func keys(m map[string][]string) string {
