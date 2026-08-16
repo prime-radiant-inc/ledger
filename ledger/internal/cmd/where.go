@@ -76,12 +76,15 @@ func splitWhereTerm(raw string) (field, value string, membership bool, err error
 		"'%s' is not a valid --where clause", raw)
 }
 
-// matchWhere reports whether key k satisfies every clause (AND'd). "status"
-// checks k.Status; "labels"/"blocked-by" check their dedicated token slices;
-// any other declared enum field checks k.Fields[field] (board.Build tracks
-// every non-multi field there). A key with no value for the field simply
-// doesn't match — no error, per spec. A nil k (no board event has ever
-// touched the key) never matches a non-empty clause list.
+// matchWhere reports whether key k satisfies every clause (AND'd). A
+// membership clause (c.Membership, only ever produced for a declared
+// multi-field — parseWhere rejects any other combination) checks
+// k.Multi[c.Field], which board.Build populates for EVERY declared
+// multi-field including "labels" and "blocked-by". An exact clause checks
+// k.Status for "status" or k.Fields[c.Field] for any other declared enum
+// field. A key with no value for the field simply doesn't match — no
+// error, per spec. A nil k (no board event has ever touched the key) never
+// matches a non-empty clause list.
 func matchWhere(k *board.Key, cs []WhereClause) bool {
 	for _, c := range cs {
 		if !matchOne(k, c) {
@@ -95,15 +98,12 @@ func matchOne(k *board.Key, c WhereClause) bool {
 	if k == nil {
 		return false
 	}
-	switch c.Field {
-	case "status":
-		return k.Status != nil && k.Status.Value == c.Value
-	case "labels":
-		return contains(k.Labels, c.Value)
-	case "blocked-by":
-		return contains(k.BlockedBy, c.Value)
-	default:
-		fs := k.Fields[c.Field]
-		return fs != nil && fs.Value == c.Value
+	if c.Membership {
+		return contains(k.Multi[c.Field], c.Value)
 	}
+	if c.Field == "status" {
+		return k.Status != nil && k.Status.Value == c.Value
+	}
+	fs := k.Fields[c.Field]
+	return fs != nil && fs.Value == c.Value
 }

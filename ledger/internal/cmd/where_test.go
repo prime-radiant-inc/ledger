@@ -192,3 +192,38 @@ func TestWhereGenericEnumFieldFilters(t *testing.T) {
 		t.Fatalf("expected only k2 to match review=pending: %v", keys2)
 	}
 }
+
+// seedWhereThirdMultiField builds a ready-capable board declaring a third
+// multi-field beyond labels/blocked-by ("reviewers") — the full
+// ready-capable shape requires labels and guards blocked-by when declared,
+// but caps nothing, so a third multi-field is legal.
+//   - k1: reviewers=alice,bob
+//   - k2: reviewers=bob
+func seedWhereThirdMultiField(t *testing.T) string {
+	dir := initRepo(t)
+	run(t, dir, "create", "issues", "--scope", "test",
+		"--field", "status=open,in-progress,closed,wontfix",
+		"--terminal", "status=closed,wontfix",
+		"--multi-field", "labels", "--multi-field", "blocked-by", "--multi-field", "reviewers",
+		"--guard", "status", "--guard", "blocked-by")
+	run(t, dir, "set", "k1", "status=open", "--expect", "none", "-m", "k1 title", "--as", "a")
+	run(t, dir, "set", "k1", "reviewers=alice,bob", "--as", "a")
+	run(t, dir, "set", "k2", "status=open", "--expect", "none", "-m", "k2 title", "--as", "a")
+	run(t, dir, "set", "k2", "reviewers=bob", "--as", "a")
+	return dir
+}
+
+// TestWhereThirdMultiFieldFilters: --where membership on a declared
+// multi-field beyond labels/blocked-by must filter for real — both the
+// positive match and the negative exclusion.
+func TestWhereThirdMultiFieldFilters(t *testing.T) {
+	dir := seedWhereThirdMultiField(t)
+	keys := showKeys(t, dir, "--where", "reviewers~=alice")
+	if len(keys) != 1 || keys[0] != "k1" {
+		t.Fatalf("expected only k1 to match reviewers~=alice: %v", keys)
+	}
+	keys2 := showKeys(t, dir, "--where", "reviewers~=bob")
+	if len(keys2) != 2 || !contains2(keys2, "k1") || !contains2(keys2, "k2") {
+		t.Fatalf("expected both k1,k2 to match reviewers~=bob: %v", keys2)
+	}
+}

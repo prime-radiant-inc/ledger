@@ -27,6 +27,16 @@ type Key struct {
 	LabelsID    string      // latest labels event id ("" if none)
 	BlockedBy   []string
 	BlockedByID string
+	// Multi carries every declared multi-field's tokens by name, including
+	// "labels" and "blocked-by" (kept in sync with the dedicated Labels/
+	// BlockedBy slices above, which stay the source Tasks 6-8 already
+	// consume unchanged) — the generic surface a ready-capable board's
+	// third-or-later multi-field (e.g. "reviewers"; the shape requires
+	// labels, guards blocked-by when declared, but caps nothing) needs so
+	// show --where's membership clauses can filter on it too. Latest write
+	// wins, wholesale replace per set; nil when a key has no multi-field
+	// write at all.
+	Multi map[string][]string
 	// Fields is the generic complement to Status: the latest write per
 	// declared enum field OTHER than "status" (e.g. a board-declared
 	// "review" or "priority" field) — status keeps its dedicated field
@@ -73,12 +83,15 @@ func Build(meta model.Meta, events []model.Event) *Board {
 			case "labels":
 				k.Labels = splitTokens(value)
 				k.LabelsID = ev.ID
+				k.setMulti(field, value)
 			case "blocked-by":
 				k.BlockedBy = splitTokens(value)
 				k.BlockedByID = ev.ID
+				k.setMulti(field, value)
 			default:
 				if containsStr(meta.MultiFields, field) {
-					continue // an other-named multi-field: not board-tracked (existing scope)
+					k.setMulti(field, value)
+					continue
 				}
 				if k.Fields == nil {
 					k.Fields = map[string]*FieldState{}
@@ -91,6 +104,15 @@ func Build(meta model.Meta, events []model.Event) *Board {
 		}
 	}
 	return b
+}
+
+// setMulti records field's latest tokens in k.Multi — wholesale replace,
+// matching Labels'/BlockedBy's own clear-on-empty semantics.
+func (k *Key) setMulti(field, value string) {
+	if k.Multi == nil {
+		k.Multi = map[string][]string{}
+	}
+	k.Multi[field] = splitTokens(value)
 }
 
 // containsStr reports whether x is present in xs.

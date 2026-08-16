@@ -242,6 +242,45 @@ func TestFieldsOmitsStatus(t *testing.T) {
 	}
 }
 
+// TestMultiTracksThirdDeclaredMultiField: a ready-capable board can declare
+// a multi-field beyond labels/blocked-by (the full shape requires labels,
+// guards blocked-by when present, but caps nothing) — Build must track its
+// tokens in k.Multi the same way it tracks labels/blocked-by, latest write
+// wins, wholesale replace per set.
+func TestMultiTracksThirdDeclaredMultiField(t *testing.T) {
+	meta := readyMeta()
+	meta.MultiFields = append(meta.MultiFields, "reviewers")
+	evs := []model.Event{
+		setEv("1a", "k1", "reviewers", "alice,bob", nil),
+		setEv("2a", "k1", "reviewers", "carol", func(e *model.Event) { e.ID = "2a" }),
+	}
+	b := Build(meta, evs)
+	k := b.Keys["k1"]
+	if k.Multi == nil {
+		t.Fatal("reviewers not tracked in k.Multi")
+	}
+	got := k.Multi["reviewers"]
+	if len(got) != 1 || got[0] != "carol" {
+		t.Fatalf("latest reviewers write must win (wholesale replace): %v", got)
+	}
+}
+
+// TestMultiClearedByEmptyValue: field= (empty value) clears a third
+// multi-field's tokens, matching labels'/blocked-by's clear semantics.
+func TestMultiClearedByEmptyValue(t *testing.T) {
+	meta := readyMeta()
+	meta.MultiFields = append(meta.MultiFields, "reviewers")
+	evs := []model.Event{
+		setEv("1a", "k1", "reviewers", "alice", nil),
+		setEv("2a", "k1", "reviewers", "", func(e *model.Event) { e.ID = "2a" }),
+	}
+	b := Build(meta, evs)
+	k := b.Keys["k1"]
+	if len(k.Multi["reviewers"]) != 0 {
+		t.Fatalf("reviewers should be cleared, got %v", k.Multi["reviewers"])
+	}
+}
+
 func TestIsTerminal(t *testing.T) {
 	b := Build(readyMeta(), nil)
 	if !b.IsTerminal("closed") {
