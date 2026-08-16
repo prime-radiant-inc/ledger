@@ -1,7 +1,7 @@
 # Ledger as issue tracker (design)
 
-2026-08-15, revision 13 — the rethink (rev 12) hardened by a seventh,
-blind adversarial round. Eleven revisions, three spikes,
+2026-08-16, revision 14 — the rethink (rev 12) hardened by two blind
+adversarial rounds (the seventh and eighth). Eleven revisions, three spikes,
 three chain-audited field trials, and six adversarial rounds (twelve
 reviewers) validated the core mechanics and repeatedly punished the same
 three composition mistakes: protection built by enumerating cases instead
@@ -85,11 +85,12 @@ Cycles are representable; the tool surfaces them (see `ready`), never
 silently drops them. A "blocked" status value is deliberately absent:
 blocked is derived state.
 
-**Titles**: a key's title is the message of its first status event,
-computed from history rather than stored, immutable, carried by every
-read surface. The first
-status write REQUIRES a non-empty `-m` after trimming (`empty_body`,
-exit 4, hint naming it as the title).
+**Titles** (ready-capable boards only — plain boards keep the parent
+spec's `set` semantics): a key's title is the message of its first
+status event, computed from history rather than stored, immutable,
+carried by every read surface. The first status write REQUIRES a
+non-empty `-m` after trimming (`empty_body`, exit 4, hint naming it as
+the title).
 
 **Export/import round-trips meta byte-for-byte**; import never re-derives
 declarations. An exported-then-imported board's `ready` output is
@@ -106,7 +107,11 @@ the single interference gate that replaced three enumerated ones.
    is `bad_usage` naming the rule and the fix.
 2. **A conditional set touches exactly one guarded field** (else
    `bad_usage`); unguarded fields may ride along. `--expect` on a write
-   touching zero guarded fields stays legal for any single-field write.
+   touching zero guarded fields stays legal for any single-field write
+   and means what it always means — real CAS against that field's
+   latest event (`claim_lost` with the generic hint on mismatch;
+   `--expect none` likewise). Guarding makes `--expect` mandatory,
+   never exclusive; it is never accepted-and-ignored.
 3. `--expect <event-id>` (SHA prefix accepted): succeeds only if the
    written guarded field's latest event on this key is still that event
    at append time. **Field-scoped**: other fields' events never
@@ -123,7 +128,7 @@ the single interference gate that replaced three enumerated ones.
    key already has edges — read it; if yours is a different issue,
    re-seed under a new key" — never a merge suggestion, which on a name
    collision is exactly the contamination the Seed idiom's recovery text
-   exists to undo.
+   exists to undo. Any other field falls back to rule 3's generic hint.
 5. **Standing signals and `--override`.** Before landing, a guarded write
    is checked against three signals the tool computes from current state.
    **Scope, stated**: `human` is key-scoped and gates every guarded
@@ -171,11 +176,16 @@ the single interference gate that replaced three enumerated ones.
    must pass before the validation claim covers them.
 8. **Performance requirement**: the precondition read narrows to the
    **target key** (all its fields — a field-narrowed read cannot answer
-   the label or status checks): walk the chain backward from head through
-   the parent spec's batched read path (chunked reads, window growing
-   backward — the per-event-subprocess pattern the parent spec bans stays
-   banned here), early-stopping once the key's status, the written field,
-   labels, and staleness inputs resolve.
+   the label or status checks), resolving the key's status, the written
+   field, labels, and staleness inputs from the most recent history
+   touching them. The contract is a bound, not an algorithm: cost
+   scales with the target key's touched-history depth, never the whole
+   board's event count, and the per-event-subprocess pattern the parent
+   spec bans stays banned. This is NEW read machinery — the parent
+   spec's only batched read is the one-shot whole-chain fold, so the
+   backward windowed walk that meets this bound is rev-14
+   implementation work validated by the measured test, not an inherited
+   primitive.
    Honest worst case: a long-untouched key degrades toward a full scan;
    the bound test measures the common case and states the degenerate one.
    "Reuse" of reads is within-attempt only; cross-attempt caching is the
@@ -213,8 +223,8 @@ now ordinary tested tool code):
                 "by": "worker-2", "age": "14m", "id": "…", "stale": false,
                 "waiting_on": [{"key": "dep-x", "state": "open"}]}],
  "blocked":   [{"key": "deploy", "title": "…", "note": "…", "ts": "…",
-                "by": "…", "waiting_on": [{"key": "sign-off",
-                                           "state": "human"}]}],
+                "by": "…", "id": "…", "waiting_on": [{"key": "sign-off",
+                                                      "state": "human"}]}],
  "attention": [{"reason": "stale-claim", "key": "orphaned-task",
                 "by": "dead-worker", "age": "3h", "id": "…"},
                {"reason": "statusless", "key": "half-seeded"},
@@ -225,7 +235,10 @@ now ordinary tested tool code):
 - **frontier** ∈ `work-available | all-handled | attention-needed`,
   computed over the FULL board regardless of `--limit`:
   `work-available` when anything is pickable now or reclaimable
-  (non-empty ready, or a stale claim); else `attention-needed` when the
+  (non-empty ready, or a stale claim on a key NOT labeled `human` — a
+  human-labeled key's stale claim needs a person's override, so it
+  drives `attention-needed`, never `work-available`); else
+  `attention-needed` when the
   attention list is non-empty; else `all-handled` — every dependency
   chain terminates in a live claim or a non-terminal human-owned key (a
   terminal status resolves an edge regardless of label), verified
@@ -252,15 +265,25 @@ now ordinary tested tool code):
   in-progress | in-progress-stale | human | statusless` — `terminal`
   wins whenever the blocker's status is terminal, labeled or not;
   `human` names only a non-terminal human-owned blocker, mirroring
-  `held`'s carve-out. Informational; the frontier verdict already did
-  the walking.
+  `held`'s carve-out. (`waiting_on` folds staleness into `state`
+  because one discriminator covers six states; `held`'s claims are
+  always `in-progress`, so a bare `stale` boolean suffices there —
+  deliberate, not drift.) `waiting_on` is informational — the frontier
+  verdict already did the walking — but blocked entries carry the
+  status field's latest `id`, so "blocked is not locked" (below) is
+  exercisable straight from the envelope.
 - **attention**: the triage queue, tool-computed — stale claims,
   statusless keys (half-seeds and orphans), cycles (with the cycle's
   keys). Entries may also appear in their home lists; this list is the
   view triage sweeps.
 
 Lists are bounded by `--limit` (default 50, per list) with true counts in
-`totals`; `frontier` never lies from truncation. `ready` sorts oldest
+`totals`; `frontier` never lies from truncation. The verdict prioritizes
+work over triage by design — `attention-needed` shows only when nothing
+is pickable, so on a continuously busy board it may never show — but the
+`attention` list and `totals.attention` ride in every envelope
+regardless, and doctrine makes any non-zero `totals.attention` a triage
+cue in its own right, never gated on the verdict. `ready` sorts oldest
 first with chain-position ties; the other lists sort by key ascending
 (stable doc-harness output). Extra `--where` clauses apply uniformly to
 all lists; a clause contradicting `ready`'s own `status=open` is
@@ -273,8 +296,8 @@ the loop's hottest read; implementation acceptance is pinned now, not
 deferred: at the parent spec's 5k-event scale (including touch-base
 churn, which scales with wall-clock, not issue count), on the hardware
 of its measurements, the full envelope completes within 2× the measured
-batched fold — 70ms measured, so a 150ms bound, degenerate cases stated
-in the test report. Stated
+batched fold (70ms measured → 140ms bound), degenerate cases stated in
+the test report. Stated
 intent: **blocked is not locked** — claiming a blocked key by name with a
 valid `--expect` is legal, visible, attributable; the fences are
 non-surfacing and doctrine.
@@ -325,9 +348,11 @@ typed bare `ledger` because the doctrine's lines did).
   issue): one write with `--override -m "<why>"` against the terminal
   event's id — the event records `override: settled`, greppable, which
   is the visibility the old two-step reopen never actually had.
-- **Break a squat / evict a live claim**: triage-only by doctrine;
-  `--override -m "<why, naming the claimant>"` — records
-  `override: claim`.
+- **Break a squat / evict a live claim**: triage-only by doctrine. Free
+  the key: `set <key> status=open --expect <the live claim's id>
+  --override -m "<why, naming the claimant>"`; or take it directly with
+  `status=in-progress` and your own `--as` — same write, same override.
+  Either records `override: claim`.
 - **Edge edit**: read the current set, union or prune, write whole:
   `set <key> blocked-by=<full,new,set> --expect <the edge field's latest
   id>`. Never combined with a status write (rule 2); a human-labeled
@@ -349,9 +374,12 @@ frontmatter `description` gains the triggers "running an issue board" and
 - First read: `ledger ready`. The envelope is the whole picture; `show
   --where status=open` is the flat listing when you want one.
 - **Picking loop**: while `frontier` is `work-available`: claim from
-  `ready` (oldest first) or reclaim a stale entry from `attention`; work;
-  close; repeat — re-running `ready` after your own close is the loop,
-  not polling. When `frontier` is `all-handled`: leave; the tool has
+  `ready` (oldest first) or reclaim a stale entry from `attention` —
+  skipping human-labeled ones, whose `needs_override` is a stop sign for
+  a picker, not a form to fill; work; close; repeat — re-running `ready`
+  after your own close is the loop, not polling. A non-zero
+  `totals.attention` alongside available work is a cue to flag triage,
+  not to wait for the verdict to flip. When `frontier` is `all-handled`: leave; the tool has
   verified every chain ends at a live worker or a human. When
   `attention-needed`: reclaim what's stale if you can; report the rest
   (statusless keys, cycles) rather than guessing — they're triage items.
@@ -425,7 +453,9 @@ semantics) is historical evidence, never merged.
 ## Test plan
 
 1. Guarded plain set → `bad_usage`; two guarded fields in one set →
-   `bad_usage`; unguarded ride-along legal.
+   `bad_usage`; unguarded ride-along legal; `--expect` on a
+   purely-unguarded single-field write performs real CAS (mismatch →
+   `claim_lost`, never silently ignored).
 2. Seed via `--expect none`; racing seeds serialize; `--expect none` on
    a touched field → `claim_lost`; collision hint text; the chained-write
    contamination case and its deterministic recovery (derived state
@@ -457,7 +487,9 @@ semantics) is historical evidence, never merged.
    field → `bad_value`; `ready` on a non-ready-capable board →
    `bad_usage` with the create-time fix.
 9. Frontier verdict: `work-available` on non-empty ready AND on
-   stale-claim-only boards; `all-handled` only when every chain ends at a
+   stale-claim-only boards — but a board whose only stale claim sits on
+   a human-labeled key is `attention-needed`, never `work-available`;
+   `all-handled` only when every chain ends at a
    live claim or non-terminal human key — a closed human-labeled blocker
    resolves its dependents' edges (verified against hand-built graphs: linear
    chains, diamonds — no false cycle; true cycles → `attention-needed`;
@@ -467,7 +499,8 @@ semantics) is historical evidence, never merged.
 10. Envelope: five members and totals match the pinned example's shape;
     held merges claims and human keys with correct `kind`, `id`, `stale`,
     and claimed-but-blocked `waiting_on`; a human-labeled claimed key
-    renders `kind: human` with the claim fields present; attention
+    renders `kind: human` with the claim fields present, live or stale;
+    blocked entries carry the status field's latest `id`; attention
     entries for
     stale-claim / statusless / cycle; ordering (ready oldest-first with
     chain-position ties; others key-ascending).
@@ -526,6 +559,16 @@ semantics) is historical evidence, never merged.
   all folded here as rev 13. One reviewer independently rebuilt the
   spike and re-ran both harnesses (20/20 and 30/30 reproduced) and
   verified the trial citations verbatim.
+  An eighth round, also blind, ran against rev 13: both reviewers
+  independently caught rule 8 asserting a windowed read path the parent
+  spec verifiably does not have (rewritten as a contract, not an
+  algorithm); one caught the pinned bound's arithmetic (2×70 is 140,
+  not 150) and the undefined `--expect`-on-unguarded-field case; the
+  other caught `work-available` counting human-labeled stale claims —
+  funneling ordinary pickers toward the very override the Reclaim
+  idiom reserves for people — the one place the trial-3
+  mechanism-beats-doctrine lesson hadn't reached. All folded as rev 14.
+  First round with no adjudicated Critical.
 - **Kata reconnaissance**: `~/git/kata` — two-status minimalism, labels,
   triage doctrine, open-by-default lists; what we took and declined is in
   Deferred.
