@@ -27,6 +27,16 @@ type Key struct {
 	LabelsID    string      // latest labels event id ("" if none)
 	BlockedBy   []string
 	BlockedByID string
+	// Fields is the generic complement to Status: the latest write per
+	// declared enum field OTHER than "status" (e.g. a board-declared
+	// "review" or "priority" field) — status keeps its dedicated field
+	// alone and is never duplicated in here, since every other board
+	// concept (guarded writes, titles, staleness, rule-5 signals) already
+	// keys off Status directly. Multi-fields (labels, blocked-by) never
+	// appear here either — they keep their own dedicated slices. Nil when
+	// a key has no such write. Exists so show --where can filter on any
+	// declared enum field, not just the three the board hard-codes.
+	Fields map[string]*FieldState
 }
 
 // Board is the whole derived board: declarations plus every key's state.
@@ -66,10 +76,31 @@ func Build(meta model.Meta, events []model.Event) *Board {
 			case "blocked-by":
 				k.BlockedBy = splitTokens(value)
 				k.BlockedByID = ev.ID
+			default:
+				if containsStr(meta.MultiFields, field) {
+					continue // an other-named multi-field: not board-tracked (existing scope)
+				}
+				if k.Fields == nil {
+					k.Fields = map[string]*FieldState{}
+				}
+				k.Fields[field] = &FieldState{
+					Value: value, ID: ev.ID, Author: ev.Author, TS: ev.TS,
+					Note: ev.Text, Evidence: ev.Evidence,
+				}
 			}
 		}
 	}
 	return b
+}
+
+// containsStr reports whether x is present in xs.
+func containsStr(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 // splitTokens parses a comma-joined multi-field value; an empty value

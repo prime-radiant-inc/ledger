@@ -182,6 +182,66 @@ func TestStatuslessKeyHasNilStatus(t *testing.T) {
 	}
 }
 
+// TestFieldsTracksGenericEnumField: a declared enum field other than
+// "status" (e.g. "review") lands in k.Fields, latest write per field
+// winning — the generic complement to Status that show --where needs to
+// filter on non-board enum fields.
+func TestFieldsTracksGenericEnumField(t *testing.T) {
+	meta := readyMeta()
+	meta.Fields["review"] = []string{"pending", "approved"}
+	evs := []model.Event{
+		setEv("1a", "k1", "review", "pending", func(e *model.Event) { e.Author = "a" }),
+		setEv("2a", "k1", "review", "approved", func(e *model.Event) { e.Author = "b" }),
+	}
+	b := Build(meta, evs)
+	k := b.Keys["k1"]
+	if k.Fields == nil || k.Fields["review"] == nil {
+		t.Fatal("review field not tracked in k.Fields")
+	}
+	fs := k.Fields["review"]
+	if fs.Value != "approved" || fs.ID != "2a" || fs.Author != "b" {
+		t.Fatalf("latest review write must win: %+v", fs)
+	}
+}
+
+// TestFieldsOmitsMultiFields: labels/blocked-by are multi-fields and stay
+// out of the generic Fields map — they're tracked in their own dedicated
+// Labels/BlockedBy slices instead.
+func TestFieldsOmitsMultiFields(t *testing.T) {
+	evs := []model.Event{
+		setEv("1a", "k1", "labels", "urgent", nil),
+		setEv("2a", "k1", "blocked-by", "other", nil),
+	}
+	b := Build(readyMeta(), evs)
+	k := b.Keys["k1"]
+	if k.Fields != nil {
+		if _, ok := k.Fields["labels"]; ok {
+			t.Fatal("labels must not appear in the generic Fields map")
+		}
+		if _, ok := k.Fields["blocked-by"]; ok {
+			t.Fatal("blocked-by must not appear in the generic Fields map")
+		}
+	}
+}
+
+// TestFieldsOmitsStatus: status keeps its dedicated Status field and is
+// never duplicated into the generic Fields map.
+func TestFieldsOmitsStatus(t *testing.T) {
+	evs := []model.Event{
+		setEv("1a", "k1", "status", "open", func(e *model.Event) { e.Text = "title" }),
+	}
+	b := Build(readyMeta(), evs)
+	k := b.Keys["k1"]
+	if k.Status == nil || k.Status.Value != "open" {
+		t.Fatalf("status must still populate the dedicated Status field: %+v", k.Status)
+	}
+	if k.Fields != nil {
+		if _, ok := k.Fields["status"]; ok {
+			t.Fatal("status must not be duplicated into the generic Fields map")
+		}
+	}
+}
+
 func TestIsTerminal(t *testing.T) {
 	b := Build(readyMeta(), nil)
 	if !b.IsTerminal("closed") {

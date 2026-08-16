@@ -157,3 +157,38 @@ func TestShowBareUnchangedByWhere(t *testing.T) {
 		t.Fatalf("bare show must list every key: %v", keys)
 	}
 }
+
+// seedWhereGenericEnum builds a ready-capable board that also declares a
+// plain enum field ("review") the board doesn't dedicate a struct field to
+// (unlike status) — the case the controller's ruling closes: a legal
+// --where clause on any declared enum field must actually filter, not
+// silently match nothing.
+//   - k1: status=open, review=approved
+//   - k2: status=open, review=pending
+func seedWhereGenericEnum(t *testing.T) string {
+	dir := initRepo(t)
+	run(t, dir, "create", "issues", "--scope", "test",
+		"--field", "status=open,in-progress,closed,wontfix",
+		"--field", "review=pending,approved",
+		"--terminal", "status=closed,wontfix",
+		"--multi-field", "labels", "--multi-field", "blocked-by",
+		"--guard", "status", "--guard", "blocked-by")
+	run(t, dir, "set", "k1", "status=open", "review=approved", "--expect", "none", "-m", "k1 title", "--as", "a")
+	run(t, dir, "set", "k2", "status=open", "review=pending", "--expect", "none", "-m", "k2 title", "--as", "a")
+	return dir
+}
+
+// TestWhereGenericEnumFieldFilters: --where on a declared enum field other
+// than status/labels/blocked-by must filter for real — both the positive
+// match and the negative exclusion.
+func TestWhereGenericEnumFieldFilters(t *testing.T) {
+	dir := seedWhereGenericEnum(t)
+	keys := showKeys(t, dir, "--where", "review=approved")
+	if len(keys) != 1 || keys[0] != "k1" {
+		t.Fatalf("expected only k1 to match review=approved: %v", keys)
+	}
+	keys2 := showKeys(t, dir, "--where", "review=pending")
+	if len(keys2) != 1 || keys2[0] != "k2" {
+		t.Fatalf("expected only k2 to match review=pending: %v", keys2)
+	}
+}
