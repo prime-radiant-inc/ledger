@@ -264,10 +264,14 @@ func (s Store) Append(slug string, ev model.Event, extra map[string]string, mode
 // attempts (spec rule 7). A pre error aborts the append with that error;
 // nothing is written. Append delegates here with pre == nil, which skips
 // the fresh-read-and-check step entirely (no behavior or cost change for
-// existing callers).
-func (s *Store) AppendChecked(slug string, ev model.Event, pre Precondition, mode ExpectMode) (string, error) {
+// existing callers). ev is a pointer, not a value: pre and the commit built
+// from ev are the same struct within one attempt, so a precondition that
+// computes something tool-derived (rule 5's override record) can attach it
+// to *ev before the build step reads it — correct across retries, since
+// each attempt's pre call immediately precedes that same attempt's build.
+func (s *Store) AppendChecked(slug string, ev *model.Event, pre Precondition, mode ExpectMode) (string, error) {
 	tip, err := s.casLoop(slug, mode, pre, func(parent string) (string, error) {
-		return s.BuildCommit(slug, parent, ev, nil)
+		return s.BuildCommit(slug, parent, *ev, nil)
 	})
 	if err != nil {
 		return "", err

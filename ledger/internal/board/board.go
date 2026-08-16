@@ -134,3 +134,41 @@ func (b *Board) StaleAge(k *Key, now time.Time) (stale bool, age time.Duration) 
 func FormatAge(d time.Duration) string {
 	return d.Truncate(time.Second).String()
 }
+
+// Signal is one standing signal guarding a write on a key (spec rule 5):
+// Name is one of "claim", "human", "settled"; Facts is its pinned
+// human-readable detail (claimant and age; the label; the settled value
+// and its evidence state).
+type Signal struct{ Name, Facts string }
+
+// Signals reports the standing signals guarding a write on key k, in the
+// spec's fixed order: claim, human, settled. Rule 5 exists only on
+// ready-capable boards, and only for a guarded write — callers must not
+// invoke this for an unguarded (e.g. labels-only) write, since human
+// otherwise "gates every guarded write", not every write. touchesStatus
+// scopes claim and settled to status writes only; human is key-scoped and
+// always checked once a caller decides the write is guarded. A nil k (a
+// key no event has ever touched) carries no signals — there is nothing to
+// check against.
+func (b *Board) Signals(k *Key, touchesStatus bool, author string, now time.Time) []Signal {
+	if !model.ReadyCapable(b.Meta) || k == nil {
+		return nil
+	}
+	var signals []Signal
+	if touchesStatus && k.Status != nil && k.Status.Value == "in-progress" && k.Status.Author != author {
+		if stale, age := b.StaleAge(k, now); !stale {
+			signals = append(signals, Signal{Name: "claim", Facts: k.Status.Author + ", " + FormatAge(age)})
+		}
+	}
+	if k.HasHuman() {
+		signals = append(signals, Signal{Name: "human", Facts: "labeled 'human'"})
+	}
+	if touchesStatus && k.Status != nil && b.IsTerminal(k.Status.Value) {
+		evidence := "no"
+		if len(k.Status.Evidence) > 0 {
+			evidence = "yes"
+		}
+		signals = append(signals, Signal{Name: "settled", Facts: k.Status.Value + ", evidence: " + evidence})
+	}
+	return signals
+}

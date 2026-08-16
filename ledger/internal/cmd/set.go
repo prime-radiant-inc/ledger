@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -44,7 +45,7 @@ func newSetCmd(c *Ctx) *cobra.Command {
 	cmd.Flags().StringArrayVar(&o.evidence, "evidence", nil, "TYPE:REF (e.g. commit:abc123); repeatable")
 	cmd.Flags().StringVar(&o.idemKey, "idempotency-key", "", "dedupe key scoped to (author, key)")
 	cmd.Flags().StringVar(&expect, "expect", "", "event-id-prefix|none — required on a guarded field (the invariant)")
-	cmd.Flags().BoolVar(&override, "override", false, "override a standing rule-5 signal (requires -m; wired in Task 8)")
+	cmd.Flags().BoolVar(&override, "override", false, "override a standing rule-5 signal (requires -m)")
 	return cmd
 }
 
@@ -107,9 +108,13 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts, expect string
 	if usageErr != nil {
 		return usageErr
 	}
+	if override && strings.TrimSpace(o.m) == "" {
+		return out.Errf("bad_usage", `pass -m "<why>" alongside --override`, 4,
+			"--override requires a non-empty -m explaining why")
+	}
 
+	author := model.ResolveAuthor(o.as)
 	if o.idemKey != "" {
-		author := model.ResolveAuthor(o.as)
 		for _, ev := range led.Events {
 			if ev.Type == "set" && ev.IdempotencyKey == o.idemKey && ev.Author == author && ev.Key == key {
 				payload := map[string]any{"id": ev.ID, "ledger": led.Slug, "deduped": true, "by": ev.Author}
@@ -121,14 +126,14 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts, expect string
 			}
 		}
 	}
-	ev := model.NewEvent("set", model.ResolveAuthor(o.as), c.Store.Repo)
+	ev := model.NewEvent("set", author, c.Store.Repo)
 	ev.Key, ev.Fields, ev.Text, ev.Evidence, ev.IdempotencyKey = key, fields, o.m, o.evidence, o.idemKey
 
 	var pre store.Precondition
 	if target != "" || ready {
-		pre = setPrecondition(key, fields, target, expect, ready, led.Meta, o.m)
+		pre = setPrecondition(key, fields, target, expect, ready, led.Meta, o.m, author, override, &ev.Override)
 	}
-	id, err := c.Store.AppendChecked(led.Slug, ev, pre, store.ExpectPresent)
+	id, err := c.Store.AppendChecked(led.Slug, &ev, pre, store.ExpectPresent)
 	if err != nil {
 		return mapStoreErr(err, led.Slug)
 	}
@@ -182,9 +187,13 @@ func resolveExpectTarget(fields map[string]string, guard []string, slug string, 
 // event read on every CAS attempt (spec rule 7: never a pre-loop snapshot).
 // Checks run in order: rule 3/4 CAS on the target field, then (ready-capable
 // boards only) key grammar on first write, title enforcement on a first
-// status write, then blocked-by existence. Task 8 inserts rule 5's signal
-// checks after CAS.
-func setPrecondition(key string, fields map[string]string, target, expect string, ready bool, meta model.Meta, text string) store.Precondition {
+// status write, blocked-by existence, then rule 5's standing-signal check
+// on a guarded write. overrideOut is a pointer into the event actually
+// being built (store.AppendChecked takes ev by pointer for exactly this):
+// when a standing signal is overridden, the closure records the tool-
+// computed signal names there for the winning attempt's commit.
+func setPrecondition(key string, fields map[string]string, target, expect string, ready bool, meta model.Meta,
+	text, author string, override bool, overrideOut *string) store.Precondition {
 	return func(events []model.Event) error {
 		if target != "" {
 			if err := checkCAS(events, key, target, expect, fields[target], ready, meta); err != nil {
@@ -199,7 +208,8 @@ func setPrecondition(key string, fields map[string]string, target, expect string
 			return out.Errf("bad_value", "rename the key to match ^[a-z0-9][a-z0-9-]*$ (lowercase kebab-case)", 4,
 				"key '%s' can't be referenced by blocked-by edges; use kebab-case", key)
 		}
-		if _, touched := fields["status"]; touched {
+		_, touchesStatus := fields["status"]
+		if touchesStatus {
 			k := b.Keys[key]
 			firstStatusWrite := k == nil || k.Status == nil
 			if firstStatusWrite && strings.TrimSpace(text) == "" {
@@ -212,6 +222,16 @@ func setPrecondition(key string, fields map[string]string, target, expect string
 				if _, exists := b.Keys[tok]; !exists {
 					return out.Errf("unknown_key", "", 4, "blocked-by names '%s', which does not exist", tok)
 				}
+			}
+		}
+		if contains(meta.Guard, target) {
+			signals := b.Signals(b.Keys[key], touchesStatus, author, time.Now())
+			if len(signals) > 0 {
+				if !override {
+					return out.Errf("needs_override", `--override -m "<why>"`, 4,
+						"'%s' has standing signal(s) that guard this write: %s", key, formatSignals(signals))
+				}
+				*overrideOut = signalNames(signals)
 			}
 		}
 		return nil
@@ -317,6 +337,26 @@ func contains(xs []string, x string) bool {
 		}
 	}
 	return false
+}
+
+// formatSignals renders standing signals in the needs_override message's
+// pinned shape: "<name> (<facts>)[, <name> (<facts>)...]".
+func formatSignals(signals []board.Signal) string {
+	parts := make([]string, len(signals))
+	for i, s := range signals {
+		parts[i] = s.Name + " (" + s.Facts + ")"
+	}
+	return strings.Join(parts, ", ")
+}
+
+// signalNames comma-joins signal names for the event's override record —
+// tool-computed, never caller-asserted (spec rule 5).
+func signalNames(signals []board.Signal) string {
+	names := make([]string, len(signals))
+	for i, s := range signals {
+		names[i] = s.Name
+	}
+	return strings.Join(names, ",")
 }
 
 func renderFields(fields map[string]string) string {

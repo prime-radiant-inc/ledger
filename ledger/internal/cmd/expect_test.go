@@ -136,7 +136,11 @@ func TestClaimLostTerminalValueHint(t *testing.T) {
 	}
 	claimID := mustJSON(t, so2)["id"].(string)
 
-	so3, _, code := run(t, dir, "set", "k1", "status=in-progress", "--expect", claimID, "-m", "reclaiming", "--as", "reclaimer")
+	// claimant's claim is live (no --stale-after declared, so never stale) —
+	// evicting it is rule 5's claim signal, so this squat-break needs
+	// --override (the "Break a squat" idiom).
+	so3, _, code := run(t, dir, "set", "k1", "status=in-progress", "--expect", claimID,
+		"--override", "-m", "reclaiming: breaking the squat", "--as", "reclaimer")
 	if code != 0 {
 		t.Fatal(so3)
 	}
@@ -431,13 +435,21 @@ func TestUnknownFieldStillRejectsUndeclared(t *testing.T) {
 	}
 }
 
-// TestOverrideFlagRegisters: --override must parse cleanly (rule-5
-// semantics land in Task 8; this task only completes rule-2 parsing by
-// registering the flag).
-func TestOverrideFlagRegisters(t *testing.T) {
+// TestOverrideFlagRequiresMessage: --override's message discipline (spec
+// rule 5) is unconditional, independent of board capability — even on a
+// plain board, where rule 5 itself never applies, an empty -m is still
+// bad_usage; a non-empty one parses cleanly and lands as a legal no-op
+// (a plain board's guarded write never carries a standing signal to
+// override).
+func TestOverrideFlagRequiresMessage(t *testing.T) {
 	dir := setupPlainGuarded(t)
 	_, se, code := run(t, dir, "set", "t1", "status=open", "--expect", "none", "--override", "--as", "a")
+	if code != 4 || !strings.Contains(se, "bad_usage") {
+		t.Fatalf("--override without -m must be bad_usage: %d %s", code, se)
+	}
+
+	so, se2, code := run(t, dir, "set", "t1", "status=open", "--expect", "none", "--override", "-m", "reserved", "--as", "a")
 	if code != 0 {
-		t.Fatalf("--override must parse cleanly: %s", se)
+		t.Fatalf("--override with a message must parse cleanly on a plain board: %s %s", so, se2)
 	}
 }

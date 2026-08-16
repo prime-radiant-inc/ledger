@@ -305,7 +305,8 @@ func TestAppendCheckedPreconditionRunsFreshPerAttempt(t *testing.T) {
 		return nil
 	}
 
-	if _, err := s.AppendChecked("demo", mkEvent("c"), pre, ExpectPresent); err != nil {
+	evC := mkEvent("c")
+	if _, err := s.AppendChecked("demo", &evC, pre, ExpectPresent); err != nil {
 		t.Fatalf("AppendChecked: %v", err)
 	}
 
@@ -333,7 +334,8 @@ func TestAppendCheckedPreconditionErrorAbortsNothingWritten(t *testing.T) {
 	wantErr := errors.New("precondition not met")
 	pre := func(events []model.Event) error { return wantErr }
 
-	if _, err := s.AppendChecked("demo", mkEvent("c"), pre, ExpectPresent); !errors.Is(err, wantErr) {
+	evC := mkEvent("c")
+	if _, err := s.AppendChecked("demo", &evC, pre, ExpectPresent); !errors.Is(err, wantErr) {
 		t.Fatalf("AppendChecked error = %v, want %v", err, wantErr)
 	}
 
