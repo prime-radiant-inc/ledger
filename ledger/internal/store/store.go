@@ -305,6 +305,25 @@ func latestFieldEvent(evs []model.Event, key, field string) (model.Event, bool) 
 // fold casLoop's caller already holds, is real-implementation scope, not
 // this throwaway spike's.
 func (s Store) AppendExpect(slug string, ev model.Event, field, expectSpec string, expect Expect) (string, error) {
+	return s.AppendExpectChecked(slug, ev, field, expectSpec, expect, nil)
+}
+
+// SignalCheck is rule 5's interference gate, run against the same fresh read
+// AppendExpectChecked's field-scoped precondition already fetched (rule 7:
+// never a pre-loop snapshot — check runs inside the CAS retry loop on every
+// attempt, exactly like the precondition it rides alongside). It returns the
+// override marker to record on the landing event ("" when no signal stood,
+// or the caller didn't need to override one) or a domain error that aborts
+// the write outright — not retried, the same treatment casLoop already gives
+// ClaimLostError, since a signal check failure is a decision, not a race.
+type SignalCheck func(evs []model.Event) (override string, err error)
+
+// AppendExpectChecked is AppendExpect with an optional SignalCheck spliced
+// into the same fresh-read build callback: field-scoped CAS first (rules
+// 3-4), then, only if that passes, the caller's domain check (rule 5). check
+// may be nil, in which case this is exactly AppendExpect's old body.
+func (s Store) AppendExpectChecked(slug string, ev model.Event, field, expectSpec string, expect Expect,
+	check SignalCheck) (string, error) {
 	tip, err := s.casLoop(slug, expect, func(parent string) (string, error) {
 		evs, _, evErr := s.Events(slug)
 		if evErr != nil {
@@ -320,7 +339,15 @@ func (s Store) AppendExpect(slug string, ev model.Event, field, expectSpec strin
 		if lost {
 			return "", &ClaimLostError{Field: field, Winner: winner}
 		}
-		return s.BuildCommit(slug, parent, ev, nil)
+		toWrite := ev
+		if check != nil {
+			override, cErr := check(evs)
+			if cErr != nil {
+				return "", cErr
+			}
+			toWrite.Override = override
+		}
+		return s.BuildCommit(slug, parent, toWrite, nil)
 	})
 	if err != nil {
 		return "", err

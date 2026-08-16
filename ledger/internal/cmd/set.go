@@ -24,6 +24,7 @@ type writeOpts struct {
 	evidence      []string
 	idemKey       string
 	expect        string
+	override      bool
 }
 
 func init() { register(newSetCmd) }
@@ -42,10 +43,16 @@ func newSetCmd(c *Ctx) *cobra.Command {
 	cmd.Flags().StringVar(&o.idemKey, "idempotency-key", "", "dedupe key scoped to (author, key)")
 	cmd.Flags().StringVar(&o.expect, "expect", "",
 		"<event-id>|none — required for a guarded field: conditional write, first-wins (short-SHA prefix ok)")
+	cmd.Flags().BoolVar(&o.override, "override", false,
+		"land a guarded write despite a standing rule-5 signal (claim/human/settled); requires -m")
 	return cmd
 }
 
 func runSet(c *Ctx, key string, assignments []string, o writeOpts) error {
+	if o.override && strings.TrimSpace(o.m) == "" {
+		return out.Errf("bad_usage", `pass a reason: --override -m "<why>"`, 4,
+			"--override requires a non-empty -m")
+	}
 	led, err := c.PickLedger(o.ledger)
 	if err != nil {
 		return err
@@ -56,6 +63,17 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts) error {
 			hint = "this ledger is superseded by '" + led.SupersededBy + "' — write there"
 		}
 		return out.Errf("closed", hint, 4, "'%s' is %s and refuses new field values", led.Slug, led.State)
+	}
+	// Key grammar (ready-capable boards only): keys must be kebab-case so any
+	// blocked-by edge can reference them — enforced at each key's first write,
+	// since a legally-named key can't be retrofitted onto history that
+	// already used a bad one.
+	if led.IsReadyCapable() {
+		if _, exists := led.Spine[key]; !exists && !multiTokenRE.MatchString(key) {
+			return out.Errf("bad_value",
+				"keys are kebab-case: [a-z0-9][a-z0-9-]*, so any blocked-by edge can reference them", 4,
+				"'%s' is not a valid key on ready-capable board '%s'", key, led.Slug)
+		}
 	}
 	first := ""
 	if len(led.Meta.FieldOrder) > 0 {
@@ -74,9 +92,11 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts) error {
 			// Multi-fields are vocab-free by declaration: the value is stored
 			// as the literal comma-joined string, no vocab check. Every token
 			// still has to satisfy the multi-field grammar (kebab-case, no
-			// spaces/commas inside a token); blocked-by is additionally the
-			// one reserved multi-field name with edge semantics — each token
-			// must already be a key in this ledger's fold.
+			// spaces/commas inside a token); on a ready-capable board,
+			// blocked-by is additionally the one reserved multi-field name
+			// with edge semantics — each token must already be a key in this
+			// ledger's fold. A plain board's blocked-by is just a multi-field:
+			// no existence check, no edge semantics.
 			for _, tok := range strings.Split(v, ",") {
 				if tok == "" {
 					continue
@@ -85,7 +105,7 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts) error {
 					return out.Errf("bad_value", "tokens are kebab-case: [a-z0-9][a-z0-9-]*, comma-separated, no spaces", 4,
 						"'%s' in %s=%s is not a valid token", tok, f, v)
 				}
-				if f == "blocked-by" {
+				if f == "blocked-by" && led.IsReadyCapable() {
 					if _, ok := led.Spine[tok]; !ok {
 						return out.Errf("unknown_key", "ledger show lists this board's keys", 4,
 							"blocked-by names '%s', which is not a known key on '%s'", tok, led.Slug)
@@ -111,6 +131,17 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts) error {
 		}
 		fields[f] = v
 	}
+	// Titles (ready-capable boards only): a key's title is the message of its
+	// first status event, so that first write requires a non-empty trimmed -m.
+	if led.IsReadyCapable() {
+		if _, touchesStatus := fields["status"]; touchesStatus {
+			if _, hasPriorStatus := led.Spine[key]["status"]; !hasPriorStatus && strings.TrimSpace(o.m) == "" {
+				return out.Errf("empty_body",
+					`pass -m "<title>" — the first status write's message becomes this key's title`, 4,
+					"'%s' has no status history yet: the first status write requires a non-empty -m", key)
+			}
+		}
+	}
 	// The invariant (rev 5): a write touching a guarded field must carry
 	// --expect, and a single --expect can speak for exactly one guarded
 	// field (two guarded fields in one set would make it ambiguous which
@@ -122,6 +153,7 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts) error {
 		}
 	}
 	condField := ""
+	guardedWrite := false
 	switch {
 	case len(guardedTouched) > 1:
 		sort.Strings(guardedTouched)
@@ -130,6 +162,7 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts) error {
 			len(guardedTouched), strings.Join(guardedTouched, ", "))
 	case len(guardedTouched) == 1:
 		condField = guardedTouched[0]
+		guardedWrite = true
 		if o.expect == "" {
 			return out.Errf("bad_usage", "ledger ready (or `ledger status <key>`) shows the field's current event id", 4,
 				"field '%s' is guarded: pass --expect <event-id> (or --expect none for a first write)", condField)
@@ -164,7 +197,11 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts) error {
 	ev.Key, ev.Fields, ev.Text, ev.Evidence, ev.IdempotencyKey = key, fields, o.m, o.evidence, o.idemKey
 	var id string
 	if o.expect != "" {
-		id, err = c.Store.AppendExpect(led.Slug, ev, condField, o.expect, store.ExpectPresent)
+		var check store.SignalCheck
+		if guardedWrite && led.IsReadyCapable() {
+			check = rule5Check(led, key, condField, model.ResolveAuthor(o.as), o.override)
+		}
+		id, err = c.Store.AppendExpectChecked(led.Slug, ev, condField, o.expect, store.ExpectPresent, check)
 	} else {
 		id, err = c.Store.Append(led.Slug, ev, nil, store.ExpectPresent)
 	}
@@ -172,13 +209,18 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts) error {
 		var lost *store.ClaimLostError
 		if errors.As(err, &lost) {
 			w := lost.Winner
+			attemptedValue := fields[condField]
 			if w.ID == "" {
-				return out.Errf("claim_lost", claimLostHint(lost.Field), 4,
+				return out.Errf("claim_lost", claimLostHint(led, lost.Field, attemptedValue, o.expect), 4,
 					"'%s' has no recorded event for field '%s' yet — --expect '%s' cannot match (use --expect none for a first write)",
 					key, lost.Field, o.expect)
 			}
-			return out.Errf("claim_lost", claimLostHint(lost.Field), 4,
+			return out.Errf("claim_lost", claimLostHint(led, lost.Field, attemptedValue, o.expect), 4,
 				"event %s by %s (%s=%s) beat you to '%s'", w.ID, w.Author, lost.Field, w.Fields[lost.Field], key)
+		}
+		var needsOv *needsOverrideError
+		if errors.As(err, &needsOv) {
+			return out.Errf("needs_override", `--override -m "<why>"`, 4, "%s", needsOverrideMessage(needsOv))
 		}
 		return mapStoreErr(err, led.Slug)
 	}
@@ -188,20 +230,6 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts) error {
 	}
 	outEmit(c, payload, []string{"[" + id + "] " + led.Slug + ": " + key + " " + renderFields(fields)})
 	return nil
-}
-
-// claimLostHint is claim_lost's per-field recovery hint (spec: "re-run
-// ledger ready and pick again" on status; "re-read the key's edges and
-// merge" on blocked-by).
-func claimLostHint(field string) string {
-	switch field {
-	case "status":
-		return "re-run ledger ready and pick again"
-	case "blocked-by":
-		return "re-read the key's edges and merge"
-	default:
-		return "re-read '" + field + "' and try again"
-	}
 }
 
 func contains(xs []string, x string) bool {

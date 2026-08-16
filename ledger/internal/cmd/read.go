@@ -14,7 +14,9 @@ import (
 )
 
 // row is one spine cell: the latest value recorded for (key, field), with
-// its provenance. Shared by status (spine + by-branch) and show.
+// its provenance. Shared by status (spine + by-branch) and show. Title is
+// populated only by show on a ready-capable board (rev 14's Titles section:
+// "carried by ... every show row"); every other reader leaves it empty.
 type row struct {
 	Key      string   `json:"key"`
 	Field    string   `json:"field"`
@@ -25,6 +27,7 @@ type row struct {
 	TS       string   `json:"ts"`
 	ID       string   `json:"id"`
 	Evidence []string `json:"evidence"`
+	Title    string   `json:"title,omitempty"`
 }
 
 func rowOf(key, f string, ev model.Event) row {
@@ -387,6 +390,12 @@ func runShow(c *Ctx, ledgerFlag string, whereFlags ...string) error {
 			}
 		}
 		rows = filtered
+	}
+	if led.IsReadyCapable() {
+		titles := firstTitles(led)
+		for i := range rows {
+			rows[i].Title = titles[rows[i].Key]
+		}
 	}
 	committers, _ := c.Store.Committers(led.Slug)
 

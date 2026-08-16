@@ -115,6 +115,15 @@ func (l *Ledger) IsGuarded(name string) bool {
 	return contains(l.Guard, name)
 }
 
+// IsReadyCapable reports whether this board opted into issue-tracker
+// behavior (rev 14 "The board": declaring --terminal on a field named
+// status, all-or-nothing, validated at create time). Everything
+// issue-tracker-specific — rule 5's signals, blocked-by's edge semantics,
+// key grammar, titles, `ready` — is gated on this.
+func (l *Ledger) IsReadyCapable() bool {
+	return len(l.Terminal["status"]) > 0
+}
+
 func (l *Ledger) Head() string {
 	if len(l.Events) == 0 {
 		return ""

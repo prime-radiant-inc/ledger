@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -115,6 +116,9 @@ func runCreate(c *Ctx, slug, scope, owner, supersedes, asFlag, mFlag, staleAfter
 			seenGuard[f] = true
 			guard = append(guard, f)
 		}
+	}
+	if err := validateReadyCapability(fields, multiFields, terminal, guard); err != nil {
+		return err
 	}
 	var staleAfter string
 	if staleAfterSpec != "" {
@@ -239,6 +243,57 @@ func (c *Ctx) attemptSupersede(slug, supersedes string, ev model.Event, metaJSON
 	}
 	c.Store.GCAuto()
 	return newSha[:10], false, nil
+}
+
+// validateReadyCapability enforces the spec's "The board" section:
+// ready-capability is syntactic and all-or-nothing — declaring --terminal on
+// a field named status opts the board in, and create then REQUIRES the full
+// shape. Every violation is bad_value naming the fix; immutability makes
+// create-time validation load-bearing here, since a bad declaration has no
+// repair path once the board exists.
+func validateReadyCapability(fields map[string][]string, multiFields []string, terminal map[string][]string, guard []string) error {
+	termStatus, opted := terminal["status"]
+	if !opted {
+		return nil // not a ready-capable board: none of this applies
+	}
+	if !contains(guard, "status") {
+		return out.Errf("bad_value", "add --guard status", 4,
+			"a ready-capable board (--terminal on status) requires --guard status")
+	}
+	var nonTerminal []string
+	for _, v := range fields["status"] {
+		if !contains(termStatus, v) {
+			nonTerminal = append(nonTerminal, v)
+		}
+	}
+	sort.Strings(nonTerminal)
+	if !stringsEqual(nonTerminal, []string{"in-progress", "open"}) {
+		return out.Errf("bad_value",
+			"declare status's non-terminal vocabulary as exactly open,in-progress — e.g. --field status=open,in-progress,closed --terminal status=closed",
+			4, "a ready-capable board's status field needs non-terminal vocabulary {open, in-progress} exactly; got {%s}",
+			strings.Join(nonTerminal, ", "))
+	}
+	if !contains(multiFields, "labels") {
+		return out.Errf("bad_value", "add --multi-field labels", 4,
+			"a ready-capable board requires a labels multi-field (the human quarantine signal needs it declared)")
+	}
+	if contains(multiFields, "blocked-by") && !contains(guard, "blocked-by") {
+		return out.Errf("bad_value", "add --guard blocked-by", 4,
+			"a ready-capable board declaring blocked-by requires --guard blocked-by")
+	}
+	return nil
+}
+
+func stringsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // firstNotIn returns the first element of vv absent from vocab, and whether

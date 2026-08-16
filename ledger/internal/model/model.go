@@ -25,25 +25,30 @@ type Origin struct {
 }
 
 type Event struct {
-	TS                string            `json:"ts"`
-	Type              string            `json:"type"`
-	Key               string            `json:"key,omitempty"`
-	Fields            map[string]string `json:"fields,omitempty"`
-	Kind              string            `json:"kind,omitempty"`
-	Text              string            `json:"text,omitempty"`
-	Field             string            `json:"field,omitempty"`
-	Value             string            `json:"value,omitempty"`
-	Reason            string            `json:"reason,omitempty"`
-	LifecycleKind     string            `json:"lifecycle_kind,omitempty"`
-	Successor         string            `json:"successor,omitempty"`
-	Evidence          []string          `json:"evidence,omitempty"`
-	Children          []string          `json:"children,omitempty"`
-	Author            string            `json:"author"`
-	Origin            Origin            `json:"origin"`
-	IdempotencyKey    string            `json:"idempotency_key,omitempty"`
-	ImportedFrom      string            `json:"imported_from,omitempty"`
-	ID                string            `json:"-"`
-	CommitterOverride string            `json:"-"`
+	TS             string            `json:"ts"`
+	Type           string            `json:"type"`
+	Key            string            `json:"key,omitempty"`
+	Fields         map[string]string `json:"fields,omitempty"`
+	Kind           string            `json:"kind,omitempty"`
+	Text           string            `json:"text,omitempty"`
+	Field          string            `json:"field,omitempty"`
+	Value          string            `json:"value,omitempty"`
+	Reason         string            `json:"reason,omitempty"`
+	LifecycleKind  string            `json:"lifecycle_kind,omitempty"`
+	Successor      string            `json:"successor,omitempty"`
+	Evidence       []string          `json:"evidence,omitempty"`
+	Children       []string          `json:"children,omitempty"`
+	Author         string            `json:"author"`
+	Origin         Origin            `json:"origin"`
+	IdempotencyKey string            `json:"idempotency_key,omitempty"`
+	ImportedFrom   string            `json:"imported_from,omitempty"`
+	// Override records the comma-joined standing signal names (rule 5: "claim",
+	// "human", "settled") a guarded write overrode to land — computed by the
+	// tool from fresh state at CAS time, never asserted by the caller. Empty
+	// when the write needed no override.
+	Override          string `json:"override,omitempty"`
+	ID                string `json:"-"`
+	CommitterOverride string `json:"-"`
 }
 
 type Meta struct {
@@ -123,8 +128,25 @@ func CaptureOrigin(r gitx.Repo) Origin {
 	return o
 }
 
+// TSLayout is the event timestamp format (rev 14): sub-second resolution,
+// fixed milliseconds, UTC, no zone suffix — needed so staleness math and
+// ready's oldest-first sort don't collapse same-second writes into ties.
+const TSLayout = "2006-01-02T15:04:05.000"
+
+// tsLayoutLegacy is the pre-rev-14 second-resolution layout: readers must
+// parse both (old events on a board keep their original timestamps forever).
+const tsLayoutLegacy = "2006-01-02T15:04:05"
+
+// ParseTS parses an event ts in either layout, new first.
+func ParseTS(ts string) (time.Time, error) {
+	if t, err := time.Parse(TSLayout, ts); err == nil {
+		return t, nil
+	}
+	return time.Parse(tsLayoutLegacy, ts)
+}
+
 func NewEvent(typ, author string, r gitx.Repo) Event {
-	return Event{TS: time.Now().UTC().Format("2006-01-02T15:04:05"), Type: typ,
+	return Event{TS: time.Now().UTC().Format(TSLayout), Type: typ,
 		Author: author, Origin: CaptureOrigin(r)}
 }
 

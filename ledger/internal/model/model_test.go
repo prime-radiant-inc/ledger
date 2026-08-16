@@ -61,7 +61,7 @@ func TestCaptureOriginBranchAndDetached(t *testing.T) {
 
 func TestNewEventShape(t *testing.T) {
 	ev := NewEvent("set", "alice", gitx.Repo{})
-	if ev.Type != "set" || ev.Author != "alice" || len(ev.TS) != 19 { // 2026-08-13T21:00:00
+	if ev.Type != "set" || ev.Author != "alice" || len(ev.TS) != 23 { // 2026-08-13T21:00:00.000 (rev 14: sub-second)
 		t.Fatalf("event: %+v", ev)
 	}
 }
