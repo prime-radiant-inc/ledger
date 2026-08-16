@@ -357,26 +357,41 @@ func init() { register(newShowCmd) }
 
 func newShowCmd(c *Ctx) *cobra.Command {
 	var ledgerFlag string
+	var whereRaw []string
 	cmd := &cobra.Command{Use: "show", Short: "full render: schema, spine, notes", Args: noPositionals("show"),
-		RunE: func(_ *cobra.Command, _ []string) error { return runShow(c, ledgerFlag) }}
+		RunE: func(_ *cobra.Command, _ []string) error { return runShow(c, ledgerFlag, whereRaw) }}
 	cmd.Flags().StringVar(&ledgerFlag, "ledger", "", "target ledger")
+	cmd.Flags().StringArrayVar(&whereRaw, "where", nil, "FIELD=VALUE (exact) or FIELD~=TOKEN (membership); repeatable, AND'd")
 	return cmd
 }
 
-func runShow(c *Ctx, ledgerFlag string) error {
+func runShow(c *Ctx, ledgerFlag string, whereRaw []string) error {
 	led, err := c.PickLedger(ledgerFlag)
+	if err != nil {
+		return err
+	}
+	clauses, err := parseWhere(whereRaw, led.Meta)
 	if err != nil {
 		return err
 	}
 
 	rows := spineRows(led, "")
+	b := board.Build(led.Meta, led.Events)
 	if model.ReadyCapable(led.Meta) {
-		b := board.Build(led.Meta, led.Events)
 		for i := range rows {
 			if k, exists := b.Keys[rows[i].Key]; exists {
 				rows[i].Title = k.Title
 			}
 		}
+	}
+	if len(clauses) > 0 {
+		kept := []row{}
+		for _, r := range rows {
+			if matchWhere(b.Keys[r.Key], clauses) {
+				kept = append(kept, r)
+			}
+		}
+		rows = kept
 	}
 	committers, _ := c.Store.Committers(led.Slug)
 

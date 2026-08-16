@@ -124,7 +124,7 @@ func TestShowTTYNoteSummaryOneLine(t *testing.T) {
 
 	var buf bytes.Buffer
 	c := &Ctx{Store: store.Store{Repo: gitx.Repo{Dir: dir}}, TTY: true, Stdout: &buf, Stderr: &buf}
-	if err := runShow(c, ""); err != nil {
+	if err := runShow(c, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	rendered := buf.String()
