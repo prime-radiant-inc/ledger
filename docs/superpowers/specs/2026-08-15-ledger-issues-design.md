@@ -1,6 +1,17 @@
 # Ledger as issue tracker (design)
 
-2026-08-15, revision 2. Rev 2 folds in the two-worker spike trial
+2026-08-15, revision 3. Rev 3 folds in the second trial
+(`research/ledger-issues-spike-trial2.md`), which validated `--expect`
+(atomic in a 20-round forced-race harness and across a live worker's seven
+claims) and — by accident — ran a mixed-version fleet: two of three workers
+used the PATH binary lacking every new feature and wrote straight past the
+safety rails (one double-work, one zombie-reopen of a closed issue, both
+self-corrected and fully attributable in the chain). New in rev 3:
+reopening a terminal-status key requires `--expect`; board meta gains a
+`min_writer` floor enforced by rev-14+ binaries (forward-only guard,
+honestly limited); doctrine rule that paste-ready command lines carry the
+absolute binary path (proven twice now); kit's detect-correct-report
+sequence canonized as the recovery idiom. Rev 2 folds in the two-worker spike trial
 (`research/ledger-issues-spike-trial.md`): the "claim discipline needs no
 mechanism" bet was falsified live — both workers passed the verify snapshot
 and duplicated work within 90 seconds of board start — so claiming gains a
@@ -135,10 +146,32 @@ in-progress event's author and provenance answer "who has this" with more
 honesty than an assignee box (it names the session that actually claimed
 it, when, from which host). Unclaiming is `status=open -m "yielding: <why>"`.
 
-Doctrine additions from the trial: the stop condition spells out that
+**Rev 3: reopening requires proof of knowledge.** A `set` that moves a key
+FROM a terminal status to a non-terminal one requires `--expect` — trial 2
+produced the exact stale-write this stops (a worker on a 45-second-old read
+silently reopened an issue closed with evidence; a plain set is just a
+valid write, so nothing objected). A deliberate reopen trivially satisfies
+the rule: read the key, pass its id. Same primitive, one more silent-clobber
+class closed.
+
+**Rev 3: `min_writer` floor.** Boards created with rev-14 features record a
+minimum writer version in meta; rev-14+ binaries refuse to write to a board
+above their version (clean error naming the floor). Honest limit: binaries
+predating the mechanism can't be retrofitted and will still write plain
+sets past every rail — trial 2 demonstrated exactly this with a v0.1.0
+writer on a spike board. The floor guards future skew only; fleet-dispatch
+doctrine (same binary for all workers, absolute paths in dictated commands)
+guards the rest.
+
+Doctrine additions from the trials: the stop condition spells out that
 "blocked only on another worker's in-progress key" counts as finished for
 your session (don't poll); `ready`'s oldest-first ordering breaks timestamp
-ties by chain position (deterministic, document it).
+ties by chain position; every paste-ready command line in board doctrine
+carries the absolute binary path (two of three trial-2 workers typed bare
+`ledger` because the command lines did); and the recovery idiom when you
+discover you've clobbered someone's state: read the key's history, correct
+with an evidenced write naming what happened, report it — never quietly
+re-fix.
 
 ## Board doctrine (the skill sketch, `using-ledger` addition or sibling)
 
