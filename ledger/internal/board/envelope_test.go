@@ -3,7 +3,6 @@ package board
 import (
 	"fmt"
 	"reflect"
-	"sort"
 	"testing"
 	"time"
 
@@ -224,6 +223,41 @@ func TestEnvelopeBlockedEntryShape(t *testing.T) {
 	}
 }
 
+// TestEnvelopeHeldHumanWithUnresolvedEdgesNeverBlocked: a human-labeled,
+// non-terminal key with its OWN unresolved blocked-by edges is a distinct
+// spec-named case from the human+claimed (no edges) composite tested above
+// — the label still excludes it from blocked (quarantine is mechanism), and
+// held must carry its waiting_on exactly like a claim's claimed-but-blocked
+// case does. Unclaimed here (status=open) since the claimed+edges
+// combination is already implied by the same allEdgesTerminal/waitingOnList
+// code path the claim test exercises directly.
+func TestEnvelopeHeldHumanWithUnresolvedEdgesNeverBlocked(t *testing.T) {
+	evs := []model.Event{
+		setEv("d1", "dep-y", "status", "open", nil),
+		setEv("h1", "sign-off2", "status", "open", func(e *model.Event) {
+			e.Text = "needs sign-off, has a dependency"
+			e.Author = "alice"
+			e.TS = "2026-08-16T09:00:00.000"
+		}),
+		setEv("h2", "sign-off2", "labels", "human", nil),
+		setEv("h3", "sign-off2", "blocked-by", "dep-y", nil),
+	}
+	b := Build(envelopeMeta(), evs)
+	env := b.Envelope(envNow, 50, allowAll)
+	if len(env.Held) != 1 {
+		t.Fatalf("expected 1 held entry, got %+v", env.Held)
+	}
+	want := HeldEntry{Key: "sign-off2", Title: "needs sign-off, has a dependency", Kind: "human",
+		Status: "open", By: "alice", TS: "2026-08-16T09:00:00.000", ID: "h1",
+		WaitingOn: []WaitingOn{{Key: "dep-y", State: "open"}}}
+	if !reflect.DeepEqual(env.Held[0], want) {
+		t.Fatalf("held human-with-unresolved-edges entry:\n got  %+v\n want %+v", env.Held[0], want)
+	}
+	if len(env.Blocked) != 0 {
+		t.Fatalf("a human-labeled key must never appear in blocked, even with unresolved edges: %+v", env.Blocked)
+	}
+}
+
 // TestEnvelopeBlockedWaitingOnAllStates: every waiting_on state the spec
 // enumerates, on one blocked key with six blockers — terminal wins over
 // everything (including a human+claimed blocker, the accepted flattening),
@@ -269,6 +303,31 @@ func TestEnvelopeBlockedWaitingOnAllStates(t *testing.T) {
 	}
 }
 
+// TestEnvelopeBlockedSortKeyAscending: blocked sorts key-ascending — three
+// entries seeded in a deliberately non-alphabetical, non-map-iteration-safe
+// order, asserted against the envelope's actual returned order (no
+// re-sorting the result before comparing).
+func TestEnvelopeBlockedSortKeyAscending(t *testing.T) {
+	evs := []model.Event{
+		setEv("z1", "zebra-blocked", "status", "open", func(e *model.Event) { e.Text = "z" }),
+		setEv("z2", "zebra-blocked", "blocked-by", "some-dep", nil),
+		setEv("a1", "alpha-blocked", "status", "open", func(e *model.Event) { e.Text = "a" }),
+		setEv("a2", "alpha-blocked", "blocked-by", "some-dep", nil),
+		setEv("m1", "mid-blocked", "status", "open", func(e *model.Event) { e.Text = "m" }),
+		setEv("m2", "mid-blocked", "blocked-by", "some-dep", nil),
+	}
+	b := Build(envelopeMeta(), evs)
+	env := b.Envelope(envNow, 50, allowAll)
+	got := make([]string, 0, len(env.Blocked))
+	for _, e := range env.Blocked {
+		got = append(got, e.Key)
+	}
+	want := []string{"alpha-blocked", "mid-blocked", "zebra-blocked"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("blocked sort key-ascending: got %v want %v", got, want)
+	}
+}
+
 // TestEnvelopeAttentionStaleClaimIncludesHumanLabeled: stale-claim fires
 // for both a plain claim and a human-labeled one — placement in attention
 // does not carve out human keys (only the frontier verdict does).
@@ -298,10 +357,12 @@ func TestEnvelopeAttentionStaleClaimIncludesHumanLabeled(t *testing.T) {
 			got = append(got, a.Key)
 		}
 	}
-	sort.Strings(got)
+	// Order asserted as-returned (no sorting here) — attention sorts
+	// key-ascending, and "human-stale" < "orphaned-task" lexically, so this
+	// also exercises that ordering, not just membership.
 	want := []string{"human-stale", "orphaned-task"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("stale-claim attention keys: got %v want %v", got, want)
+		t.Fatalf("stale-claim attention keys (order matters): got %v want %v", got, want)
 	}
 	for _, a := range env.Attention {
 		if a.Key == "orphaned-task" {
@@ -334,10 +395,11 @@ func TestEnvelopeAttentionStatuslessHalfSeedAndOrphan(t *testing.T) {
 			got = append(got, a.Key)
 		}
 	}
-	sort.Strings(got)
+	// Order asserted as-returned (no sorting here): "ghost-dep" <
+	// "half-seeded" lexically, matching attention's key-ascending sort.
 	want := []string{"ghost-dep", "half-seeded"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("statusless attention keys: got %v want %v", got, want)
+		t.Fatalf("statusless attention keys (order matters): got %v want %v", got, want)
 	}
 	for _, a := range env.Attention {
 		if a.Reason == "statusless" && a.Title != "" {
@@ -458,9 +520,13 @@ func TestEnvelopeReadySortOldestFirstChainPositionTie(t *testing.T) {
 	}
 }
 
-// TestEnvelopeOtherListsSortKeyAscending: held (and, by the same code
-// path, blocked/attention) sorts key-ascending, not insertion order.
-func TestEnvelopeOtherListsSortKeyAscending(t *testing.T) {
+// TestEnvelopeHeldSortKeyAscending: held sorts key-ascending, not insertion
+// order. blocked's own ordering is covered separately by
+// TestEnvelopeBlockedSortKeyAscending, and attention's by the order
+// assertions in the stale-claim/statusless tests above — held/blocked/
+// attention share one sort call each in Envelope, but that's an
+// implementation detail this test doesn't get to lean on.
+func TestEnvelopeHeldSortKeyAscending(t *testing.T) {
 	evs := []model.Event{
 		setEv("c1", "zebra-task", "status", "in-progress", nil),
 		setEv("c2", "alpha-task", "status", "in-progress", nil),

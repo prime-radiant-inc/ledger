@@ -1,9 +1,13 @@
 package cmd
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 	"time"
+
+	"ledger/internal/gitx"
+	"ledger/internal/store"
 )
 
 // seedReadyEnvelope builds a ready-capable board (setupReady's shape, no
@@ -218,5 +222,47 @@ func TestReadyAttentionStaleClaimAndFrontier(t *testing.T) {
 	staleClaim := entryByKey(attention, "orphaned-task")
 	if staleClaim["reason"] != "stale-claim" || staleClaim["title"] != "orphaned task" || staleClaim["by"] != "dead-worker" {
 		t.Fatalf("orphaned-task attention entry: %+v", staleClaim)
+	}
+}
+
+// TestReadyTTYRendersListsAndStaleFlag: readyLines' TTY rendering, bypassing
+// run() (which never sets TTY, per TestShowTTYNoteSummaryOneLine's own
+// established pattern) to invoke runReady directly with an explicit TTY
+// Ctx. Covers a ready entry, a held claim with stale:true, and both
+// attention reasons this task implements (stale-claim, statusless) — cycle
+// isn't implemented yet (Task 11), so it's not exercised here.
+func TestReadyTTYRendersListsAndStaleFlag(t *testing.T) {
+	dir := setupReadyStale(t, "10ms")
+	run(t, dir, "set", "fix-retry", "status=open", "--expect", "none", "-m", "fix the retry loop", "--as", "alice")
+
+	so, _, code := run(t, dir, "set", "big-task", "status=open", "--expect", "none", "-m", "big task title", "--as", "seeder")
+	if code != 0 {
+		t.Fatal(so)
+	}
+	run(t, dir, "set", "big-task", "status=in-progress", "--expect", mustEventID(t, dir, "big-task"), "-m", "claiming", "--as", "worker-2")
+
+	run(t, dir, "set", "half-seeded", "labels=urgent", "--as", "a")
+
+	time.Sleep(30 * time.Millisecond) // ages big-task's claim past the 10ms horizon
+
+	var buf bytes.Buffer
+	c := &Ctx{Store: store.Store{Repo: gitx.Repo{Dir: dir}}, TTY: true, Stdout: &buf, Stderr: &buf}
+	if err := runReady(c, "", nil, 50); err != nil {
+		t.Fatal(err)
+	}
+	rendered := buf.String()
+
+	if !strings.Contains(rendered, "ready") || !strings.Contains(rendered, "fix-retry") || !strings.Contains(rendered, `"fix the retry loop"`) {
+		t.Fatalf("TTY output must render the ready entry (key + title): %q", rendered)
+	}
+	if !strings.Contains(rendered, "held") || !strings.Contains(rendered, "big-task") ||
+		!strings.Contains(rendered, "claim") || !strings.Contains(rendered, "stale=true") {
+		t.Fatalf("TTY output must render the held claim with stale=true: %q", rendered)
+	}
+	if !strings.Contains(rendered, "attn") || !strings.Contains(rendered, "stale-claim") || !strings.Contains(rendered, "big-task") {
+		t.Fatalf("TTY output must render a stale-claim attention line: %q", rendered)
+	}
+	if !strings.Contains(rendered, "statusless") || !strings.Contains(rendered, "half-seeded") {
+		t.Fatalf("TTY output must render a statusless attention line: %q", rendered)
 	}
 }
