@@ -1,0 +1,222 @@
+package cmd
+
+import (
+	"strings"
+	"testing"
+	"time"
+)
+
+// seedReadyEnvelope builds a ready-capable board (setupReady's shape, no
+// --stale-after — nothing in it must ever go stale) mirroring the spec's
+// own pinned `ready` example: one entry for each list, plus the statusless
+// attention reason.
+//
+//   - spike-probe: status=wontfix, no evidence — fix-retry's blocker.
+//   - fix-retry:   status=open, blocked-by=spike-probe → ready, annotated
+//     unblocked_without_evidence (spike-probe's terminal event has none).
+//   - dep-x:       status=open, no edges → also ready (an unblocked leaf).
+//   - sign-off:    labels=human, status=open, unclaimed → held/human.
+//   - big-task:    status=in-progress (claim by worker-2), blocked-by=dep-x
+//     → held/claim, claimed-but-blocked, waiting_on=[{dep-x, open}].
+//   - deploy:      status=open, blocked-by=sign-off (human, non-terminal)
+//     → blocked, waiting_on=[{sign-off, human}].
+//   - half-seeded: touched only via labels, no status write → attention/
+//     statusless.
+//
+// Staleness (attention/stale-claim, and the frontier's stale-driven
+// work-available arm) is exercised separately by
+// TestReadyAttentionStaleClaimAndFrontier — real wall-clock timing doesn't
+// mix well with this board's several-seconds-to-seed CLI setup, so keeping
+// it in its own minimal board avoids every claim here going stale by the
+// time `ready` finally runs.
+func seedReadyEnvelope(t *testing.T) string {
+	dir := setupReady(t)
+	run(t, dir, "set", "spike-probe", "status=wontfix", "--expect", "none", "-m", "not doing it", "--as", "a")
+
+	run(t, dir, "set", "fix-retry", "blocked-by=spike-probe", "--expect", "none", "--as", "a")
+	run(t, dir, "set", "fix-retry", "status=open", "--expect", "none", "-m", "fix the retry loop", "--as", "a")
+
+	run(t, dir, "set", "dep-x", "status=open", "--expect", "none", "-m", "a dependency", "--as", "a")
+
+	run(t, dir, "set", "sign-off", "labels=human", "--as", "a")
+	run(t, dir, "set", "sign-off", "status=open", "--expect", "none", "--override", "-m", "needs a human sign-off", "--as", "a")
+
+	run(t, dir, "set", "big-task", "blocked-by=dep-x", "--expect", "none", "--as", "a")
+	so, _, code := run(t, dir, "set", "big-task", "status=open", "--expect", "none", "-m", "big task title", "--as", "seeder")
+	if code != 0 {
+		t.Fatal(so)
+	}
+	run(t, dir, "set", "big-task", "status=in-progress", "--expect", mustEventID(t, dir, "big-task"), "-m", "claiming", "--as", "worker-2")
+
+	run(t, dir, "set", "deploy", "blocked-by=sign-off", "--expect", "none", "--as", "a")
+	run(t, dir, "set", "deploy", "status=open", "--expect", "none", "-m", "ship it", "--as", "a")
+
+	run(t, dir, "set", "half-seeded", "labels=urgent", "--as", "a")
+	return dir
+}
+
+// entryByKey finds the entry whose "key" field matches k inside a list
+// decoded from ready's JSON payload.
+func entryByKey(list []any, k string) map[string]any {
+	for _, e := range list {
+		m := e.(map[string]any)
+		if m["key"] == k {
+			return m
+		}
+	}
+	return nil
+}
+
+// keysOf collects every "key" field from a decoded list.
+func keysOf(list []any) []string {
+	ks := make([]string, 0, len(list))
+	for _, e := range list {
+		ks = append(ks, e.(map[string]any)["key"].(string))
+	}
+	return ks
+}
+
+// TestReadyEnvelopeMembersAndTitles: the full envelope shape against the
+// trial-shaped board — every list's membership, titles, and the annotation/
+// waiting_on fields the spec's pinned example illustrates.
+func TestReadyEnvelopeMembersAndTitles(t *testing.T) {
+	dir := seedReadyEnvelope(t)
+	so, se, code := run(t, dir, "ready")
+	if code != 0 {
+		t.Fatalf("ready: %d %s", code, se)
+	}
+	doc := mustJSON(t, so)
+
+	if doc["ledger"] != "issues" {
+		t.Fatalf("ledger: got %v", doc["ledger"])
+	}
+	if doc["ok"] != true {
+		t.Fatalf("ok: got %v", doc["ok"])
+	}
+	if doc["frontier"] != "work-available" {
+		t.Fatalf("frontier: got %v (non-empty ready must drive work-available)", doc["frontier"])
+	}
+
+	ready := doc["ready"].([]any)
+	if got := keysOf(ready); len(got) != 2 || !contains2(got, "fix-retry") || !contains2(got, "dep-x") {
+		t.Fatalf("ready members: got %v want [fix-retry dep-x]", got)
+	}
+	fr := entryByKey(ready, "fix-retry")
+	if fr["title"] != "fix the retry loop" {
+		t.Fatalf("fix-retry title: got %v", fr["title"])
+	}
+	uwe := fr["unblocked_without_evidence"].([]any)
+	if len(uwe) != 1 || uwe[0] != "spike-probe" {
+		t.Fatalf("fix-retry unblocked_without_evidence: got %v", uwe)
+	}
+
+	held := doc["held"].([]any)
+	if got := keysOf(held); len(got) != 2 || !contains2(got, "big-task") || !contains2(got, "sign-off") {
+		t.Fatalf("held members: got %v want [big-task sign-off]", got)
+	}
+	bt := entryByKey(held, "big-task")
+	if bt["title"] != "big task title" || bt["kind"] != "claim" || bt["by"] != "worker-2" {
+		t.Fatalf("big-task held entry: %+v", bt)
+	}
+	btWO := bt["waiting_on"].([]any)[0].(map[string]any)
+	if btWO["key"] != "dep-x" || btWO["state"] != "open" {
+		t.Fatalf("big-task waiting_on: %v", bt["waiting_on"])
+	}
+	so2 := entryByKey(held, "sign-off")
+	if so2["title"] != "needs a human sign-off" || so2["kind"] != "human" || so2["status"] != "open" {
+		t.Fatalf("sign-off held entry: %+v", so2)
+	}
+
+	blocked := doc["blocked"].([]any)
+	if got := keysOf(blocked); len(got) != 1 || got[0] != "deploy" {
+		t.Fatalf("blocked members: got %v want [deploy]", got)
+	}
+	dep := entryByKey(blocked, "deploy")
+	if dep["title"] != "ship it" {
+		t.Fatalf("deploy title: got %v", dep["title"])
+	}
+	depWO := dep["waiting_on"].([]any)[0].(map[string]any)
+	if depWO["key"] != "sign-off" || depWO["state"] != "human" {
+		t.Fatalf("deploy waiting_on: %v", dep["waiting_on"])
+	}
+
+	attention := doc["attention"].([]any)
+	statusless := entryByKey(attention, "half-seeded")
+	if statusless["reason"] != "statusless" {
+		t.Fatalf("half-seeded attention entry: %+v", statusless)
+	}
+	if _, hasTitle := statusless["title"]; hasTitle {
+		t.Fatalf("statusless entry must not carry a title: %+v", statusless)
+	}
+
+	totals := doc["totals"].(map[string]any)
+	if totals["ready"] != float64(2) || totals["held"] != float64(2) ||
+		totals["blocked"] != float64(1) || totals["attention"] != float64(1) {
+		t.Fatalf("totals: %+v", totals)
+	}
+}
+
+// TestReadyWhereFilterLegitimatelyEmptiesAllLists: --where status=closed
+// matches none of the seeded keys (none is closed) — every list empties,
+// exit 0, no error. Mirrors the spec's own example clause.
+func TestReadyWhereFilterLegitimatelyEmptiesAllLists(t *testing.T) {
+	dir := seedReadyEnvelope(t)
+	so, se, code := run(t, dir, "ready", "--where", "status=closed")
+	if code != 0 {
+		t.Fatalf("a filtering --where must not error: %d %s", code, se)
+	}
+	doc := mustJSON(t, so)
+	for _, list := range []string{"ready", "held", "blocked", "attention"} {
+		if got := doc[list].([]any); len(got) != 0 {
+			t.Fatalf("%s must be legitimately empty under --where status=closed, got %v", list, got)
+		}
+	}
+}
+
+// TestReadyOnNonReadyCapableBoardBadUsage: a plain (non-ready-capable)
+// board's `ready` is bad_usage, with the create-time fix in the hint.
+func TestReadyOnNonReadyCapableBoardBadUsage(t *testing.T) {
+	dir := setupPlainGuarded(t)
+	_, se, code := run(t, dir, "ready")
+	if code != 4 {
+		t.Fatalf("%d %s", code, se)
+	}
+	doc := mustJSON(t, se)
+	if doc["error"] != "bad_usage" {
+		t.Fatalf("error: got %v", doc["error"])
+	}
+	hint := doc["hint"].(string)
+	if !strings.Contains(hint, "create time") || !strings.Contains(hint, "--terminal") || !strings.Contains(hint, "--guard status") {
+		t.Fatalf("hint must name the create-time fix: %q", hint)
+	}
+}
+
+// TestReadyAttentionStaleClaimAndFrontier: a single stale claim, in its own
+// minimal board so the tight --stale-after horizon can't be crossed by
+// anything but the deliberate sleep — proves staleness flows end-to-end
+// through the real wall clock (board.Envelope's board-level tests already
+// cover the classification logic against an injected `now`). A stale claim
+// on a non-human key also drives frontier to work-available (reclaimable).
+func TestReadyAttentionStaleClaimAndFrontier(t *testing.T) {
+	dir := setupReadyStale(t, "10ms")
+	so, _, code := run(t, dir, "set", "orphaned-task", "status=open", "--expect", "none", "-m", "orphaned task", "--as", "seeder")
+	if code != 0 {
+		t.Fatal(so)
+	}
+	run(t, dir, "set", "orphaned-task", "status=in-progress", "--expect", mustEventID(t, dir, "orphaned-task"), "-m", "claiming", "--as", "dead-worker")
+	time.Sleep(30 * time.Millisecond) // ages the claim past the 10ms horizon
+
+	so2, se, code := run(t, dir, "ready")
+	if code != 0 {
+		t.Fatalf("ready: %d %s", code, se)
+	}
+	doc := mustJSON(t, so2)
+	if doc["frontier"] != "work-available" {
+		t.Fatalf("a stale claim on a non-human key must drive work-available, got %v", doc["frontier"])
+	}
+	attention := doc["attention"].([]any)
+	staleClaim := entryByKey(attention, "orphaned-task")
+	if staleClaim["reason"] != "stale-claim" || staleClaim["title"] != "orphaned task" || staleClaim["by"] != "dead-worker" {
+		t.Fatalf("orphaned-task attention entry: %+v", staleClaim)
+	}
+}

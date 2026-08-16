@@ -47,6 +47,13 @@ type Key struct {
 	// a key has no such write. Exists so show --where can filter on any
 	// declared enum field, not just the three the board hard-codes.
 	Fields map[string]*FieldState
+	// statusSeq is the current Status event's position in Build's input
+	// events slice — the ledger's true chain order. IDs are content-
+	// addressed hashes with no inherent ordering, so this is the only way
+	// to break a same-timestamp tie deterministically. Unexported: only
+	// Envelope's ready-list sort (spec "chain-position ties") needs it,
+	// and it means nothing outside a single Build() call.
+	statusSeq int
 }
 
 // Board is the whole derived board: declarations plus every key's state.
@@ -61,7 +68,7 @@ type Board struct {
 // status-setting event and never revisited by later status writes.
 func Build(meta model.Meta, events []model.Event) *Board {
 	b := &Board{Meta: meta, Keys: map[string]*Key{}}
-	for _, ev := range events {
+	for i, ev := range events {
 		if ev.Type != "set" || ev.Key == "" {
 			continue
 		}
@@ -80,6 +87,7 @@ func Build(meta model.Meta, events []model.Event) *Board {
 					Value: value, ID: ev.ID, Author: ev.Author, TS: ev.TS,
 					Note: ev.Text, Evidence: ev.Evidence,
 				}
+				k.statusSeq = i
 			case "labels":
 				k.Labels = splitTokens(value)
 				k.LabelsID = ev.ID
