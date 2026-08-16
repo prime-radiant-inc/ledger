@@ -268,7 +268,7 @@ Contents:
   the human). The pre-compaction audit therefore stays doctrine (below), and
   the post-compact reminder is the honest mechanical approximation.
 - **PreToolUse guard**: denies raw `ledger` *write* verbs (`set`, `note`,
-  `vocab`, `close`, `rollup`, `import`) aimed at the memory store, with a
+  `vocab`, `close`, `rollup`, `import`, `create`) aimed at the memory store, with a
   redirect to the wrapper — "the only write path" becomes enforcement, not
   documentation. Reads (`show`, `notes`, `tail`, `status`) pass freely; drill
   is supposed to be raw.
