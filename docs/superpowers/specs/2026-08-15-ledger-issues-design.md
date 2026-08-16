@@ -1,7 +1,7 @@
 # Ledger as issue tracker (design)
 
-2026-08-16, revision 15 — the rethink (rev 12) hardened by three blind
-adversarial rounds (the seventh through ninth). Eleven revisions, three spikes,
+2026-08-16, revision 16 — the rethink (rev 12) hardened by four blind
+adversarial rounds (the seventh through tenth). Eleven revisions, three spikes,
 three chain-audited field trials, and six adversarial rounds (twelve
 reviewers) validated the core mechanics and repeatedly punished the same
 three composition mistakes: protection built by enumerating cases instead
@@ -94,13 +94,20 @@ blocked is derived state.
 **Titles** (ready-capable boards only — plain boards keep the parent
 spec's `set` semantics): a key's title is the message of its first
 status event, computed from history rather than stored, immutable,
-carried by every read surface. The first status write REQUIRES a
+carried by every `ready`/`held`/`blocked` entry, every `show` row, and
+`attention`'s stale-claim entries — structurally absent only where no
+single titled key exists (`statusless` entries precede any status
+event; `cycle` entries name several keys). The first status write
+REQUIRES a
 non-empty `-m` after trimming (`empty_body`, exit 4, hint naming it as
 the title).
 
 **Export/import round-trips meta byte-for-byte except `slug`**, which a
 same-store import necessarily re-mints (import refuses an existing
-slug); import never re-derives declarations. An exported-then-imported
+slug); import never re-derives declarations, but it RE-VALIDATES them —
+the same ready-capability shape checks create runs, same `bad_value`
+errors — because import is a second meta-minting path and "no repair
+path" makes every minting path load-bearing. An exported-then-imported
 board's `ready` output is identical except event `id`s and the
 envelope's `ledger` name; importing into a fresh store under the
 original slug is identical except `id`s alone.
@@ -126,13 +133,17 @@ the single interference gate that replaced three enumerated ones.
    invalidate it; notes never invalidate it. Mismatch → `claim_lost`,
    exit 4; the message names the winning event's id, author, and the
    exact value it wrote to this field (tested format — a trial shipped a
-   malformed one); hints: status → "re-run ledger ready and pick again"
-   — EXCEPT when the attempted write's value is terminal, where it is
-   "you were reclaimed while working — leave a handoff note; never
-   re-close blind" (the Close idiom's doctrine, produced by the tool
-   itself, since a field-only hint would tell a failed closer to abandon
-   finished work); blocked-by → "re-read the key's edges and merge";
-   any other guarded field → "re-read '<field>' and try again".
+   malformed one); hints, dispatched by board capability first and
+   field second (a plain board must never be told to run a verb that is
+   `bad_usage` for it): on ready-capable boards, status → "re-run
+   ledger ready and pick again" — EXCEPT when the attempted write's
+   value is terminal, where it is "you were reclaimed while working —
+   leave a handoff note; never re-close blind" (the Close idiom's
+   doctrine, produced by the tool itself, since a field-only hint would
+   tell a failed closer to abandon finished work) — and blocked-by →
+   "re-read the key's edges and merge"; every other case, including
+   EVERY guarded field on a plain board whatever its name, → "re-read
+   '<field>' and try again".
 4. `--expect none`: succeeds only if the field has no prior event on this
    key. Racing first writes serialize to one winner; the loser's hint on
    a status seed is "this key already exists — read it; if yours is a
@@ -200,7 +211,11 @@ the single interference gate that replaced three enumerated ones.
    spec's only batched read is the one-shot whole-chain fold, so the
    backward windowed walk that meets this bound is rev-14
    implementation work validated by the measured test, not an inherited
-   primitive.
+   primitive. An edge write's `blocked-by` existence checks resolve
+   from the same single walk (a key exists once any event names it) —
+   with the honest asymmetry that proving a token NONEXISTENT requires
+   reaching the chain root, so the `unknown_key` rejection path is the
+   walk's degenerate case, stated and measured with the rest.
    Honest worst case: a long-untouched key degrades toward a full scan;
    the bound test measures the common case and states the degenerate one.
    "Reuse" of reads is within-attempt only; cross-attempt caching is the
@@ -306,10 +321,10 @@ regardless, and doctrine makes any non-zero `totals.attention` a triage
 cue in its own right, never gated on the verdict. `ready` sorts oldest
 first with chain-position ties; the other lists sort by key ascending
 (stable doc-harness output). Extra `--where` clauses apply uniformly to
-all lists; a clause contradicting `ready`'s own `status=open` is
-`bad_usage`; beyond that, `--where` is for fields orthogonal to list
-membership — a filter may legitimately empty `held` or `attention`
-(a claim is never `status=open`), which is filtering, not an error.
+all lists, each clause composing with each list's own membership rule —
+no special cases: a clause may legitimately empty any list or every
+list (`status=closed` empties all four, a claim is never `status=open`),
+which is filtering, not an error.
 `ready` joins rev 13's data-verb taxonomy (`--ledger`
 addressing, standard envelope, exit codes). **Performance**: `ready` is
 the loop's hottest read; implementation acceptance is pinned now, not
@@ -326,7 +341,10 @@ non-surfacing and doctrine.
 
 All are the same guarded write; every idiom line in the shipped skill
 carries the absolute binary path (trial-proven: two of three workers once
-typed bare `ledger` because the doctrine's lines did).
+typed bare `ledger` because the doctrine's lines did). On a
+human-labeled key, EVERY guarded write below — touch-base and close
+included, not just the idioms that spell it out — carries
+`--override -m` per rule 5; the variant isn't repeated per idiom.
 
 - **Seed**: `set <key> status=open --expect none -m "<title>"`. With
   dependencies, **edges first**: `set <key> blocked-by=<k1>,<k2>
@@ -492,7 +510,8 @@ semantics) is historical evidence, never merged.
    restored exactly; human-labeled stranger variant needs `--override`).
 3. Title enforcement: first status write with missing or whitespace `-m`
    → `empty_body`; titles survive claim/close/revision; present on every
-   list entry and `show` row.
+   `ready`/`held`/`blocked` entry, `show` row, and stale-claim attention
+   entry; structurally absent on statusless and cycle entries.
 4. Field-scoping: label writes racing status claims never produce
    `claim_lost` (harness, 10/10); notes never invalidate `--expect`;
    label edits carrying the optional `--expect` serialize (one
@@ -501,7 +520,9 @@ semantics) is historical evidence, never merged.
 5. First-edge race under `--expect none` (harness, 10/10).
 6. `claim_lost` format: id, author, exact value, per-field hints —
    including the reclaim path, the terminal-value (failed-close) hint,
-   the edge-seed collision hint, and the generic-field fallback hint.
+   the edge-seed collision hint, and the generic-field fallback hint;
+   a plain board's guarded `status` or `blocked-by` field gets the
+   generic hint, never the ready-capable advice.
 7. Rule 5 signals, each in isolation and composed (mandatory before the
    validation claim covers them): live cross-author claim →
    `needs_override` naming claimant and age; stale claim → no signal,
@@ -543,15 +564,21 @@ semantics) is historical evidence, never merged.
     chain-position ties; others key-ascending).
 11. `show --where`: `unknown_field`, `~=` on enum → `bad_usage`,
     same-field double `=` → `bad_usage`, AND composition, uniform
-    application across `ready`'s lists.
+    application across `ready`'s lists — including `--where
+    status=in-progress` and `status=closed` composing per-list (lists
+    empty legitimately, no error).
 12. `unblocked_without_evidence`: fires on evidence-free terminal
     blockers regardless of vocab value; not on evidenced ones.
 13. Key grammar on ready-capable boards: non-kebab key rejected at first
-    write with the edge-referenceability message.
+    write with the edge-referenceability message; a `blocked-by` write
+    naming a nonexistent token → `unknown_key` naming it (the
+    existence-check degenerate case measured under item 16).
 14. Declaration validation: `--terminal`/`--require-evidence` subset
     checks; `--stale-after` parse; export/import meta round-trip with
     identical `ready` output modulo re-minted `id`s and, on same-store
-    import, the re-minted `slug`/envelope `ledger` name.
+    import, the re-minted `slug`/envelope `ledger` name; import
+    re-validates the ready-capability shape (a hand-broken export
+    missing `--guard status` → `bad_value`, never a minted board).
 15. Timestamps: fixed-millisecond UTC on new events; old events parse;
     staleness math across mixed precision; sub-second `--stale-after`
     behaves.
@@ -578,7 +605,10 @@ semantics) is historical evidence, never merged.
   proven; produced the human quarantine and the settled-outcome
   protection.
 - **Harnesses**: `research/scripts/expect-race-harness.sh` (status races,
-  20/20, independently re-run); the spike's extended harness (first-edge
+  20/20 — a round-10 reviewer caught its `create` line predating the
+  ready-capable shape, so the citation validated an older ruleset; the
+  harness now declares the full shape, seeds via `--expect none`, and
+  reproduced 20/20 on re-run); the spike's extended harness (first-edge
   and interleaved-triage rounds, 30/30). Rule 5's signal gate postdates
   both — its rounds are test-plan item 7, mandatory.
 - **Adversarial reviews**: six rounds, twelve reviewers — two rounds run
@@ -618,6 +648,17 @@ semantics) is historical evidence, never merged.
   hint told a failed closer to abandon finished work, contradicting the
   Close idiom; `held`'s human entries never said whether they carry
   `waiting_on`. All folded as rev 15.
+  A tenth round, also blind, against rev 15 — third straight with no
+  Critical: the hint matrix dispatched ready-capable advice on plain
+  boards (interaction with rev 15's own scoping fix); the race
+  harness's `create` line was illegal under the rules it validates
+  (fixed, re-run, 20/20); import was a second meta-minting path with no
+  shape validation (now re-validates); `blocked-by` existence checks
+  had no cost model or `unknown_key` test; the `--where`-vs-`status`
+  special case was incoherent (dropped for uniform per-list
+  composition); titles overclaimed for statusless/cycle attention
+  entries; touch-base/close idioms omitted their human-label override
+  variants. All folded as rev 16.
 - **Kata reconnaissance**: `~/git/kata` — two-status minimalism, labels,
   triage doctrine, open-by-default lists; what we took and declined is in
   Deferred.

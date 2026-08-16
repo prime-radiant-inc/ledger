@@ -7,7 +7,10 @@
 #   research/scripts/expect-race-harness.sh <ledger-binary> [rounds=20]
 #
 # Output: per-round verdicts and a final tally. Referenced by the issues spec
-# (rev 4) as the citation for the --expect atomicity claim.
+# as the citation for the --expect atomicity claim. The board carries the
+# spec's full ready-capable shape (--guard status/blocked-by, labels) and
+# seeds via --expect none, so the harness itself is legal under the rules
+# it validates.
 set -euo pipefail
 L="${1:?usage: expect-race-harness.sh <ledger-binary> [rounds]}"
 ROUNDS="${2:-20}"
@@ -18,12 +21,13 @@ cd "$dir"
 "$L" init >/dev/null
 "$L" create race --scope "expect race harness" \
     --field status=open,in-progress,closed --terminal status=closed \
-    --multi-field blocked-by --as harness >/dev/null
+    --multi-field labels --multi-field blocked-by \
+    --guard status --guard blocked-by --as harness >/dev/null
 
 bad=0
 for i in $(seq 1 "$ROUNDS"); do
     key="k$i"
-    seed=$("$L" set "$key" status=open -m seed --as harness | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+    seed=$("$L" set "$key" status=open --expect none -m seed --as harness | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
     "$L" set "$key" status=in-progress --expect "$seed" -m claim --as w1 >"$dir/o1" 2>&1 &
     p1=$!
     "$L" set "$key" status=in-progress --expect "$seed" -m claim --as w2 >"$dir/o2" 2>&1 &
