@@ -544,6 +544,178 @@ func TestEnvelopeHeldSortKeyAscending(t *testing.T) {
 	}
 }
 
+// --- Task 11: frontier verdict with the correct DFS (spec rule 9) ---
+//
+// TestEnvelopeFrontierWorkAvailableFromReady/FromStaleNonHumanClaim and
+// TestEnvelopeFrontierAttentionNeededOnStaleHumanClaimOnly above already
+// cover two of the required table's eight rows (non-empty ready; stale
+// non-human claim only; stale HUMAN claim only). The tests below cover the
+// remaining rows: linear chain all-live, diamond behind one open key, a
+// true 2-cycle, a statusless reference, a closed human blocker resolving
+// its dependents, and full-board computation under both --limit and a
+// --where-style filter.
+
+// TestEnvelopeFrontierLinearChainAllLiveAllHandled: C blocked-by B blocked-by
+// A, A a live (non-stale) claim — no ready, no attention, no cycle. The
+// chain terminates in a live claim, so all-handled.
+func TestEnvelopeFrontierLinearChainAllLiveAllHandled(t *testing.T) {
+	evs := []model.Event{
+		setEv("a1", "a", "status", "in-progress", func(e *model.Event) { e.Author = "worker"; e.TS = "2026-08-16T11:00:00.000" }),
+		setEv("b1", "b", "status", "open", func(e *model.Event) { e.Text = "b" }),
+		setEv("b2", "b", "blocked-by", "a", nil),
+		setEv("c1", "c", "status", "open", func(e *model.Event) { e.Text = "c" }),
+		setEv("c2", "c", "blocked-by", "b", nil),
+	}
+	b := Build(envelopeMeta(), evs)
+	env := b.Envelope(envNow, 50, allowAll)
+	if env.Frontier != "all-handled" {
+		t.Fatalf("linear chain terminating in a live claim must be all-handled, got %q (attention=%+v)", env.Frontier, env.Attention)
+	}
+}
+
+// TestEnvelopeFrontierDiamondBehindOneOpenKeyWorkAvailable: b and c both
+// depend on d (a diamond, not a cycle — d is reached via two paths but never
+// via itself); d itself has no edges, so it's ready. The DFS must never
+// false-flag the diamond as a cycle.
+func TestEnvelopeFrontierDiamondBehindOneOpenKeyWorkAvailable(t *testing.T) {
+	evs := []model.Event{
+		setEv("d1", "d", "status", "open", func(e *model.Event) { e.Text = "d" }),
+		setEv("b1", "b", "status", "open", func(e *model.Event) { e.Text = "b" }),
+		setEv("b2", "b", "blocked-by", "d", nil),
+		setEv("c1", "c", "status", "open", func(e *model.Event) { e.Text = "c" }),
+		setEv("c2", "c", "blocked-by", "d", nil),
+		setEv("a1", "a", "status", "open", func(e *model.Event) { e.Text = "a" }),
+		setEv("a2", "a", "blocked-by", "b,c", nil),
+	}
+	b := Build(envelopeMeta(), evs)
+	env := b.Envelope(envNow, 50, allowAll)
+	if env.Frontier != "work-available" {
+		t.Fatalf("d ready via the diamond must drive work-available, got %q", env.Frontier)
+	}
+	for _, a := range env.Attention {
+		if a.Reason == "cycle" {
+			t.Fatalf("a diamond (shared dependency reached via two paths) must never be flagged a cycle: %+v", env.Attention)
+		}
+	}
+}
+
+// TestEnvelopeFrontierTrueTwoCycleAttentionNeeded: a blocked-by b blocked-by
+// a — a true cycle, neither ready nor a live claim. Must surface as
+// attention-needed with a cycle entry naming both keys.
+func TestEnvelopeFrontierTrueTwoCycleAttentionNeeded(t *testing.T) {
+	evs := []model.Event{
+		setEv("a1", "a", "status", "open", func(e *model.Event) { e.Text = "a" }),
+		setEv("a2", "a", "blocked-by", "b", nil),
+		setEv("b1", "b", "status", "open", func(e *model.Event) { e.Text = "b" }),
+		setEv("b2", "b", "blocked-by", "a", nil),
+	}
+	b := Build(envelopeMeta(), evs)
+	env := b.Envelope(envNow, 50, allowAll)
+	if env.Frontier != "attention-needed" {
+		t.Fatalf("a true cycle must drive attention-needed, got %q", env.Frontier)
+	}
+	var cycles []AttentionEntry
+	for _, a := range env.Attention {
+		if a.Reason == "cycle" {
+			cycles = append(cycles, a)
+		}
+	}
+	if len(cycles) != 1 {
+		t.Fatalf("expected exactly 1 cycle entry, got %+v", cycles)
+	}
+	if len(cycles[0].Keys) != 2 || !contains(cycles[0].Keys, "a") || !contains(cycles[0].Keys, "b") {
+		t.Fatalf("cycle entry must name both a and b, got %+v", cycles[0].Keys)
+	}
+}
+
+// TestEnvelopeFrontierStatuslessReferenceAttentionNeeded: c depends on a
+// name no set event ever touched (an orphan) — statusless, no ready, no
+// cycle. Must surface as attention-needed.
+func TestEnvelopeFrontierStatuslessReferenceAttentionNeeded(t *testing.T) {
+	evs := []model.Event{
+		setEv("c1", "c", "status", "open", func(e *model.Event) { e.Text = "c" }),
+		setEv("c2", "c", "blocked-by", "ghost", nil),
+	}
+	b := Build(envelopeMeta(), evs)
+	env := b.Envelope(envNow, 50, allowAll)
+	if env.Frontier != "attention-needed" {
+		t.Fatalf("a statusless (orphan) reference must drive attention-needed, got %q", env.Frontier)
+	}
+}
+
+// TestEnvelopeFrontierClosedHumanBlockerResolvesDependentsWorkAvailable: x is
+// human-labeled AND terminal (closed) — a terminal status resolves an edge
+// regardless of label. y, blocked-by x, must land in ready.
+func TestEnvelopeFrontierClosedHumanBlockerResolvesDependentsWorkAvailable(t *testing.T) {
+	evs := []model.Event{
+		setEv("x1", "x", "status", "open", func(e *model.Event) { e.Text = "x" }),
+		setEv("x2", "x", "labels", "human", nil),
+		setEv("x3", "x", "status", "closed", func(e *model.Event) { e.Evidence = []string{"commit:x"} }),
+		setEv("y1", "y", "status", "open", func(e *model.Event) { e.Text = "y" }),
+		setEv("y2", "y", "blocked-by", "x", nil),
+	}
+	b := Build(envelopeMeta(), evs)
+	env := b.Envelope(envNow, 50, allowAll)
+	if env.Frontier != "work-available" {
+		t.Fatalf("a closed human-labeled blocker must resolve its dependent's edge, got %q", env.Frontier)
+	}
+	if len(env.Ready) != 1 || env.Ready[0].Key != "y" {
+		t.Fatalf("y must land in ready once its human blocker closes: %+v", env.Ready)
+	}
+}
+
+// TestEnvelopeFrontierFullBoardIgnoresLimitTruncation: three ready keys,
+// --limit 1 — frontier must still be work-available, and totals honest.
+func TestEnvelopeFrontierFullBoardIgnoresLimitTruncation(t *testing.T) {
+	evs := []model.Event{
+		setEv("r1", "r1", "status", "open", func(e *model.Event) { e.Text = "r1" }),
+		setEv("r2", "r2", "status", "open", func(e *model.Event) { e.Text = "r2" }),
+		setEv("r3", "r3", "status", "open", func(e *model.Event) { e.Text = "r3" }),
+	}
+	b := Build(envelopeMeta(), evs)
+	env := b.Envelope(envNow, 1, allowAll)
+	if len(env.Ready) != 1 {
+		t.Fatalf("--limit 1 must truncate the returned list, got %d entries", len(env.Ready))
+	}
+	if env.Totals.Ready != 3 {
+		t.Fatalf("totals must report the true count, got %d", env.Totals.Ready)
+	}
+	if env.Frontier != "work-available" {
+		t.Fatalf("frontier must be computed on the full pre-truncation board, got %q", env.Frontier)
+	}
+}
+
+// TestEnvelopeFrontierFullBoardIgnoresWhereFilter: r1 is ready on the full
+// board, but a filter (standing in for --where) excludes it from every
+// returned list. The spec pins frontier to "the FULL board regardless of
+// --limit" — read together with "Extra --where clauses apply uniformly to
+// all lists" (which names the four *lists*, not the verdict), the verdict
+// is the board's own truth, not the view's: it must still report
+// work-available even though the filtered ready list is empty.
+func TestEnvelopeFrontierFullBoardIgnoresWhereFilter(t *testing.T) {
+	evs := []model.Event{
+		setEv("r1", "r1", "status", "open", func(e *model.Event) { e.Text = "r1" }),
+	}
+	b := Build(envelopeMeta(), evs)
+	excludeR1 := func(k *Key) bool { return k == nil || k.Name != "r1" }
+	env := b.Envelope(envNow, 50, excludeR1)
+	if len(env.Ready) != 0 {
+		t.Fatalf("the filter must empty the returned ready list, got %+v", env.Ready)
+	}
+	if env.Frontier != "work-available" {
+		t.Fatalf("frontier must be computed on the full unfiltered board, got %q", env.Frontier)
+	}
+}
+
+func contains(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 func derefBool(p *bool) any {
 	if p == nil {
 		return nil

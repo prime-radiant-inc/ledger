@@ -7,6 +7,11 @@ import (
 	"ledger/internal/model"
 )
 
+// alwaysTrue is the always-true filter frontierVerdict uses to walk the
+// FULL board regardless of the caller's --where filter — see Envelope's own
+// doc comment.
+func alwaysTrue(*Key) bool { return true }
+
 // ReadyEntry is one pickable key (spec "ready: the board, answered"):
 // status=open, not human-labeled, every blocked-by edge terminal.
 // UnblockedWithoutEvidence names blockers whose terminal event carries no
@@ -74,8 +79,8 @@ type BlockedEntry struct {
 // AttentionEntry is one triage-queue item. Reason discriminates the shape:
 // "stale-claim" carries key/title/by/age/id (human-labeled stale claims
 // included — title appears on this reason only); "statusless" carries only
-// key (a half-seed or an orphan reference); "cycle" (Task 11's DFS, not
-// this task) will carry Keys instead of a singular Key.
+// key (a half-seed or an orphan reference); "cycle" carries Keys (every
+// member of the cycle) instead of a singular Key.
 type AttentionEntry struct {
 	Reason string   `json:"reason"`
 	Key    string   `json:"key,omitempty"`
@@ -118,19 +123,53 @@ type Envelope struct {
 // false whenever there are, since an orphan carries no field values to
 // test) so no separate rule is needed here.
 //
-// Frontier is PROVISIONAL for this task (Task 10): work-available when
-// ready is non-empty or a stale claim sits on a non-human-labeled key,
-// else attention-needed when attention is non-empty, else all-handled —
-// with no DFS verification. Task 11 replaces the all-handled arm with the
-// spec's verified walk (rule 9); this task's all-handled is a placeholder,
-// not a checked claim.
+// Frontier is computed over the FULL, unfiltered board (spec: "computed
+// over the FULL board regardless of --limit", read together with "Extra
+// --where clauses apply uniformly to all lists" — that sentence names the
+// four *lists*, not the verdict — as full in both dimensions: the verdict
+// is the board's own truth, not the view asking for it). frontierVerdict
+// re-walks the board under an always-true filter to get there; the four
+// returned lists still honor the caller's real filter.
 func (b *Board) Envelope(now time.Time, limit int, filter func(*Key) bool) Envelope {
-	ready := []ReadyEntry{}
-	held := []HeldEntry{}
-	blocked := []BlockedEntry{}
-	attention := []AttentionEntry{}
+	ready, held, blocked, attention, _ := b.buildLists(now, filter)
+
+	sort.Slice(ready, func(i, j int) bool {
+		ti, _ := model.ParseTS(ready[i].TS)
+		tj, _ := model.ParseTS(ready[j].TS)
+		if !ti.Equal(tj) {
+			return ti.Before(tj)
+		}
+		return b.Keys[ready[i].Key].statusSeq < b.Keys[ready[j].Key].statusSeq
+	})
+	sort.Slice(held, func(i, j int) bool { return held[i].Key < held[j].Key })
+	sort.Slice(blocked, func(i, j int) bool { return blocked[i].Key < blocked[j].Key })
+	sort.Slice(attention, func(i, j int) bool { return attention[i].Key < attention[j].Key })
+
+	totals := Totals{Ready: len(ready), Held: len(held), Blocked: len(blocked), Attention: len(attention)}
+
+	return Envelope{
+		Frontier:  b.frontierVerdict(now),
+		Ready:     truncate(ready, limit),
+		Held:      truncate(held, limit),
+		Blocked:   truncate(blocked, limit),
+		Attention: truncate(attention, limit),
+		Totals:    totals,
+	}
+}
+
+// buildLists walks the board once under filter, classifying every matching
+// key into ready/held/blocked and appending stale-claim/statusless/cycle
+// attention entries (unsorted — Envelope sorts after this returns).
+// workAvailable reports whether a reclaimable (non-human-labeled) stale
+// claim was found. Envelope calls this under the caller's real filter for
+// the four displayed lists; frontierVerdict calls it again under alwaysTrue
+// for the verdict's full-board truth.
+func (b *Board) buildLists(now time.Time, filter func(*Key) bool) (ready []ReadyEntry, held []HeldEntry, blocked []BlockedEntry, attention []AttentionEntry, workAvailable bool) {
+	ready = []ReadyEntry{}
+	held = []HeldEntry{}
+	blocked = []BlockedEntry{}
+	attention = []AttentionEntry{}
 	attSeen := map[string]bool{}
-	workAvailable := false
 
 	names := sortedKeyNames(b.Keys)
 	for _, name := range names {
@@ -191,43 +230,84 @@ func (b *Board) Envelope(now time.Time, limit int, filter func(*Key) bool) Envel
 	}
 	attention = append(attention, b.detectCycles()...)
 
-	sort.Slice(ready, func(i, j int) bool {
-		ti, _ := model.ParseTS(ready[i].TS)
-		tj, _ := model.ParseTS(ready[j].TS)
-		if !ti.Equal(tj) {
-			return ti.Before(tj)
-		}
-		return b.Keys[ready[i].Key].statusSeq < b.Keys[ready[j].Key].statusSeq
-	})
-	sort.Slice(held, func(i, j int) bool { return held[i].Key < held[j].Key })
-	sort.Slice(blocked, func(i, j int) bool { return blocked[i].Key < blocked[j].Key })
-	sort.Slice(attention, func(i, j int) bool { return attention[i].Key < attention[j].Key })
+	return ready, held, blocked, attention, workAvailable
+}
 
-	totals := Totals{Ready: len(ready), Held: len(held), Blocked: len(blocked), Attention: len(attention)}
-
-	frontier := "all-handled"
+// frontierVerdict computes the frontier verdict over the FULL, unfiltered
+// board — buildLists under alwaysTrue gives the same ready/attention/
+// workAvailable classification the displayed lists use, just untouched by
+// the caller's --where filter or --limit (buildLists never truncates).
+// work-available: anything pickable now (non-empty ready) or reclaimable (a
+// stale claim on a non-human-labeled key); else attention-needed: the
+// attention list (stale claims, statusless references, cycles) is
+// non-empty; else all-handled.
+func (b *Board) frontierVerdict(now time.Time) string {
+	ready, _, _, attention, workAvailable := b.buildLists(now, alwaysTrue)
 	switch {
 	case len(ready) > 0 || workAvailable:
-		frontier = "work-available"
+		return "work-available"
 	case len(attention) > 0:
-		frontier = "attention-needed"
-	}
-
-	return Envelope{
-		Frontier:  frontier,
-		Ready:     truncate(ready, limit),
-		Held:      truncate(held, limit),
-		Blocked:   truncate(blocked, limit),
-		Attention: truncate(attention, limit),
-		Totals:    totals,
+		return "attention-needed"
+	default:
+		return "all-handled"
 	}
 }
 
-// detectCycles is Task 11's seam (spec rule 9's DFS cycle detection, path-
-// stack + shared-dependency memo). This task emits no "cycle" attention
-// reason at all — always nil until Task 11 fills it in.
+// detectCycles walks the blocked-by graph with path-stack cycle detection
+// and a visited memo (spec rule 9's DFS). Only a target that is currently
+// open and NOT human-labeled gets recursed into ("open targets recursed") —
+// a terminal status, a live claim, a non-terminal human-owned key, or a
+// statusless reference (missing key, or a key with no status write) all end
+// a chain right there: the first three are the spec's valid termini, and
+// statusless references are already flagged by buildLists' own per-key and
+// orphan passes, so this function neither re-flags them nor walks past
+// them. onPath tracks the current recursion path (a repeat of a name still
+// onPath is a true cycle — the path slice from that name's first occurrence
+// to here names every member); finished is the shared visited memo that
+// makes diamonds (a node reached twice via different paths, but never via
+// itself) legal and never re-walked, so shared dependencies cost no more
+// than a single visit each.
 func (b *Board) detectCycles() []AttentionEntry {
-	return nil
+	onPath := map[string]bool{}
+	finished := map[string]bool{}
+	var path []string
+	var entries []AttentionEntry
+
+	var walk func(name string)
+	walk = func(name string) {
+		if finished[name] {
+			return
+		}
+		k := b.Keys[name]
+		if k == nil || k.Status == nil || k.Status.Value != "open" || k.HasHuman() {
+			return
+		}
+		onPath[name] = true
+		path = append(path, name)
+		for _, blocker := range k.BlockedBy {
+			if onPath[blocker] {
+				start := 0
+				for i, p := range path {
+					if p == blocker {
+						start = i
+						break
+					}
+				}
+				cycle := append([]string(nil), path[start:]...)
+				entries = append(entries, AttentionEntry{Reason: "cycle", Keys: cycle})
+				continue
+			}
+			walk(blocker)
+		}
+		path = path[:len(path)-1]
+		onPath[name] = false
+		finished[name] = true
+	}
+
+	for _, name := range sortedKeyNames(b.Keys) {
+		walk(name)
+	}
+	return entries
 }
 
 // allEdgesTerminal reports whether every one of k's blocked-by edges

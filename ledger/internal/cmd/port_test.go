@@ -231,6 +231,124 @@ func TestImportRemapsRollupChildren(t *testing.T) {
 	}
 }
 
+// normalizeReadyIDs recursively replaces every "id" field's value in a
+// decoded JSON document with a placeholder, so two `ready` envelopes minted
+// from different ledgers (each with its own content-addressed ids, assigned
+// fresh at commit time) can be compared for structural identity.
+func normalizeReadyIDs(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		norm := make(map[string]any, len(t))
+		for k, val := range t {
+			if k == "id" {
+				norm[k] = "<id>"
+				continue
+			}
+			norm[k] = normalizeReadyIDs(val)
+		}
+		return norm
+	case []any:
+		norm := make([]any, len(t))
+		for i, val := range t {
+			norm[i] = normalizeReadyIDs(val)
+		}
+		return norm
+	default:
+		return v
+	}
+}
+
+// seedReadyIdentityBoard builds a ready-capable board exercising ready,
+// held/human, blocked, and statusless attention — everything but a live
+// claim. Deliberately claim-free, unlike ready_test.go's seedReadyEnvelope:
+// a claim's `age` is computed against wall-clock time.Now() at the moment
+// `ready` runs, so two sequential `ready` invocations around a real
+// export/import round-trip would legitimately disagree by however long that
+// took, which isn't the kind of drift this test is checking for.
+func seedReadyIdentityBoard(t *testing.T) string {
+	dir := setupReady(t)
+	run(t, dir, "set", "spike-probe", "status=wontfix", "--expect", "none", "-m", "not doing it", "--as", "a")
+
+	run(t, dir, "set", "fix-retry", "blocked-by=spike-probe", "--expect", "none", "--as", "a")
+	run(t, dir, "set", "fix-retry", "status=open", "--expect", "none", "-m", "fix the retry loop", "--as", "a")
+
+	run(t, dir, "set", "sign-off", "labels=human", "--as", "a")
+	run(t, dir, "set", "sign-off", "status=open", "--expect", "none", "--override", "-m", "needs a human sign-off", "--as", "a")
+
+	run(t, dir, "set", "deploy", "blocked-by=sign-off", "--expect", "none", "--as", "a")
+	run(t, dir, "set", "deploy", "status=open", "--expect", "none", "-m", "ship it", "--as", "a")
+
+	run(t, dir, "set", "half-seeded", "labels=urgent", "--as", "a")
+	return dir
+}
+
+// TestExportImportReadyIdentity: spec test-plan item 14's remaining half —
+// TestExportImportRoundtrip already covers raw event-payload identity;
+// `ready`'s derived envelope (folded from those same events) must survive
+// the export/import boundary just as faithfully, since it's pure board
+// state, not per-run randomness. Only `id` values may legitimately differ
+// (ids are content-addressed at commit time, so a copy's events always mint
+// new ones): a fresh store importing under the ORIGINAL slug must produce a
+// byte-identical `ready` (ids aside), including the `ledger` name itself; a
+// same-store import under a NEW slug must additionally carry that new name
+// while everything else (ids aside) still matches.
+func TestExportImportReadyIdentity(t *testing.T) {
+	dir := seedReadyIdentityBoard(t) // slug "issues"
+	origSO, se, code := run(t, dir, "ready")
+	if code != 0 {
+		t.Fatalf("ready: %s", se)
+	}
+	origDoc := mustJSON(t, origSO)
+
+	f := filepath.Join(t.TempDir(), "issues.jsonl")
+	if _, se, code := run(t, dir, "export", "issues", "--to", f); code != 0 {
+		t.Fatal(se)
+	}
+
+	// Fresh store, original slug: everything but ids must match exactly,
+	// including the ledger name.
+	freshDir := initRepo(t)
+	if _, se, code := run(t, freshDir, "import", f, "--slug", "issues"); code != 0 {
+		t.Fatal(se)
+	}
+	freshSO, se, code := run(t, freshDir, "ready", "--ledger", "issues")
+	if code != 0 {
+		t.Fatalf("ready on the fresh-store copy: %s", se)
+	}
+	freshDoc := mustJSON(t, freshSO)
+
+	if freshDoc["ledger"] != origDoc["ledger"] {
+		t.Fatalf("same slug in a fresh store must keep the same ledger name: orig %v fresh %v",
+			origDoc["ledger"], freshDoc["ledger"])
+	}
+	wantNorm, _ := json.Marshal(normalizeReadyIDs(origDoc))
+	freshNorm, _ := json.Marshal(normalizeReadyIDs(freshDoc))
+	if string(wantNorm) != string(freshNorm) {
+		t.Fatalf("ready must be byte-identical across the export/import boundary except ids:\norig  %s\nfresh %s",
+			wantNorm, freshNorm)
+	}
+
+	// Same store, new slug: the ledger name must now differ; everything
+	// else (ids aside) must still match.
+	if _, se, code := run(t, dir, "import", f, "--slug", "issues-copy"); code != 0 {
+		t.Fatal(se)
+	}
+	copySO, se, code := run(t, dir, "ready", "--ledger", "issues-copy")
+	if code != 0 {
+		t.Fatalf("ready on the same-store copy: %s", se)
+	}
+	copyDoc := mustJSON(t, copySO)
+	if copyDoc["ledger"] == origDoc["ledger"] {
+		t.Fatalf("a same-store import under a new slug must carry the new ledger name, got %v", copyDoc["ledger"])
+	}
+	copyDoc["ledger"] = origDoc["ledger"] // the one field expected to differ; normalize it before comparing the rest
+	copyNorm, _ := json.Marshal(normalizeReadyIDs(copyDoc))
+	if string(wantNorm) != string(copyNorm) {
+		t.Fatalf("ready must be byte-identical (ledger name and ids aside) across a same-store import under a new slug:\norig %s\ncopy %s",
+			wantNorm, copyNorm)
+	}
+}
+
 func TestImportedCommitterMarker(t *testing.T) {
 	dir := seed(t)
 	f := filepath.Join(t.TempDir(), "d.jsonl")
