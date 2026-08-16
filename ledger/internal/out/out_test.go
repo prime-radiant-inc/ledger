@@ -49,6 +49,16 @@ func TestAge(t *testing.T) {
 	}
 }
 
+// TestAgeMillisecondLayout: new events are written with the millisecond
+// timestamp layout (model.TSLayout). Age must parse it same as the legacy
+// layout above — not fall back to returning the raw string.
+func TestAgeMillisecondLayout(t *testing.T) {
+	ts := time.Now().UTC().Add(-2 * time.Hour).Format("2006-01-02T15:04:05.000")
+	if got := Age(ts); got != "2h ago" {
+		t.Fatalf("age (millisecond layout): got %q, want \"2h ago\"", got)
+	}
+}
+
 func TestEscapeControls(t *testing.T) {
 	in := "safe\rFORGED\x1b[31mred\nnext\tline"
 	got := EscapeControls(in)

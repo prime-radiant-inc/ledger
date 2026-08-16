@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"ledger/internal/model"
 )
 
 type CLIError struct {
@@ -52,11 +54,11 @@ func IsTTY(f *os.File) bool {
 }
 
 func Age(ts string) string {
-	t, err := time.Parse("2006-01-02T15:04:05", ts)
+	t, err := model.ParseTS(ts)
 	if err != nil {
 		return ts
 	}
-	s := int(time.Since(t.UTC()).Seconds())
+	s := int(time.Since(t).Seconds())
 	switch {
 	case s >= 86400:
 		return fmt.Sprintf("%dd ago", s/86400)
