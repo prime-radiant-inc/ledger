@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,6 +49,85 @@ func TestExportImportRoundtrip(t *testing.T) {
 	_, se, code := run(t, dir, "import", f, "--slug", "demo")
 	if code != 4 || !strings.Contains(se, "slug_exists") {
 		t.Fatalf("import refuses existing slugs: %s", se)
+	}
+}
+
+// TestImportRevalidatesDeclarations: import is a second meta-minting path,
+// so it must re-run the same board-declaration shape checks create does —
+// not just replay whatever meta line the export file happens to carry. An
+// untouched export of a ready-capable board must still import cleanly, with
+// meta.json round-tripping byte-for-byte except slug. A hand-edited export
+// with --guard status stripped from the meta line must be rejected exit 4
+// bad_value naming --guard status, and no ledger must be minted under the
+// target slug.
+func TestImportRevalidatesDeclarations(t *testing.T) {
+	dir := initRepo(t)
+	_, se, code := run(t, dir, "create", "issues", "--scope", "s",
+		"--field", "status=open,in-progress,closed,wontfix",
+		"--terminal", "status=closed,wontfix",
+		"--multi-field", "labels",
+		"--guard", "status",
+		"--as", "me")
+	if code != 0 {
+		t.Fatal(se)
+	}
+
+	f := filepath.Join(t.TempDir(), "issues.jsonl")
+	if _, se, code := run(t, dir, "export", "issues", "--to", f); code != 0 {
+		t.Fatal(se)
+	}
+
+	// clean import: unmodified export imports fine, and meta.json
+	// round-trips byte-for-byte except slug.
+	if _, se, code := run(t, dir, "import", f, "--slug", "issues-copy"); code != 0 {
+		t.Fatalf("clean import: %s", se)
+	}
+	origMeta, err := execGit(dir, "show", "refs/ledger/issues:meta.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyMeta, err := execGit(dir, "show", "refs/ledger/issues-copy:meta.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCopyMeta := strings.Replace(origMeta, `"slug": "issues"`, `"slug": "issues-copy"`, 1)
+	if copyMeta != wantCopyMeta {
+		t.Fatalf("meta.json must round-trip byte-for-byte except slug:\norig: %s\ncopy: %s", origMeta, copyMeta)
+	}
+
+	// broken import: hand-edit the header line's meta to drop "guard" entirely.
+	data, err := os.ReadFile(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.SplitN(string(data), "\n", 2)
+	var header map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(lines[0]), &header); err != nil {
+		t.Fatal(err)
+	}
+	var meta map[string]json.RawMessage
+	if err := json.Unmarshal(header["meta"], &meta); err != nil {
+		t.Fatal(err)
+	}
+	delete(meta, "guard")
+	mb, _ := json.Marshal(meta)
+	header["meta"] = mb
+	hb, _ := json.Marshal(header)
+	broken := filepath.Join(t.TempDir(), "broken.jsonl")
+	if err := os.WriteFile(broken, []byte(string(hb)+"\n"+lines[1]), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, se, code = run(t, dir, "import", broken, "--slug", "issues-broken")
+	if code != 4 || !strings.Contains(se, "bad_value") || !strings.Contains(se, "--guard status") {
+		t.Fatalf("import must re-validate declaration shape: %d %s", code, se)
+	}
+	lsOut, _, _ := run(t, dir, "ls", "--all")
+	doc := mustJSON(t, lsOut)
+	for _, row := range doc["ledgers"].([]any) {
+		if row.(map[string]any)["slug"] == "issues-broken" {
+			t.Fatalf("a rejected import must not mint a ledger: %s", lsOut)
+		}
 	}
 }
 
