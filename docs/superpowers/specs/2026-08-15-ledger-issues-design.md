@@ -1,0 +1,164 @@
+# Ledger as issue tracker (design)
+
+2026-08-15, revision 1. What it takes for a ledger to serve as a
+cross-session issue tracker with agent work-picking, grounded in the kata
+comparison (`~/git/kata`, deliberately-small issue model: two statuses,
+labels, links, triage doctrine, open-by-default filtered list) and the
+memory build's structural lesson (the fold needs value-level filtering;
+rollups can't curate it). Three upstream tool additions (spec rev 14
+candidates), one derived-state verb, and doctrine. No new storage, no
+daemon, no schema migration: everything folds from events the current
+store already records.
+
+## What already works today (no changes)
+
+Issues as keys; status vocab via enum fields; `--require-evidence
+status=closed` as the only transition rule that matters; discussion as
+keyed notes with kinds (`comment`, `repro`, `ruling`); attribution and
+provenance per event; `watch`/`since` for live triage; CAS-safe concurrent
+writers; rollups for closed-thread curation of `tail`. Priorities are just
+another enum field for boards that want one.
+
+## Addition 1: multi-valued free fields (`--multi-field`)
+
+`create --multi-field <name>` declares a field that is **multi-valued and
+vocab-free** — the folksonomy axis kata calls labels, deliberately outside
+the closed-vocab discipline that governs enum fields (tags earn no
+`vocab add` ceremony; misspelled tags are noise, not corruption).
+
+- Value grammar: comma-separated kebab tokens. `set relay-storm
+  labels=bug,relay,regression`. No spaces or commas inside a token.
+- Fold semantics: **replace wholesale** per set, exactly like every other
+  field (concurrent taggers can drop each other's edits; same accepted
+  class as any field race). `labels=` (empty) clears.
+- Rendered in `show`/`render` as the literal token list.
+
+Two declared multi-fields make an issue board:
+
+```
+ledger create issues --scope "issue tracker for <repo>" \
+    --field status=open,in-progress,closed,wontfix \
+    --terminal status=closed,wontfix \
+    --multi-field labels --multi-field blocked-by \
+    --require-evidence status=closed
+```
+
+**`blocked-by` is just a multi-field whose tokens are keys.** One
+mechanism, two features. Edges referencing keys get set-time validation
+(addition 3); a "blocked" *status* value is deliberately absent — blocked
+is derived state, and deriving it is the whole point.
+
+## Addition 2: filtered reads (`show --where`)
+
+`show --where <field>=<value>` (exact match) and `--where
+<field>~=<token>` (token membership, for multi-fields). Repeatable flags
+AND together:
+
+```
+ledger show --where status=open --where labels~=relay
+```
+
+Bare `show` stays unfiltered (it serves every ledger role; boards get
+their kata-style open-by-default view from doctrine's first line, not from
+a changed global default). Filter evaluation is fold-side: rows whose
+named field's current value matches. A `--where` naming an undeclared
+field is `bad_usage` with the declared-field list in the hint.
+
+## Addition 3: edge validation on write
+
+A `set` writing to a multi-field named `blocked-by` (by convention: any
+multi-field whose name ends in `-by` or is declared `--edges`? — **ruling:
+keep it simple, `blocked-by` is a reserved multi-field name** with edge
+semantics; other multi-fields are plain tags) validates each token is an
+existing key in this ledger, failing with `unknown_event`-style error
+(`unknown_key`, exit 4, hint listing near-miss keys). Catches typos at
+write time, same philosophy as rollup's children-must-exist. Dangling refs
+can still arise later only via... nothing — keys are never deleted. Cycles
+(A blocked-by B, B blocked-by A) are representable and not rejected
+(detection at write time costs a graph walk; the failure mode is visible,
+not silent — see `ready`).
+
+## Addition 4: the `ready` verb (pick unblocked work)
+
+`--terminal <field>=<v1>,<v2>` at create declares which values mean "this
+key no longer blocks anything" (recorded in meta; extendable via `vocab
+add`-style self-serve later if needed).
+
+`ledger ready [--where …]` returns the work-picking view, one JSON
+envelope:
+
+- **ready**: keys where `status=open` (the availability filter — `ready`
+  implies `--where status=open` unless the caller overrides) AND every
+  `blocked-by` token's status is terminal. Sorted oldest-first (FIFO
+  fairness for pickers).
+- **blocked**: keys matching the same availability filter whose edges are
+  unresolved, each with `waiting_on: [keys]` — the *why*, so agents and
+  humans see the dependency frontier without a second query. A cycle
+  appears here as two keys waiting on each other: visible, never silently
+  dropped.
+
+Additional `--where` flags compose (e.g. `ready --where labels~=relay`
+scopes picking to a subsystem).
+
+## Claim discipline (doctrine, deliberately no mechanism)
+
+Picking is racy by nature; CAS makes the race lossless and the fold makes
+it deterministic, so claiming is a two-step idiom, not a verb:
+
+1. Claim: `ledger set <key> status=in-progress -m "claiming" --as <you>`.
+2. Verify: `ledger status <key>` — if the latest event is **your** write,
+   the claim held; if someone else's claim landed after yours, yield and
+   re-run `ready`.
+
+The **claimer's `--as` is the assignee** — no owner field exists. The
+in-progress event's author and provenance answer "who has this" with more
+honesty than an assignee box (it names the session that actually claimed
+it, when, from which host). Unclaiming is `status=open -m "yielding: <why>"`.
+
+## Board doctrine (the skill sketch, `using-ledger` addition or sibling)
+
+- First line of every board read: `ledger show --where status=open`
+  (kata's default, as doctrine).
+- Work-picking loop: `ready` → claim → verify → work → `status=closed
+  --evidence <ref>` → repeat until `ready` returns empty and `blocked` is
+  empty or human-owned.
+- Triage moment (kata's `kata-triage`, adapted): walk `show --where
+  status=open`, decide each — keep / close with evidence / `wontfix` with
+  why / add `blocked-by` edges / re-label. At session end or on request.
+- Discussion: notes with `--key`, kind `comment`; repros as kind `repro`;
+  decisions as kind `ruling`. Search is the grep idiom over `tail --raw`.
+- Duplicate defense: search before create (grep the board for key
+  candidates); a duplicate discovered later is closed `wontfix -m
+  "dup of [[<key>]]"`.
+- Cross-refs: `[[key]]` in messages; commits as evidence refs.
+
+## Deliberately not taken (from kata, with reasons)
+
+Daemon and TUI (git is the daemon; projections are the human surface);
+soft-delete/restore/purge tiers (append-only + status filtering + ref
+surgery for secrets); counter short-IDs (slugs for humans, SHAs for
+precision); FTS search (grep idiom until scale demands otherwise);
+in-repo `.kata.toml`-style binding (store resolution already does this).
+Sharing across machines/people remains Plan 2's sync layer — issue boards
+are its best forcing function yet, but that's a separate decision.
+
+## Spike scope (tiniest, throwaway, no tests — per Jesse)
+
+Branch of the Go tool: `--multi-field` + `--terminal` recorded in create
+meta; multi-field set values skip vocab validation (stored as the literal
+comma string — zero model change); `blocked-by` token existence check;
+`show --where` (= and ~=); `ready` verb with ready/blocked+waiting_on
+output. Skip: tail filtering, cycle detection, near-miss hints, render
+changes, doc changes. Validated by a two-worker field trial: seeded board
+with a dependency chain, two concurrent agents running the picking loop,
+success = work completed in dependency order with no double-completion
+and the claim-verify idiom surviving a real race.
+
+## Open questions the spike should answer
+
+1. Does replace-wholesale on `blocked-by` bite when two writers edit edges
+   concurrently, or is it as benign as predicted?
+2. Is claim-verify discipline followable by agents from doctrine alone, or
+   does it need a `claim` verb (mechanism) in the real version?
+3. Does `ready`'s blocked+waiting_on output actually get used by agents,
+   or do they only read the ready list?
