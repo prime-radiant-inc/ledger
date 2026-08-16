@@ -74,3 +74,10 @@ correctly from one page of doctrine. The one falsified spec claim is
 duplicate-work failure that rule was betting against, inside a two-worker,
 seven-issue board, within 90 seconds. Spec rev 2 adds `--expect` and demotes
 verify-after-claim to a fallback for tools without it.
+
+**Erratum (rev 4 adversarial round):** the "chain position already breaks
+the tie deterministically" line above is WRONG — the spike breaks same-second
+ties alphabetically by key, not by chain position (verified live by reviewer
+A). The spec now mandates chain-position tie-breaking; this report records
+the claim as originally made, uncorrected above, because trial records are
+append-only too.
