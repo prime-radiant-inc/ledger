@@ -61,6 +61,25 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts) error {
 		if strings.HasPrefix(v, "-") {
 			return out.Errf("bad_value", "write it as field=value", 4, "'%s' looks like a flag, not a value", v)
 		}
+		if led.IsMultiField(f) {
+			// Multi-fields are vocab-free by declaration: the value is stored
+			// as the literal comma-joined string, no vocab check. blocked-by
+			// is the one reserved multi-field name with edge semantics — each
+			// token must already be a key in this ledger's fold.
+			if f == "blocked-by" {
+				for _, tok := range strings.Split(v, ",") {
+					if tok == "" {
+						continue
+					}
+					if _, ok := led.Spine[tok]; !ok {
+						return out.Errf("unknown_key", "ledger show lists this board's keys", 4,
+							"blocked-by names '%s', which is not a known key on '%s'", tok, led.Slug)
+					}
+				}
+			}
+			fields[f] = v
+			continue
+		}
 		vocab, declared := led.Schema[f]
 		if !declared {
 			return out.Errf("unknown_field", "declared: "+strings.Join(led.Meta.FieldOrder, ", "), 4,

@@ -57,6 +57,14 @@ type Meta struct {
 	Fields          map[string][]string `json:"fields"`
 	RequireEvidence map[string][]string `json:"require_evidence,omitempty"`
 	FieldOrder      []string            `json:"field_order"`
+	// MultiFields names fields that are multi-valued and vocab-free (comma
+	// token lists, replace-wholesale on set — spike addition). Omitted for
+	// every ledger created before this existed, so old meta.json unmarshals
+	// to a nil slice and behaves exactly as before.
+	MultiFields []string `json:"multi_fields,omitempty"`
+	// Terminal declares, per field, which values mean "no longer blocks
+	// anything" — read by the `ready` verb to resolve blocked-by edges.
+	Terminal map[string][]string `json:"terminal,omitempty"`
 }
 
 func HarnessMarker() string {

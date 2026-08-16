@@ -9,11 +9,16 @@ import (
 )
 
 type Ledger struct {
-	Slug         string
-	Meta         model.Meta
-	Schema       map[string][]string
-	Require      map[string][]string
-	Spine        map[string]map[string]model.Event
+	Slug    string
+	Meta    model.Meta
+	Schema  map[string][]string
+	Require map[string][]string
+	Spine   map[string]map[string]model.Event
+	// MultiFields and Terminal are copied straight from meta (spike addition):
+	// declared multi-valued/vocab-free field names, and per-field terminal
+	// values for the `ready` verb's blocked-by resolution.
+	MultiFields  []string
+	Terminal     map[string][]string
 	State        string
 	SupersededBy string
 	ExtraLinks   []string
@@ -29,6 +34,7 @@ type Ledger struct {
 func Fold(slug string, evs []model.Event, meta model.Meta) *Ledger {
 	l := &Ledger{Slug: slug, Meta: meta, State: "open",
 		Schema: map[string][]string{}, Require: map[string][]string{},
+		MultiFields: append([]string{}, meta.MultiFields...), Terminal: map[string][]string{},
 		Spine: map[string]map[string]model.Event{}, Events: evs,
 		Parent: map[string]string{}, Losers: map[string]bool{}}
 	for f, v := range meta.Fields {
@@ -40,6 +46,9 @@ func Fold(slug string, evs []model.Event, meta model.Meta) *Ledger {
 	}
 	for f, v := range meta.RequireEvidence {
 		l.Require[f] = append([]string{}, v...)
+	}
+	for f, v := range meta.Terminal {
+		l.Terminal[f] = append([]string{}, v...)
 	}
 	for _, ev := range evs {
 		switch ev.Type {
@@ -88,6 +97,11 @@ func Fold(slug string, evs []model.Event, meta model.Meta) *Ledger {
 		}
 	}
 	return l
+}
+
+// IsMultiField reports whether name was declared with `create --multi-field`.
+func (l *Ledger) IsMultiField(name string) bool {
+	return contains(l.MultiFields, name)
 }
 
 func (l *Ledger) Head() string {

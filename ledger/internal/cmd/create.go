@@ -16,16 +16,18 @@ func init() { register(newCreateCmd) }
 
 func newCreateCmd(c *Ctx) *cobra.Command {
 	var scope, owner, supersedes, asFlag, mFlag string
-	var fields, reqEv []string
+	var fields, reqEv, multiFields, terminal []string
 	cmd := &cobra.Command{Use: "create <slug>", Short: "start a new ledger with declared fields",
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runCreate(c, args[0], scope, owner, supersedes, asFlag, mFlag, fields, reqEv)
+			return runCreate(c, args[0], scope, owner, supersedes, asFlag, mFlag, fields, reqEv, multiFields, terminal)
 		}}
 	cmd.Flags().StringVar(&scope, "scope", "", "what this ledger tracks")
 	cmd.MarkFlagRequired("scope")
 	cmd.Flags().StringArrayVar(&fields, "field", nil, "NAME=V1,V2 (empty after '=' = free text); repeatable")
 	cmd.Flags().StringArrayVar(&reqEv, "require-evidence", nil, "FIELD=V1,V2: these values hard-error without --evidence")
+	cmd.Flags().StringArrayVar(&multiFields, "multi-field", nil, "NAME: a multi-valued, vocab-free field (comma-token list); repeatable")
+	cmd.Flags().StringArrayVar(&terminal, "terminal", nil, "FIELD=V1,V2: values that resolve a blocked-by edge (used by `ready`); repeatable")
 	cmd.Flags().StringVar(&owner, "owner", "", "recorded owner (not enforced in v1)")
 	cmd.Flags().StringVar(&supersedes, "supersedes", "", "predecessor slug to close and link")
 	cmd.Flags().StringVar(&asFlag, "as", "", "author identity")
@@ -33,7 +35,8 @@ func newCreateCmd(c *Ctx) *cobra.Command {
 	return cmd
 }
 
-func runCreate(c *Ctx, slug, scope, owner, supersedes, asFlag, mFlag string, fieldSpecs, reqSpecs []string) error {
+func runCreate(c *Ctx, slug, scope, owner, supersedes, asFlag, mFlag string,
+	fieldSpecs, reqSpecs, multiFieldSpecs, terminalSpecs []string) error {
 	if !model.ValidSlug(slug) {
 		return out.Errf("bad_slug", "slugs are lowercase-kebab: [a-z0-9][a-z0-9-]*, max 64 chars", 4,
 			"'%s' is not a valid slug", slug)
@@ -66,13 +69,30 @@ func runCreate(c *Ctx, slug, scope, owner, supersedes, asFlag, mFlag string, fie
 		}
 		require[f] = strings.Split(vals, ",")
 	}
+	var multiFields []string
+	seenMulti := map[string]bool{}
+	for _, f := range multiFieldSpecs {
+		if !seenMulti[f] {
+			seenMulti[f] = true
+			multiFields = append(multiFields, f)
+		}
+	}
+	terminal := map[string][]string{}
+	for _, spec := range terminalSpecs {
+		f, vals, _ := strings.Cut(spec, "=")
+		if _, ok := fields[f]; !ok {
+			return out.Errf("unknown_field", "declared fields: "+keys(fields), 4,
+				"--terminal names '%s', which is not a declared field", f)
+		}
+		terminal[f] = strings.Split(vals, ",")
+	}
 	author := model.ResolveAuthor(asFlag)
 	ev := model.NewEvent("create", author, c.Store.Repo)
 	ev.Text = mFlag
 	base, _, _ := c.Store.Repo.Git("", "rev-parse", "--short", "HEAD")
 	meta := model.Meta{Slug: slug, Scope: scope, Created: ev.TS, CreatedBy: author,
 		Owner: owner, Supersedes: supersedes, Base: base, Fields: fields, RequireEvidence: require,
-		FieldOrder: fieldOrder}
+		FieldOrder: fieldOrder, MultiFields: multiFields, Terminal: terminal}
 	mb, _ := json.MarshalIndent(meta, "", " ")
 
 	var id string
@@ -89,7 +109,7 @@ func runCreate(c *Ctx, slug, scope, owner, supersedes, asFlag, mFlag string, fie
 		}
 	}
 	payload := map[string]any{"id": id, "ledger": slug, "created": true,
-		"fields": fields, "require_evidence": require}
+		"fields": fields, "require_evidence": require, "multi_fields": multiFields, "terminal": terminal}
 	if due, ok := dueAfter(c, slug); ok {
 		payload["rollup_due"] = due
 	}

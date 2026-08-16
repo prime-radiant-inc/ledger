@@ -352,19 +352,42 @@ func init() { register(newShowCmd) }
 
 func newShowCmd(c *Ctx) *cobra.Command {
 	var ledgerFlag string
+	var whereFlags []string
 	cmd := &cobra.Command{Use: "show", Short: "full render: schema, spine, notes", Args: noPositionals("show"),
-		RunE: func(_ *cobra.Command, _ []string) error { return runShow(c, ledgerFlag) }}
+		RunE: func(_ *cobra.Command, _ []string) error { return runShow(c, ledgerFlag, whereFlags...) }}
 	cmd.Flags().StringVar(&ledgerFlag, "ledger", "", "target ledger")
+	cmd.Flags().StringArrayVar(&whereFlags, "where", nil,
+		"FIELD=VALUE (exact) or FIELD~=TOKEN (multi-field membership); repeatable, AND together")
 	return cmd
 }
 
-func runShow(c *Ctx, ledgerFlag string) error {
+// runShow's third parameter is variadic so existing direct callers (the
+// render test bypasses cobra to invoke it with just ledgerFlag) keep
+// compiling unchanged.
+func runShow(c *Ctx, ledgerFlag string, whereFlags ...string) error {
 	led, err := c.PickLedger(ledgerFlag)
 	if err != nil {
 		return err
 	}
+	clauses, err := parseWhereSpecs(whereFlags)
+	if err != nil {
+		return err
+	}
+	if err := validateWhere(led, clauses); err != nil {
+		return err
+	}
 
 	rows := spineRows(led, "")
+	if len(clauses) > 0 {
+		keys := matchingKeys(led, clauses)
+		filtered := rows[:0]
+		for _, r := range rows {
+			if keys[r.Key] {
+				filtered = append(filtered, r)
+			}
+		}
+		rows = filtered
+	}
 	committers, _ := c.Store.Committers(led.Slug)
 
 	allNotes := led.Notes()
