@@ -228,9 +228,31 @@ func (b *Board) buildLists(now time.Time, filter func(*Key) bool) (ready []Ready
 			}
 		}
 	}
-	attention = append(attention, b.detectCycles()...)
+	// Cycle entries compose with filter differently from every other
+	// attention reason: a stale-claim or statusless entry is gated on its
+	// own single key matching, but a cycle names several keys at once, and
+	// the controller's ruling is that the entry survives iff ANY member
+	// matches — the cycle is relevant to any view containing one of its
+	// members, not just one where every member does.
+	for _, cycle := range b.detectCycles() {
+		if cycleSurvivesFilter(b, cycle, filter) {
+			attention = append(attention, cycle)
+		}
+	}
 
 	return ready, held, blocked, attention, workAvailable
+}
+
+// cycleSurvivesFilter reports whether any of a cycle attention entry's
+// member keys matches filter — the composition rule buildLists applies to
+// "cycle" entries (see the call site).
+func cycleSurvivesFilter(b *Board, entry AttentionEntry, filter func(*Key) bool) bool {
+	for _, name := range entry.Keys {
+		if filter(b.Keys[name]) {
+			return true
+		}
+	}
+	return false
 }
 
 // frontierVerdict computes the frontier verdict over the FULL, unfiltered
@@ -249,6 +271,17 @@ func (b *Board) frontierVerdict(now time.Time) string {
 	case len(attention) > 0:
 		return "attention-needed"
 	default:
+		// VERIFIED, not a fallback: ready empty and attention empty together
+		// mean every key is terminal, a live claim, or a non-terminal human
+		// key (all three are valid termini) — anything stale or statusless
+		// would be in attention, and an open+unlabeled key either has every
+		// edge resolved (would be in ready) or, in a finite graph, its
+		// unresolved walk either reaches a terminus or cycles back on
+		// itself, which detectCycles already covers (would be in
+		// attention). Depends on ready's membership rule, the stale/
+		// statusless attention passes, and detectCycles' coverage all
+		// staying as they are — changing any of them re-opens this
+		// argument.
 		return "all-handled"
 	}
 }

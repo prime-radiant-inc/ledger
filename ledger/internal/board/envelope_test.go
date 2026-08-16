@@ -707,6 +707,55 @@ func TestEnvelopeFrontierFullBoardIgnoresWhereFilter(t *testing.T) {
 	}
 }
 
+// TestEnvelopeFrontierCycleSurvivesFilterIfAnyMemberMatches: the controller's
+// composition ruling for cycle entries under a filter (standing in for
+// --where): unlike every other attention reason (gated on its own single
+// key matching), a cycle entry survives the filter iff ANY of its member
+// keys matches — the cycle is relevant to any view containing one of its
+// members. Here the filter matches only "a" of the a<->b cycle; the entry
+// must still appear.
+func TestEnvelopeFrontierCycleSurvivesFilterIfAnyMemberMatches(t *testing.T) {
+	evs := []model.Event{
+		setEv("a1", "a", "status", "open", func(e *model.Event) { e.Text = "a" }),
+		setEv("a2", "a", "blocked-by", "b", nil),
+		setEv("b1", "b", "status", "open", func(e *model.Event) { e.Text = "b" }),
+		setEv("b2", "b", "blocked-by", "a", nil),
+	}
+	b := Build(envelopeMeta(), evs)
+	onlyA := func(k *Key) bool { return k != nil && k.Name == "a" }
+	env := b.Envelope(envNow, 50, onlyA)
+	found := false
+	for _, a := range env.Attention {
+		if a.Reason == "cycle" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("a cycle with one matching member must survive the filter: %+v", env.Attention)
+	}
+}
+
+// TestEnvelopeFrontierCycleExcludedWhenNoMemberMatches: the inverse — a
+// filter matching neither cycle member excludes the cycle entry entirely
+// (an unrelated key "c" is the only one the filter admits).
+func TestEnvelopeFrontierCycleExcludedWhenNoMemberMatches(t *testing.T) {
+	evs := []model.Event{
+		setEv("a1", "a", "status", "open", func(e *model.Event) { e.Text = "a" }),
+		setEv("a2", "a", "blocked-by", "b", nil),
+		setEv("b1", "b", "status", "open", func(e *model.Event) { e.Text = "b" }),
+		setEv("b2", "b", "blocked-by", "a", nil),
+		setEv("c1", "c", "status", "open", func(e *model.Event) { e.Text = "c" }),
+	}
+	b := Build(envelopeMeta(), evs)
+	onlyC := func(k *Key) bool { return k != nil && k.Name == "c" }
+	env := b.Envelope(envNow, 50, onlyC)
+	for _, a := range env.Attention {
+		if a.Reason == "cycle" {
+			t.Fatalf("a cycle with no matching member must be excluded by the filter: %+v", env.Attention)
+		}
+	}
+}
+
 func contains(xs []string, x string) bool {
 	for _, v := range xs {
 		if v == x {

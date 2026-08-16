@@ -162,9 +162,28 @@ func TestReadyEnvelopeMembersAndTitles(t *testing.T) {
 
 // TestReadyWhereFilterLegitimatelyEmptiesAllLists: --where status=closed
 // matches none of the seeded keys (none is closed) — every list empties,
-// exit 0, no error. Mirrors the spec's own example clause.
+// exit 0, no error. Mirrors the spec's own example clause. The fixture adds
+// its own cycle (cycle-a <-> cycle-b, both status=open) on top of
+// seedReadyEnvelope's shape — without it, this test would pass for the
+// wrong reason: an acyclic fixture can't prove a cycle attention entry
+// composes with --where at all, only that ordinary reasons do. Neither
+// cycle member is status=closed, so per the composition rule (a cycle
+// entry survives iff ANY member matches) the entry must be excluded here
+// too, keeping attention legitimately empty.
 func TestReadyWhereFilterLegitimatelyEmptiesAllLists(t *testing.T) {
 	dir := seedReadyEnvelope(t)
+	// blocked-by existence validation rejects a forward reference to a key
+	// that doesn't exist yet, so both keys must exist before either edge can
+	// name the other.
+	run(t, dir, "set", "cycle-a", "status=open", "--expect", "none", "-m", "cycle a", "--as", "a")
+	run(t, dir, "set", "cycle-b", "status=open", "--expect", "none", "-m", "cycle b", "--as", "a")
+	if _, se, code := run(t, dir, "set", "cycle-a", "blocked-by=cycle-b", "--expect", "none", "--as", "a"); code != 0 {
+		t.Fatalf("cycle-a blocked-by=cycle-b: %s", se)
+	}
+	if _, se, code := run(t, dir, "set", "cycle-b", "blocked-by=cycle-a", "--expect", "none", "--as", "a"); code != 0 {
+		t.Fatalf("cycle-b blocked-by=cycle-a: %s", se)
+	}
+
 	so, se, code := run(t, dir, "ready", "--where", "status=closed")
 	if code != 0 {
 		t.Fatalf("a filtering --where must not error: %d %s", code, se)
