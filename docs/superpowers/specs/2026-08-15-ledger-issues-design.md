@@ -1,6 +1,23 @@
 # Ledger as issue tracker (design)
 
-2026-08-15, revision 10 — the cold-review editing pass. A fifth round ran
+2026-08-15, revision 11. A sixth round (second blind round, two fresh cold
+reviewers) found what ten predecessors missed, including the best single
+find of the project: nothing required a ready-capable board to actually
+`--guard status` — the entire invariant was opt-in, silently absent when
+the one flag was omitted, title enforcement included. Also: the walk
+enumerated five of six `waiting_on` states and forgot `open` (the most
+common blocker shape); "a visited-set" specified the classically wrong
+DFS (diamond dependencies false-flagged as cycles — a shape trial 3
+literally built); the walk's "one ready call" broke past `--limit`; the
+"don't poll, use watch" doctrine leaned on field-scoped watching the tool
+verifiably doesn't have and a staleness event that never fires; rule 8's
+"narrow the read" couldn't answer its own label check; and the identifier
+provenance sentence was checkably wrong a second time. Rev 11 closes all
+of it. The meta-lesson, in one reviewer's words: rounds converged on
+polishing the rules that were written down and missed that the
+precondition making them bind was never itself required.
+
+Previously — revision 10, the cold-review editing pass. A fifth round ran
 blind: two reviewers given the document with no knowledge of prior rounds
 and no steering. Their findings converged on rev 9's newest layer and
 caught two structural misses eight steered reviewers left standing: the
@@ -167,12 +184,17 @@ more unguarded status write; the invariant ends the enumeration.
    validation claim covers them.
 8. **Performance requirement**: the precondition read must not re-fold the
    full chain per retry (the spike did: ~70ms per 5k events per attempt).
-   Narrow the read to the target key/field, and "reuse" means
-   **within-attempt only** (rev 10, pinned: one fresh read per CAS
-   attempt, shared across that attempt's several checks — id, staleness,
-   label). Cross-attempt caching is exactly the pre-loop snapshot rule 7
-   forbids; an implementation wanting it must bring its own invalidation
-   argument.
+   Narrow the read to the **target key** (rev 11 — "key/field" was
+   incoherent: a field-narrowed read cannot answer the human gate's
+   label check; the unit is one key, all fields): walk the chain
+   backward from head, early-stopping once the target key's guarded
+   field, label state, and staleness inputs are all resolved. Honest
+   worst case, stated: a key untouched for thousands of events degrades
+   toward the full-chain scan — the bound test (19) measures the common
+   case and states the degenerate one. "Reuse" means **within-attempt
+   only**: one fresh read per CAS attempt, shared across that attempt's
+   checks. Cross-attempt caching is exactly the pre-loop snapshot rule 7
+   forbids.
 9. **Live claims are protected from ALL cross-author interference**
    (rev 9; rev 8 gated only same-value re-claims, leaving the mirror-image
    hole: anyone could `wontfix` or `close` a fresh claim with just its
@@ -193,7 +215,12 @@ more unguarded status write; the invariant ends the enumeration.
     `ready` door — doctrine's own `show --where status=open` still
     surfaced the key, and nothing stopped the write). A write to a guarded
     field on a key carrying the board's `human` label is `human_owned`,
-    exit 4, unless the set carries `--override-human` (message required).
+    exit 4 — message pinned like its siblings' (rev 11): it names the
+    key, the label, and the two-path hint ("remove the label, or pass
+    --override-human -m '<why>'"). The gate lifts only with
+    `--override-human` plus a non-empty (trimmed) message; either
+    override flag without a message is `bad_usage` naming the rule
+    (rev 11 — this was the one unspecified error path in the taxonomy).
     Honest limits, stated: identity is asserted, so this is friction and
     visibility, not authentication — and `labels` is unguarded by design,
     so removing the label first is possible; the gate's value is that
@@ -207,9 +234,13 @@ more unguarded status write; the invariant ends the enumeration.
     claimant's own close (deliberate — labeling a claimed key is how a
     human says "stop"); the claimant resolves by label removal or
     `--override-human`, both visible acts, and doctrine says so. The gate
-    applies to a key's FIRST status write too (rev 10): a key pre-labeled
-    `human` before seeding — a legitimate way to reserve planned work for
-    a person — seeds only with `--override-human` or after label removal.
+    applies to a key's FIRST status write too: a key pre-labeled `human`
+    before seeding — a legitimate way to reserve planned work for a
+    person — seeds only with `--override-human` or after label removal.
+    Worked (rev 11, since the single `-m` is BOTH the permanent title and
+    the override justification, by design): `set <key> status=open
+    --expect none --override-human -m "<title> — reserved for <who>:
+    <why>"`.
 
 `--expect` on a write touching zero guarded fields stays legal for any
 single-field write (general read-modify-write protection).
@@ -240,7 +271,8 @@ derived them from the first status event's `-m` but `-m` was optional, so
 a title could be blank forever — reproducing by omission the exact
 dup-search failure the feature exists to fix): on a board with a guarded
 availability field, the first status write to a key REQUIRES a non-empty
-`-m` (`empty_body`, exit 4, hint naming it as the title). Every list
+`-m` after trimming whitespace (`empty_body`, exit 4, hint naming it as
+the title). Every list
 entry carries `title`; `show` rows on boards gain the same field.
 
 List membership is a function of (status, human label, edges), exactly:
@@ -254,12 +286,20 @@ List membership is a function of (status, human label, edges), exactly:
 | open | no | no | `blocked` |
 | in-progress | no | — | `in_progress` (with `waiting_on` if unresolved) |
 
-The table is exhaustive because board status vocab is create-validated
-(rev 10 tightens rev 9): a `ready`-capable board REQUIRES `--terminal` on
-`status`, and the non-terminal remainder must be exactly `{open,
-in-progress}` — both present, nothing else (`bad_value` at create names
-what's missing or extra). `ready` on a board without the declaration is
-`bad_usage` with the create-time fix in the hint.
+The table is exhaustive because the board's shape is create-validated
+(rev 11 closes the project's best-hidden hole): declaring `--terminal` on
+a field named `status` IS opting into ready-capability — a purely
+syntactic trigger, stated plainly (a board wanting rule-5
+terminal-transition protection without `ready` semantics names its field
+something else). A ready-capable board REQUIRES, all validated at create
+with `bad_value` naming the fix: `--terminal` on `status`; non-terminal
+remainder exactly `{open, in-progress}`, both present; **`--guard
+status`** (ten reviewers polished the invariant's rules before one
+noticed nothing required the flag that makes them apply — without it
+every protection in this document was silently absent); and `--guard
+blocked-by` whenever `blocked-by` is declared. `ready` on a
+non-ready-capable board is `bad_usage` with the create-time fix in the
+hint.
 
 - **ready**: oldest first, timestamp ties by chain position. Entry: `key`,
   `title`, `note`, `ts`, `by`, `id` (the claim ticket — note/ts/by/id from
@@ -331,7 +371,11 @@ merge, in the parent spec's own numbers-first style.
   their key exactly; then re-seed yours under a new name. A `claim_lost`
   on a status seed therefore always means: key exists — read it, revert
   any edge write you made, re-seed under a new key (the hint says so).
-  Never chain the writes without checking exit codes.
+  If the stranger's key carries the `human` label, the revert itself
+  needs `--override-human` — sanctioned here, message naming the
+  collision (restoring someone's key to its true state is what the
+  override exists to make visible). Never chain the writes without
+  checking exit codes.
 - **Claim**: `set <key> status=in-progress --expect <ready id> -m
   "claiming" --as <you>`. `claim_lost` → re-run `ready`, pick again. The
   claimer's `--as` IS the assignee; the claim event's provenance names
@@ -376,6 +420,13 @@ merge, in the parent spec's own numbers-first style.
 
 ## Board doctrine (the skill)
 
+Delivery, pinned (rev 11): this section ships as a new pattern section in
+`skills/using-ledger/SKILL.md` (joining Execution spine, Coordination
+scoreboard, etc.), and that skill's frontmatter `description` gains the
+triggers "running an issue board" and "picking unblocked work" — without
+the trigger text, no agent ever surfaces the doctrine, however good it
+is. Test 18 scans that file.
+
 - First read: `ledger show --where status=open`.
 - Picking loop: `ready` → claim → work → close → repeat. Stop when
   `ready` is empty (its `total` confirming nothing beyond the limit) and
@@ -383,18 +434,31 @@ merge, in the parent spec's own numbers-first style.
   algorithm** (rev 9 — it was a prose predicate whose landmine, cycles,
   the spec elsewhere declares legal): with the whole envelope in hand,
   for each `blocked` entry, follow `waiting_on` keys with a visited-set;
-  with `waiting_on` states in the envelope, the walk is one `ready` call
-  (rev 10): a `terminal` target is moot; a non-stale `in-progress` or
-  `human` target is a safe leaf; an `in-progress-stale` target is NOT
-  safe (a reclaim opportunity); a `statusless` target is NOT safe (a
-  triage item — rev 9's walk called every absent key moot, misreading
-  both this and the stale case); a revisited key is a cycle — NOT safe,
-  it resolves to no one and is a triage item. Stop only if every path
-  ends at a safe leaf. "Don't poll" reconciled with "repeat" (rev 10):
-  re-running `ready` after your own close is the loop, not polling —
-  state just changed; spinning on `ready` waiting for OTHERS is polling,
-  and the between-claims wait is `watch` on the status field, or exit
-  per the stop condition.
+  the walk (rev 11 — rev 10's version forgot the most common target
+  state and specified the classically wrong DFS): first size the call —
+  if `totals.blocked` exceeds your `--limit`, re-call `ready --limit
+  <totals.blocked>`; the walk needs the whole blocked list. Then, per
+  `blocked` entry, classify each `waiting_on` target: `terminal` is
+  moot; non-stale `in-progress` and `human` are safe leaves;
+  `in-progress-stale` and `statusless` are NOT safe (reclaim opportunity
+  and triage item); **`open` is not a leaf at all** — recurse into that
+  key's own `blocked` entry, and if it has none it is in `ready` by
+  construction and IS a safe leaf (pickable work exists, you are not
+  done). Cycle detection uses the **current path** (ancestor stack): a
+  key on your own path is a cycle — NOT safe, a triage item; a key
+  merely visited before via another branch is a shared dependency
+  (diamond — a legal, trial-built shape) and is resolved from memo, not
+  re-flagged. Stop only if every path ends at a safe leaf.
+  "Don't poll," honestly (rev 11; rev 10 pointed at `watch` on the
+  status field, which the tool cannot do — `watch --value` matches ANY
+  field's value, unscoped, so vocab-free label tokens collide; and
+  staleness fires no event at the horizon, ever): re-running `ready`
+  after your own close is the loop. Waiting for OTHERS: run `watch` with
+  the full status vocab as `--value` terms, accept rare label-token
+  collisions as spurious wakes, and treat every watch TIMEOUT as a cue
+  to re-run `ready` — timeouts are how staleness gets noticed, since no
+  event announces it. A field-scoped watch filter is an upstream
+  candidate, stated, not assumed.
 - Touch-base cadence (rev 9): at roughly half the board's
   `--stale-after`, and only while actively working. Touch-bases are
   events; a long task under a short horizon multiplies chain volume and
@@ -476,9 +540,12 @@ Everything in The board, the invariant (rules 1–10 incl. `not_stale` and
 `human_owned` errors), Filtered reads, `ready` (four lists, totals,
 annotations, truth table, measured cost), the write idioms' mechanics,
 sub-second timestamps, meta export/import round-trip, the extended race
-harness as tests, the board skill, rev 13 amendments (verb taxonomy; rev 14 ADDS `claim_lost`, `not_stale`,
-`human_owned` to the parent's canonical error-identifier list — only
-`unknown_key` predates this document). Spike
+harness as tests, the board skill, rev 13 amendments (verb taxonomy; rev 14 adds `claim_lost`, `not_stale`,
+and `human_owned` to the parent's canonical error-identifier list;
+`bad_usage`, `bad_value`, `empty_body`, `unknown_field`, and
+`unknown_key` all predate this document — rev 11 corrects this sentence's
+second wrong enumeration, which is its own small lesson in checking
+citations). Spike
 branch: historical evidence, never merged.
 
 ## Test plan (numbered; the parent spec's precedent)
@@ -548,7 +615,7 @@ branch: historical evidence, never merged.
     key-already-exists hint (not the claim hint); the clean-landing edge
     write on a stranger's edge-free key is the documented contamination
     case — test walks the full recovery (revert-to-empty with the edge
-    event's id, restoring the stranger's key byte-exactly, then re-seed
+    event's id, restoring the stranger's key's derived state exactly, then re-seed
     under a new name).
 22. Titles: derived from the first status event; survive claims, closes,
     reopens; present in `show` rows on boards.
@@ -562,10 +629,30 @@ branch: historical evidence, never merged.
     the combined `override: claim,human` recording; composition order.
 26. `--guard` create validation: undeclared field name → `bad_value`
     (regression for the silent-total-disable typo).
-27. Title enforcement: first status write without `-m` → `empty_body`;
+27. Title enforcement: first status write without `-m` (or whitespace
+    only) → `empty_body`;
     walk states: `waiting_on` objects carry correct `state` for every
     target class incl. `statusless` and `in-progress-stale`; blocked/
     in_progress/human_owned sorted by key ascending.
+28. Ready-capable shape: `--terminal status=…` without `--guard status`
+    (or without `--guard blocked-by` when declared) → `bad_value` at
+    create (the guard-not-required hole).
+29. Walk behavior, not just annotation: an `open` target recurses (and a
+    ready-listed open target is a safe leaf); a diamond (two blocked
+    entries sharing one blocker) produces NO cycle flag; a true on-path
+    cycle does; a board with >limit blocked entries is walked in full
+    after the totals-sized re-call.
+30. Override hygiene: either override flag without a (trimmed) message →
+    `bad_usage`; the pre-labeled seed's worked command (title + override
+    justification in one `-m`) executes; `human_owned`'s pinned
+    message/hint format; collision recovery on a human-labeled stranger
+    (revert with `--override-human`) lands and the stranger's derived
+    state matches pre-collision.
+31. Watch doctrine reality: watch with full status vocab as `--value`
+    wakes on claims; a label token colliding with a status value produces
+    the documented spurious wake (not an error); watch timeout → re-run
+    `ready` is the staleness-notice path (no event fires at the
+    horizon).
 
 ## Validation record
 
