@@ -284,14 +284,18 @@ func TestRaceLabelEditsWithExpectSerialize(t *testing.T) {
 	}
 }
 
-// TestRaceReclaimStaleClaim is the trial-3/4 field scenario, mechanized: 5
-// rounds, each aging a live claim past a short --stale-after horizon (the
-// staleness signal dissolves, so no --override is needed) and then racing
-// two --expect-the-stale-claim's-id reclaims. Exactly one may win.
+// TestRaceReclaimStaleClaim is the trial-3/4 field scenario, mechanized: 10
+// rounds (bumped from the brief's 5 — at 5 rounds a true 50/50 split
+// spuriously fails the win-split check below ~6.25% of the time (2×0.5^5);
+// 10 rounds brings that down to ~0.2%, matching the other contested
+// families' margin), each aging a live claim past a short --stale-after
+// horizon (the staleness signal dissolves, so no --override is needed) and
+// then racing two --expect-the-stale-claim's-id reclaims. Exactly one may
+// win.
 func TestRaceReclaimStaleClaim(t *testing.T) {
 	dir := raceSetupReadyStale(t, "300ms")
 	wins := map[string]int{}
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 10; i++ {
 		key := fmt.Sprintf("stale-%d", i)
 		so, se, code := execLedger(t, dir, "set", key, "status=open", "--expect", "none", "-m", "seed", "--as", "seeder")
 		if code != 0 {
