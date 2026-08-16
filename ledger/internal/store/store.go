@@ -15,12 +15,18 @@ import (
 	"ledger/internal/model"
 )
 
-type Expect int
+type ExpectMode int
 
 const (
-	ExpectPresent Expect = iota
+	ExpectPresent ExpectMode = iota
 	ExpectAbsent
 )
+
+// Precondition runs against a fresh read of a ledger's full event chain
+// inside every CAS retry attempt of AppendChecked — never a pre-loop
+// snapshot (spec rule 7's atomicity contract). Returning an error aborts
+// the append with that error; nothing is written.
+type Precondition func(events []model.Event) error
 
 var (
 	ErrUnknownLedger = errors.New("unknown_ledger")
@@ -241,9 +247,27 @@ func (s Store) catBatch(ids []string) (contents []string, present []bool) {
 	return contents, present
 }
 
-func (s Store) Append(slug string, ev model.Event, extra map[string]string, expect Expect) (string, error) {
-	tip, err := s.casLoop(slug, expect, func(parent string) (string, error) {
+func (s Store) Append(slug string, ev model.Event, extra map[string]string, mode ExpectMode) (string, error) {
+	tip, err := s.casLoop(slug, mode, nil, func(parent string) (string, error) {
 		return s.BuildCommit(slug, parent, ev, extra)
+	})
+	if err != nil {
+		return "", err
+	}
+	return tip[:10], nil
+}
+
+// AppendChecked is Append plus a per-attempt precondition: pre runs against
+// a fresh read of the full chain inside every CAS retry attempt, after the
+// attempt's fresh head read and before the commit is built — never against
+// a snapshot taken before the loop started, and never reused across
+// attempts (spec rule 7). A pre error aborts the append with that error;
+// nothing is written. Append delegates here with pre == nil, which skips
+// the fresh-read-and-check step entirely (no behavior or cost change for
+// existing callers).
+func (s *Store) AppendChecked(slug string, ev model.Event, pre Precondition, mode ExpectMode) (string, error) {
+	tip, err := s.casLoop(slug, mode, pre, func(parent string) (string, error) {
+		return s.BuildCommit(slug, parent, ev, nil)
 	})
 	if err != nil {
 		return "", err
@@ -272,10 +296,10 @@ func (s Store) Append(slug string, ev model.Event, extra map[string]string, expe
 // retry, so remap must stay a pure function of (ev, priorIDs).
 //
 // Returned ids are in event order.
-func (s Store) AppendChain(slug string, evs []model.Event, firstExtra map[string]string, expect Expect,
+func (s Store) AppendChain(slug string, evs []model.Event, firstExtra map[string]string, mode ExpectMode,
 	remap func(ev *model.Event, priorIDs map[string]string)) ([]string, error) {
 	var shas []string
-	_, err := s.casLoop(slug, expect, func(parent string) (string, error) {
+	_, err := s.casLoop(slug, mode, nil, func(parent string) (string, error) {
 		shas = shas[:0]
 		priorIDs := map[string]string{}
 		p := parent
@@ -309,18 +333,32 @@ func (s Store) AppendChain(slug string, evs []model.Event, firstExtra map[string
 	return ids, nil
 }
 
-// casLoop is the shared CAS-retry skeleton behind Append and AppendChain:
-// re-read the current head, let build construct the new tip commit(s)
-// parented on it, then try to move the ref. build may be called more than
-// once (once per attempt) if another writer wins the race.
-func (s Store) casLoop(slug string, expect Expect, build func(parent string) (tip string, err error)) (string, error) {
+// casLoop is the shared CAS-retry skeleton behind Append, AppendChain, and
+// AppendChecked: re-read the current head, run pre (if any) against a fresh
+// read of the full chain, let build construct the new tip commit(s)
+// parented on it, then try to move the ref. build (and pre) may run more
+// than once — once per attempt — if another writer wins the race.
+func (s Store) casLoop(slug string, mode ExpectMode, pre Precondition, build func(parent string) (tip string, err error)) (string, error) {
 	for attempt := 0; attempt < 30; attempt++ {
 		cur, ok := s.head(slug)
-		if expect == ExpectAbsent && ok {
+		if mode == ExpectAbsent && ok {
 			return "", fmt.Errorf("%w: %s", ErrSlugExists, slug)
 		}
-		if expect == ExpectPresent && !ok {
+		if mode == ExpectPresent && !ok {
 			return "", fmt.Errorf("%w: %s", ErrUnknownLedger, slug)
+		}
+		if pre != nil {
+			var events []model.Event
+			if ok {
+				var err error
+				events, _, err = s.Events(slug)
+				if err != nil {
+					return "", err
+				}
+			}
+			if err := pre(events); err != nil {
+				return "", err
+			}
 		}
 		parent := ""
 		if ok {
