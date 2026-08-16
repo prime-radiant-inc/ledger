@@ -126,7 +126,7 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts, expect string
 
 	var pre store.Precondition
 	if target != "" || ready {
-		pre = setPrecondition(key, fields, target, expect, ready, led.Meta)
+		pre = setPrecondition(key, fields, target, expect, ready, led.Meta, o.m)
 	}
 	id, err := c.Store.AppendChecked(led.Slug, ev, pre, store.ExpectPresent)
 	if err != nil {
@@ -181,9 +181,10 @@ func resolveExpectTarget(fields map[string]string, guard []string, slug string, 
 // setPrecondition builds the closure AppendChecked runs against a fresh
 // event read on every CAS attempt (spec rule 7: never a pre-loop snapshot).
 // Checks run in order: rule 3/4 CAS on the target field, then (ready-capable
-// boards only) key grammar on first write, then blocked-by existence. Task 8
-// inserts rule 5's signal checks after CAS.
-func setPrecondition(key string, fields map[string]string, target, expect string, ready bool, meta model.Meta) store.Precondition {
+// boards only) key grammar on first write, title enforcement on a first
+// status write, then blocked-by existence. Task 8 inserts rule 5's signal
+// checks after CAS.
+func setPrecondition(key string, fields map[string]string, target, expect string, ready bool, meta model.Meta, text string) store.Precondition {
 	return func(events []model.Event) error {
 		if target != "" {
 			if err := checkCAS(events, key, target, expect, fields[target], ready, meta); err != nil {
@@ -197,6 +198,14 @@ func setPrecondition(key string, fields map[string]string, target, expect string
 		if _, exists := b.Keys[key]; !exists && !tokenRE.MatchString(key) {
 			return out.Errf("bad_value", "rename the key to match ^[a-z0-9][a-z0-9-]*$ (lowercase kebab-case)", 4,
 				"key '%s' can't be referenced by blocked-by edges; use kebab-case", key)
+		}
+		if _, touched := fields["status"]; touched {
+			k := b.Keys[key]
+			firstStatusWrite := k == nil || k.Status == nil
+			if firstStatusWrite && strings.TrimSpace(text) == "" {
+				return out.Errf("empty_body", "the first status write's -m becomes the key's title", 4,
+					"'%s' has no title yet — the first status write on a ready-capable board requires a non-empty -m", key)
+			}
 		}
 		if v, touched := fields["blocked-by"]; touched {
 			for _, tok := range splitTokens(v) {

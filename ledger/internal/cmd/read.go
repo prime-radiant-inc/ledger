@@ -8,13 +8,17 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"ledger/internal/board"
 	"ledger/internal/fold"
 	"ledger/internal/model"
 	"ledger/internal/out"
 )
 
 // row is one spine cell: the latest value recorded for (key, field), with
-// its provenance. Shared by status (spine + by-branch) and show.
+// its provenance. Shared by status (spine + by-branch) and show. Title is
+// populated only by show on a ready-capable board (spec "Titles"); omitempty
+// makes it structurally absent everywhere else (plain boards, and statusless
+// keys on a ready-capable board) rather than an empty string.
 type row struct {
 	Key      string   `json:"key"`
 	Field    string   `json:"field"`
@@ -25,6 +29,7 @@ type row struct {
 	TS       string   `json:"ts"`
 	ID       string   `json:"id"`
 	Evidence []string `json:"evidence"`
+	Title    string   `json:"title,omitempty"`
 }
 
 func rowOf(key, f string, ev model.Event) row {
@@ -365,6 +370,14 @@ func runShow(c *Ctx, ledgerFlag string) error {
 	}
 
 	rows := spineRows(led, "")
+	if model.ReadyCapable(led.Meta) {
+		b := board.Build(led.Meta, led.Events)
+		for i := range rows {
+			if k, exists := b.Keys[rows[i].Key]; exists {
+				rows[i].Title = k.Title
+			}
+		}
+	}
 	committers, _ := c.Store.Committers(led.Slug)
 
 	allNotes := led.Notes()
