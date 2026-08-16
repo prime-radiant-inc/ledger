@@ -1,6 +1,25 @@
 # Ledger as issue tracker (design)
 
-2026-08-15, revision 8. Rev 7 consolidated six revisions into final-form
+2026-08-15, revision 9. A fourth adversarial round (two reviewers, warned
+that six predecessors had stripped the cheap findings) still found
+load-bearing holes, and rev 9 closes them. The heaviest: rule 9 gated the
+same-value reclaim hijack but left the terminal-value eviction of a fresh
+claim wide open (the mirror image of the hole rev 8 closed) — rev 9 unifies
+all cross-author interference with a live claim under one visible gate,
+`--override-claim`. Second: issue titles existed only in the seed event's
+message and vanished from every live view at first claim, making dup-search
+unreliable on any real board — titles are now first-class derived data on
+every list. Also: dependent seeding is edges-first (closing a
+pickable-before-dependencies window outright), claimed-but-blocked keys are
+visible (`in_progress` carries `waiting_on`), `human_owned` entries carry
+their `id`, rule 9+10 composition and the same-author-label case are
+stated, board status vocab is create-validated, the `ready` envelope and
+all new formats are pinned, the stop-condition walk is an algorithm with
+cycle handling, touch-base has cadence doctrine and an economics note, the
+forensic-record framing is honestly caveated (rejected writes append
+nothing), and the test plan grows to cover all of it.
+
+Previously — revision 8. Rev 7 consolidated six revisions into final-form
 rules; a third adversarial round (two fresh reviewers, one probing the spec
 text as a lifecycle whole, one re-verifying claims against the built spike)
 found the consolidation's blind spots, and rev 8 closes them. The heavy
@@ -121,16 +140,22 @@ more unguarded status write; the invariant ends the enumeration.
 8. **Performance requirement**: the precondition read must not re-fold the
    full chain per retry (the spike did: ~70ms per 5k events per attempt).
    Narrow to the target key/field or reuse the attempt's read.
-9. **Reclaim is staleness-gated** (rev 8; reviewer-proven: without this,
-   any live claim was hijackable by a fully legal write — "stale" was
-   prose). A write setting the availability field to its claiming value
-   (`in-progress`) whose `--expect` target is itself an `in-progress`
-   event **by a different author** succeeds only if that claim is stale at
-   append time (fresh-read, per rule 7). Otherwise `not_stale`, exit 4,
-   message with the claim's age and the board's horizon. Same-author
-   re-claims (touch-base) are unaffected. On a board without
-   `--stale-after`, cross-author reclaim is impossible — take-overs happen
-   by yield or by triage.
+9. **Live claims are protected from ALL cross-author interference**
+   (rev 9; rev 8 gated only same-value re-claims, leaving the mirror-image
+   hole: anyone could `wontfix` or `close` a fresh claim with just its
+   current id). Any write to the availability field whose `--expect`
+   target is an `in-progress` event **by a different author** — whatever
+   value it writes — succeeds only if (a) that claim is stale at append
+   time (fresh-read, per rule 7), or (b) the write carries
+   `--override-claim` with a message (recorded on the event as
+   `override: claim` — greppable). Otherwise `not_stale`, exit 4; message
+   format, pinned like `claim_lost`'s: the claim's author, its age, the
+   board's horizon, and the override hint. Same-author writes (touch-base,
+   your own close) are unaffected. On a board without `--stale-after`
+   nothing is ever stale, so cross-author interference always requires the
+   override. This one gate covers reclaim, eviction, triage takeover, and
+   squat-breaking: stale claims are freely reclaimable, live ones are
+   touchable only through a visible, attributable, message-bearing act.
 10. **The human gate** (rev 8; the quarantine alone only closed the
     `ready` door — doctrine's own `show --where status=open` still
     surfaced the key, and nothing stopped the write). A write to a guarded
@@ -140,7 +165,15 @@ more unguarded status write; the invariant ends the enumeration.
     visibility, not authentication — and `labels` is unguarded by design,
     so removing the label first is possible; the gate's value is that
     either path (override flag or label removal) is a separate, visible,
-    attributable act, the same two-event philosophy as rule 5.
+    attributable act, the same two-event philosophy as rule 5. The
+    override is recorded on the event as `override: human` (greppable,
+    same shape as rule 9's). **Composition** (rev 9): the human gate is
+    checked first — a write failing both rules reports `human_owned`, not
+    `not_stale`; a write needing both passes carries both overrides.
+    **No same-author carve-out**: a label added mid-claim freezes even the
+    claimant's own close (deliberate — labeling a claimed key is how a
+    human says "stop"); the claimant resolves by label removal or
+    `--override-human`, both visible acts, and doctrine says so.
 
 `--expect` on a write touching zero guarded fields stays legal for any
 single-field write (general read-modify-write protection).
@@ -156,20 +189,37 @@ stays unfiltered.
 ## `ready`: pick unblocked work
 
 `ledger ready [--where …] [--limit N]` — one envelope, four lists, each
-bounded by `--limit` (default 50, per list) and each carrying `total`
-(the unbounded count — rev 8: a bounded list with no truncation signal
-can't size a backlog or a fanout; `since` pairs its bound with a cursor,
-`ready` pairs its with totals).
+bounded by `--limit` (default 50, per list), with totals. The envelope
+shape is pinned (rev 9 — four consumers guessing independently will
+disagree):
+
+```json
+{"ledger": "issues", "ok": true,
+ "ready": [...], "blocked": [...], "in_progress": [...], "human_owned": [...],
+ "totals": {"ready": 3, "blocked": 7, "in_progress": 2, "human_owned": 1}}
+```
+
+**Titles are first-class derived data** (rev 9; previously a title existed
+only in the seed event's `-m` and vanished from every live view at first
+claim, making dup-search unreliable on any active board): every list entry
+carries `title` — the message of the key's FIRST status event, derived
+from the chain like scars. `show` rows on boards gain the same field.
 
 List membership is a function of (status, human label, edges), exactly:
 
 | status | `human` label | edges resolved | list |
 |---|---|---|---|
 | terminal | — | — | none |
+| (no status yet) | — | — | none (invisible until seeded — see Seed) |
 | non-terminal | yes | — | `human_owned` |
 | open | no | yes | `ready` |
 | open | no | no | `blocked` |
-| in-progress | no | — | `in_progress` |
+| in-progress | no | — | `in_progress` (with `waiting_on` if unresolved) |
+
+The table is exhaustive because board status vocab is create-validated
+(rev 9): on a board declaring `--terminal`, every non-terminal status
+value must be `open` or `in-progress` (`bad_value` at create) — a third
+non-terminal value would produce keys silently absent from every list.
 
 - **ready**: oldest first, timestamp ties by chain position. Entry: `key`,
   `note`, `ts`, `by`, `id` (the claim ticket — all from the status field's
@@ -179,16 +229,21 @@ List membership is a function of (status, human label, edges), exactly:
   a floor against *omission*, not a defense against *fabrication* — refs
   are unvalidated free-form strings by design, and a pasted garbage ref
   defeats it; `ledger verify` remains v2.
-- **blocked**: entries `key`, `note`, `ts`, `by`, `waiting_on: [keys]` —
-  **direct edges only** (rev 8, stated): the stop condition's transitive
-  walk happens over the whole envelope, not one entry.
-- **in_progress**: `key`, `by`, `age`, `id` (the claim event — the reclaim
-  input), `stale: true` past the horizon.
-- **human_owned**: `key`, `note`, `ts`, `by`, `status`, plus `waiting_on`
-  when edges are unresolved — every non-terminal human-labeled key lives
-  here and only here (rev 8: shape and scope were unspecified; the label
-  dominates status for list placement, consistent with rule 10's write
-  gate).
+- **blocked**: entries `key`, `title`, `note`, `ts`, `by`, `waiting_on:
+  [keys]` — **direct edges only**: the stop condition's transitive walk
+  happens over the whole envelope, not one entry.
+- **in_progress**: `key`, `title`, `by`, `age`, `id` (the claim event —
+  the reclaim input), `stale: true` past the horizon, and `waiting_on`
+  when the key has unresolved edges (rev 9 — the edge-edit idiom legally
+  creates claimed-but-blocked keys mid-work, and without this field that
+  state was structurally invisible and silently broke the stop condition's
+  termination guarantee).
+- **human_owned**: `key`, `title`, `note`, `ts`, `by`, `status`, `id` (the
+  status field's latest event — rev 9: without it, acting on a stale
+  human-labeled claim required a second read no other list demands), plus
+  `waiting_on` when edges are unresolved. Every non-terminal human-labeled
+  key lives here and only here; the label dominates status for list
+  placement, consistent with rule 10's write gate.
 
 `ready` implies `--where status=open` for its own list; a contradicting
 status clause is `bad_usage`. Extra clauses compose. `ready` joins rev
@@ -200,11 +255,22 @@ merge, in the parent spec's own numbers-first style.
 
 ## The write idioms (all the same guarded write)
 
-- **Seed** (rev 8 — the most common write on any board, previously
-  unstated): `set <key> status=open --expect none -m "<title>" --as
-  <you>`. Seeding WITH dependencies is **two writes** (rule 2: one guarded
-  field per conditional set): the status seed above, then
-  `set <key> blocked-by=<k1>,<k2> --expect none --as <you>`.
+- **Seed**: `set <key> status=open --expect none -m "<title>" --as <you>`
+  — the `-m` is the issue's TITLE, preserved as first-class derived data
+  forever. Seeding WITH dependencies is **two writes, edges FIRST**
+  (rev 9): `set <key> blocked-by=<k1>,<k2> --expect none --as <you>`,
+  then the status seed. A key with edges but no status yet is in no list
+  (truth table) — invisible, unpickable — so the edges-first order closes
+  the window where a dependent key was claimable before its dependencies
+  landed (status-first had exactly that window, and a partial failure left
+  it permanently dependency-free). A partial failure under edges-first
+  leaves an invisible statusless key: harmless, and a named triage sweep
+  item. **Seed collision** (rev 9): a `claim_lost` on `--expect none`
+  means the key already exists — its hint says so ("this key already
+  exists — read it; if yours is a different issue, re-seed under a new
+  key") rather than the claim hint; never chain the second seed write
+  without checking the first's exit code, or your edges attach to a
+  stranger's issue.
 - **Claim**: `set <key> status=in-progress --expect <ready id> -m
   "claiming" --as <you>`. `claim_lost` → re-run `ready`, pick again. The
   claimer's `--as` IS the assignee; the claim event's provenance names
@@ -222,6 +288,11 @@ merge, in the parent spec's own numbers-first style.
   -m "reclaiming from <by>: stale <age>"` — succeeds only against a
   genuinely stale claim (rule 9). Concurrent reclaimers serialize
   (field-trialed).
+- **Takeover / squat-break** (rev 9): interfering with a LIVE claim —
+  evicting, force-closing, or breaking a touch-base squatter — is
+  `set <key> status=<value> --expect <its id> --override-claim -m
+  "<why, naming the claimant>"`. Triage-only by doctrine; the override is
+  recorded on the event and greppable.
 - **Reopen**: terminal→any non-terminal value with `--expect <the terminal
   event's id>` (rev 8: not restricted to `open`; reopen-and-claim in one
   write is legal).
@@ -232,14 +303,35 @@ merge, in the parent spec's own numbers-first style.
   status write in one set — rule 2 makes it `bad_usage`.
 - **Triage status writes**: guarded like everything else; label churn is
   unguarded and cannot disturb claims (harness-proven).
+- **Recovery** (rev 9 — the one idiom that had prose but no command):
+  after discovering a clobber or duplication, two writes:
+  `note -k handoff --key <key> --from-file <what-happened>.md --as <you>`
+  then, if the state itself needs correcting and you hold or can read the
+  current id, the corrective guarded set with `--evidence` and a message
+  naming the mistake. Idiom messages throughout this section ("claiming",
+  "still on it", "reclaiming from …") are **load-bearing conventions**,
+  not illustrations: consumers filter watch streams and grep history by
+  them, so the skill teaches them verbatim.
 
 ## Board doctrine (the skill)
 
 - First read: `ledger show --where status=open`.
 - Picking loop: `ready` → claim → work → close → repeat. Stop when
-  `ready` is empty (and its `total` confirms nothing beyond the limit) and
-  every `blocked` entry traces, over the envelope, only to non-stale
-  `in_progress` or `human_owned` keys. Don't poll.
+  `ready` is empty (its `total` confirming nothing beyond the limit) and
+  the blocked frontier resolves to workers or humans. **The walk, as an
+  algorithm** (rev 9 — it was a prose predicate whose landmine, cycles,
+  the spec elsewhere declares legal): with the whole envelope in hand,
+  for each `blocked` entry, follow `waiting_on` keys with a visited-set;
+  a key in `in_progress` (non-stale, and not itself waiting on anything
+  unresolved) or `human_owned` is a safe leaf; a key absent from all
+  lists is terminal (moot); a revisited key is a cycle — NOT safe, it
+  resolves to no one and is a triage item. Stop only if every path ends
+  at a safe leaf. Don't poll.
+- Touch-base cadence (rev 9): at roughly half the board's
+  `--stale-after`, and only while actively working. Touch-bases are
+  events; a long task under a short horizon multiplies chain volume and
+  watch noise (the economics note below), so boards pick horizons matching
+  their tasks — not the reverse.
 - Claiming an `unblocked_without_evidence` key: name it in the claim
   message.
 - Triage moment: walk `show --where status=open` — keep / close with
@@ -253,8 +345,15 @@ merge, in the parent spec's own numbers-first style.
 - Recovery idiom: on discovering you clobbered or duplicated state — read
   the key's history, correct with an evidenced write naming what happened,
   report it. Never quietly re-fix.
-- Dup defense: search before create; dups close `wontfix -m "dup of
+- Dup defense: search before create — against TITLES, which live in
+  `ready`/`show`'s `title` field for live keys and in `tail --raw`
+  (never the curated view — rollups may compress seed events away) for
+  closed ones. Rollup summaries on boards retain key names verbatim so
+  rolled threads stay greppable. Dups close `wontfix -m "dup of
   [[key]]"`.
+- Squat sweep (rev 9): triage checks `in_progress` for claims
+  touch-based repeatedly without progress notes or evidence; breaking one
+  is a `--override-claim` takeover, message naming the claimant.
 - Every paste-ready command line carries the absolute binary path (a
   trial's workers typed bare `ledger` because the doctrine's lines did;
   one silently used an old binary past every rail).
@@ -262,11 +361,33 @@ merge, in the parent spec's own numbers-first style.
   said. `--expect` proves you read the state; rules 5, 9, and 10 narrow
   the blast radius of not respecting it; judgment does the rest.
 
-## Timestamps
+## Timestamps, clocks, and the chain's economics
 
-Event timestamps gain sub-second resolution in rev 14: the 1-second format
-makes short `--stale-after` values misfire and overworks tie-breaking.
-Additive change; readers parse both.
+Event timestamps gain sub-second resolution in rev 14, pinned (rev 9) to
+the layout `2006-01-02T15:04:05.000` (UTC, fixed milliseconds, no zone
+suffix — the parent spec pinned the old layout exactly; the new one gets
+the same treatment; variable-precision formats break naive comparisons).
+Readers parse both layouts. `age` compares a writer's recorded `ts`
+against the reader's clock: boards assume same-host clock coherence;
+multi-host fleets sharing a store are a Plan 2 concern and get a one-line
+warning in the skill.
+
+Economics, stated (rev 9): a completed issue is ≥3 events (seed, claim,
+close) plus touch-bases, which scale with wall-clock duration, not issue
+count — a cautious agent under a short horizon can multiply chain volume
+15x. The `ready` cost bound below is measured against event volume
+including touch-base churn, not issue count. `watch` consumers filter
+touch-bases by the load-bearing message convention ("still on it"); a
+`--transitions-only` watch flag is deferred until that proves
+insufficient, stated here rather than silently.
+
+Honest caveat (rev 9, retiring an inherited overstatement): the chain is a
+complete record of every write that LANDED. Rejected writes —
+`claim_lost`, `not_stale`, `human_owned`, `bad_usage` — append nothing,
+so contention history (who tried and lost, how many piled onto a hot key)
+is not preserved. Trial 1's "complete forensic record" framing predates
+the invariant that made writes rejectable; the trade is deliberate and now
+stated.
 
 ## Deferred, with reasons
 
@@ -296,25 +417,36 @@ branch: historical evidence, never merged.
    `bad_usage`.
 2. Seed with `--expect none`; racing seeds serialize (one winner);
    `--expect none` on a touched field → `claim_lost`.
-3. Claim/close/reopen chains: each conditioned on the right event; stale
-   `--expect` → `claim_lost` with correct id/author/value in the message —
-   including on the reclaim path (the trial's malformed-message bug).
+3. Claim/close/reopen chains: each conditioned on the right event; an
+   OUTDATED `--expect` (id no longer current — distinct from rule 9's
+   horizon-based "stale") → `claim_lost` with correct id/author/value in
+   the message — including on the reclaim path (the trial's
+   malformed-message bug).
 4. Field-scoping: label writes racing status claims never produce
    `claim_lost` (harness round, 10/10 required).
 5. First-edge race under `--expect none` (harness round, 10/10).
 6. Terminal→terminal → `bad_usage`; terminal→in-progress legal with the
    terminal event's id.
-7. Reclaim: cross-author claim-over-claim on a fresh claim → `not_stale`
-   with age+horizon; on a stale claim → succeeds; two concurrent
-   reclaimers → one winner; same-author touch-base always allowed; board
-   without `--stale-after` → cross-author reclaim always `not_stale`.
+7. Rule 9, all shapes: cross-author write of ANY value against a fresh
+   claim → `not_stale` (age, horizon, override hint in the pinned format);
+   same with `--override-claim` + message → succeeds, event records
+   `override: claim`; against a stale claim → succeeds without override;
+   two concurrent reclaimers → one winner; same-author touch-base and
+   close always allowed; board without `--stale-after` → cross-author
+   writes always require the override.
 8. Human gate: guarded write on a `human`-labeled key → `human_owned`;
-   with `--override-human` + message → succeeds and the event records the
-   override; label removal then write succeeds (documented bypass — test
-   asserts the two events are distinct and attributable).
+   with `--override-human` + message → succeeds, event records
+   `override: human`; label removal then write succeeds (documented
+   bypass — the two events distinct and attributable); label added
+   mid-claim freezes the claimant's own close until removal/override;
+   a stale human-labeled claim needs BOTH overrides and fails as
+   `human_owned` when only staleness holds (composition order).
 9. `ready` truth table: every row, including human-labeled in-progress
-   (appears in `human_owned` only) and human-labeled blocked (ditto, with
-   `waiting_on`).
+   (in `human_owned` only, WITH `id`), human-labeled blocked (ditto, with
+   `waiting_on`), claimed-but-blocked (in `in_progress` with
+   `waiting_on`), statusless seeded keys (no list), and `title` present
+   on every entry of all four lists; envelope shape matches the pinned
+   example, totals correct.
 10. `ready` ordering: oldest-first, tie by chain position (regression for
     the alphabetical bug); `--limit` per list with correct `total`s.
 11. `unblocked_without_evidence`: fires on evidence-free terminal blockers,
@@ -331,6 +463,24 @@ branch: historical evidence, never merged.
 17. `ready` cost at 5k events: measured, within the stated bound.
 18. Doctrine examples: every command line in the board skill executes
     verbatim against a scratch board (the tool's doc-harness precedent).
+19. Conditional-set precondition read under contention at 5k events:
+    narrowed/reused per rule 8, not a full re-fold per retry — measured
+    bound stated (the rule had no test; `ready`'s test 17 measures a
+    different operation).
+20. Edges-first dependent seed: key invisible to all lists between edge
+    write and status write; claimable only after status lands; partial
+    failure leaves an invisible key surfaced by the triage sweep.
+21. Seed collision: `--expect none` on an existing key → the
+    key-already-exists hint (not the claim hint); chained edge write after
+    an unchecked failed seed is the documented cross-contamination case —
+    test asserts the hint text warns about it.
+22. Titles: derived from the first status event; survive claims, closes,
+    reopens; present in `show` rows on boards.
+23. Status vocab validation: a third non-terminal value at create →
+    `bad_value` on boards declaring `--terminal`.
+24. Timestamp layout: new events carry fixed-millisecond UTC; old
+    second-resolution events parse; staleness math correct across mixed
+    precision.
 
 ## Validation record
 
@@ -342,8 +492,12 @@ branch: historical evidence, never merged.
   `human_owned` and the terminal-transition ban.
 - **Harnesses**: `research/scripts/expect-race-harness.sh` (20/20,
   independently re-run) + extended spike harness (30/30).
-- **Adversarial reviews**: three rounds, six reviewers. Round 3 (on the
+- **Adversarial reviews**: four rounds, eight reviewers. Round 3 (on the
   rev-7 consolidation) produced rules 9 and 10, the Seed idiom, the key
-  grammar rule, the truth table, totals, and this test plan.
+  grammar rule, the truth table, totals, and this test plan. Round 4 (on
+  rev 8) produced the unified `--override-claim` gate, first-class
+  titles, edges-first seeding, claimed-but-blocked visibility, the pinned
+  envelope and formats, the stop-condition algorithm, and the honest
+  forensic caveat.
 - **Kata reconnaissance**: `~/git/kata` — what we took and declined is in
   Deferred.
