@@ -12,7 +12,20 @@ import (
 
 var slugRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 
+const (
+	TSLayout       = "2006-01-02T15:04:05.000"
+	TSLayoutLegacy = "2006-01-02T15:04:05"
+)
+
 func ValidSlug(s string) bool { return slugRE.MatchString(s) }
+
+func ParseTS(s string) (time.Time, error) {
+	if t, err := time.Parse(TSLayout, s); err == nil {
+		return t.UTC(), nil
+	}
+	t, err := time.Parse(TSLayoutLegacy, s)
+	return t.UTC(), err
+}
 
 type Origin struct {
 	Host          string `json:"host"`
@@ -104,7 +117,7 @@ func CaptureOrigin(r gitx.Repo) Origin {
 }
 
 func NewEvent(typ, author string, r gitx.Repo) Event {
-	return Event{TS: time.Now().UTC().Format("2006-01-02T15:04:05"), Type: typ,
+	return Event{TS: time.Now().UTC().Format(TSLayout), Type: typ,
 		Author: author, Origin: CaptureOrigin(r)}
 }
 
