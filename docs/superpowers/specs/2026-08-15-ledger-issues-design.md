@@ -1,287 +1,257 @@
 # Ledger as issue tracker (design)
 
-2026-08-15, revision 4. Rev 4 adjudicates the two-reviewer adversarial round
-(both reviewers probing the built spike; five Critical/Major classes
-survived). The heavy findings: replace-wholesale `blocked-by` silently drops
-edges under concurrent edit, yielding **false-ready** keys (edge writes now
-require `--expect`); an unvalidated `--terminal` typo **permanently
-deadlocks** a board (values must be vocab-subset-validated at create);
-`--expect`'s precondition was key-scoped, so ordinary triage writes caused
-spurious `claim_lost` (now field-scoped, with `ready`'s claim-ticket fields
-made coherent); abandoned in-progress claims were invisible (`ready` gains an
-`in_progress` list with ages); wontfix unblocked dependents silently
-(annotated, and the example config now requires evidence on wontfix).
-Corrections: trial 1's tie-break claim was false (the spike sorts
-alphabetically; the rule is now chain position, and the trial report carries
-an erratum); the reopen guard and `min_writer` are explicitly PROPOSED and
-unimplemented, not validated; the `--expect` atomicity citation is now a
-preserved artifact (`research/scripts/expect-race-harness.sh`, re-run 20/20
-by the controller). Rev 3 folds in the second trial
-(`research/ledger-issues-spike-trial2.md`), which validated `--expect`
-(atomic in a 20-round forced-race harness and across a live worker's seven
-claims) and — by accident — ran a mixed-version fleet: two of three workers
-used the PATH binary lacking every new feature and wrote straight past the
-safety rails (one double-work, one zombie-reopen of a closed issue, both
-self-corrected and fully attributable in the chain). New in rev 3:
-reopening a terminal-status key requires `--expect`; board meta gains a
-`min_writer` floor enforced by rev-14+ binaries (forward-only guard,
-honestly limited); doctrine rule that paste-ready command lines carry the
-absolute binary path (proven twice now); kit's detect-correct-report
-sequence canonized as the recovery idiom. Rev 2 folds in the two-worker spike trial
-(`research/ledger-issues-spike-trial.md`): the "claim discipline needs no
-mechanism" bet was falsified live — both workers passed the verify snapshot
-and duplicated work within 90 seconds of board start — so claiming gains a
-**conditional write** (`--expect`), and verify-after-claim is demoted to a
-fallback. Everything else survived contact: `ready` ordered a dependency
-diamond correctly across concurrent workers with zero tool errors, and
-`blocked`/`waiting_on` was used by both workers (once to decide termination,
-once to sanity-check the DAG). What it takes for a ledger to serve as a
-cross-session issue tracker with agent work-picking, grounded in the kata
-comparison (`~/git/kata`, deliberately-small issue model: two statuses,
-labels, links, triage doctrine, open-by-default filtered list) and the
-memory build's structural lesson (the fold needs value-level filtering;
-rollups can't curate it). Three upstream tool additions (spec rev 14
-candidates), one derived-state verb, and doctrine. No new storage, no
-daemon, no schema migration: everything folds from events the current
-store already records.
+2026-08-15, revision 5. Rev 5 adjudicates the second adversarial round (two
+fresh reviewers, spec-as-text; verdicts: not implementation-ready, with
+stated fixes — all applied here). The consolidating ruling: three rounds of
+findings each caught another unguarded status write (claim-verify's TOCTOU,
+the zombie-reopen, the unconditioned close, the unconditioned triage write,
+the 0→N edge race), so rev 5 stops enumerating and states the invariant —
+**every write to a guarded field carries `--expect`**, with `--expect none`
+as the first-touch sentinel. That one rule subsumes the reopen guard
+(formerly PROPOSED), dissolves the edge-gate ambiguity, and serializes every
+race class found so far. Also rev 5: the wontfix-evidence requirement is
+replaced by an honest derived signal (evidence of a non-decision is theater);
+`in_progress` entries specified fully; staleness horizon and human-owned get
+mechanisms; `ready` gets the bounded-read treatment its sibling verbs earned;
+near-miss hints dropped (rev 13's YAGNI cut stands); export/import meta
+round-trip stated; the validation plan gains an edge-race harness round.
+History: rev 1 design → trial 1 (falsified claim-by-doctrine) → rev 2
+(`--expect`) → trial 2 (validated `--expect`, exposed version skew) → rev 3
+→ par round 1 (edge drops, `--terminal` deadlock, key-scoped preconditions)
+→ rev 4 → par round 2 → this. Trials: `research/ledger-issues-spike-trial.md`,
+`trial2.md`; harness: `research/scripts/expect-race-harness.sh`.
 
 ## What already works today (no changes)
 
 Issues as keys; status vocab via enum fields; `--require-evidence
-status=closed` as the only transition rule that matters; discussion as
-keyed notes with kinds (`comment`, `repro`, `ruling`); attribution and
-provenance per event; `watch`/`since` for live triage; CAS-safe concurrent
-writers; rollups for closed-thread curation of `tail`. Priorities are just
-another enum field for boards that want one.
+status=closed` as the transition rule that matters; discussion as keyed
+notes with kinds (`comment`, `repro`, `ruling`); attribution and provenance
+per event; `watch`/`since` for live triage; CAS-safe concurrent writers;
+rollups for closed-thread curation of `tail` (the *projection* lesson from
+the memory build does not bite here: boards read through `--where` filters
+and `ready`, not through an unbounded spine). Priorities are just another
+enum field for boards that want one.
 
-## Addition 1: multi-valued free fields (`--multi-field`)
-
-`create --multi-field <name>` declares a field that is **multi-valued and
-vocab-free** — the folksonomy axis kata calls labels, deliberately outside
-the closed-vocab discipline that governs enum fields (tags earn no
-`vocab add` ceremony; misspelled tags are noise, not corruption).
-
-- Value grammar: comma-separated kebab tokens. `set relay-storm
-  labels=bug,relay,regression`. No spaces or commas inside a token.
-- Fold semantics: **replace wholesale** per set, exactly like every other
-  field (concurrent taggers can drop each other's edits; same accepted
-  class as any field race). `labels=` (empty) clears.
-- Rendered in `show`/`render` as the literal token list.
-
-Two declared multi-fields make an issue board:
+## The board
 
 ```
 ledger create issues --scope "issue tracker for <repo>" \
     --field status=open,in-progress,closed,wontfix \
     --terminal status=closed,wontfix \
     --multi-field labels --multi-field blocked-by \
-    --require-evidence status=closed
+    --guard status --guard blocked-by \
+    --require-evidence status=closed \
+    --stale-after 2h
 ```
 
-**`blocked-by` is just a multi-field whose tokens are keys — but its race
-class is NOT the labels race** (rev 4, reviewer-proven): two workers each
-adding an edge replace-wholesale drop one edge silently, and a dropped edge
-is a **false-ready** key downstream agents will act on, where a dropped
-label is noise. Therefore: **a write to `blocked-by` on a key that already
-has edges requires `--expect`** — prove you read the current edge set
-before replacing it; a concurrent editor gets `claim_lost`, re-reads, and
-merges by hand. (Additive `block`/`unblock` verbs are the ergonomic sugar
-the real implementation should weigh; the `--expect` rule is the safety
-floor either way.) Edges referencing keys get set-time validation
-(addition 3); a "blocked" *status* value is deliberately absent — blocked
-is derived state, and deriving it is the whole point.
+- **`--multi-field <name>`**: multi-valued, vocab-free field (kebab tokens,
+  comma-separated, no spaces/commas inside tokens — enforced at write time,
+  `bad_value`; the spike skipped enforcement and `~=` matching demonstrably
+  broke on malformed tokens). Replace-wholesale per set. `labels=` clears.
+- **`--terminal <field>=<v1>,<v2>`**: which values mean "no longer blocks
+  anything." Values MUST be a subset of the field's declared vocab,
+  validated at create (adversarially proven: the spike accepted
+  `wontfxi`, and since meta is immutable with no extension verb, one typo
+  permanently deadlocked every dependent key). `--require-evidence` gets
+  the same validation.
+- **`--guard <field>`**: declares a field conditional-write-only (see The
+  invariant, below). Boards guard `status` and `blocked-by`; `labels` stays
+  unguarded — a dropped label is noise, a dropped edge is a false-ready key.
+- **`--stale-after <duration>`**: the board's staleness horizon, recorded in
+  meta, surfaced as `stale: true` on `in_progress` entries past it. Optional;
+  without it no entry is ever flagged stale and reclaiming is pure human
+  judgment.
+- Field-name convention, stated plainly: boards name their availability
+  field `status` and their edge field `blocked-by`. `ready` depends on both
+  and says so when they're absent. (Generalizing the names waits for a
+  consumer that needs it.)
+- **Export/import round-trips meta byte-for-byte** — declarations
+  (`fields`, `multi_fields`, `terminal`, `guard`, `require_evidence`,
+  `stale_after`) travel with the board; import never re-derives them.
+  Test-plan item: an exported-then-imported board's `ready` output is
+  identical to the source's.
 
-Multi-field token grammar (kebab, no spaces/commas inside tokens) is
-enforced at write time in the real implementation (`bad_value`); the spike
-skipped it and `~=` matching demonstrably breaks on malformed tokens.
-`~=` on a single-valued enum field is `bad_usage`.
+**`blocked-by` is a multi-field whose tokens are keys.** Each token is
+validated as an existing key at write time (`unknown_key`, exit 4, message
+naming the token; NO near-miss suggestions — rev 13 round 7 cut that
+machinery and the ruling stands). Cycles are representable, never silently
+dropped: they surface in `blocked` as keys waiting on each other. A
+"blocked" status value is deliberately absent — blocked is derived.
 
-## Addition 2: filtered reads (`show --where`)
+## The invariant: guarded fields take conditional writes only
 
-`show --where <field>=<value>` (exact match) and `--where
-<field>~=<token>` (token membership, for multi-fields). Repeatable flags
-AND together:
+`set` gains `--expect <event-id> | --expect none`. A write to a guarded
+field:
 
-```
-ledger show --where status=open --where labels~=relay
-```
+- MUST carry `--expect`. A plain set on a guarded field is `bad_usage`
+  naming the rule. (Three review rounds each found another unguarded write
+  — claim, close, triage's wontfix, reopen, first-edge — this rule ends the
+  enumeration.)
+- `--expect <event-id>`: succeeds only if the guarded field's latest event
+  is still `<event-id>` at append time. `<event-id>` is an event SHA
+  (prefix-match, same as other id args).
+- `--expect none`: succeeds only if the field has NO prior event on this
+  key — the first-touch sentinel. Two workers racing to write a key's first
+  edges both pass `none`; exactly one wins, the loser gets `claim_lost`,
+  re-reads, merges. This dissolves the rev-4 "already has edges?" gate,
+  whose snapshot evaluation was adversarially shown to reopen the
+  edge-drop race on the 0→N boundary.
+- On failure: `claim_lost`, exit 4, message naming the event that beat you
+  — its id, author, and the guarded field's value it wrote (never a
+  fabricated `status=` attribution for events that touched other fields).
+  Hint: "re-run ledger ready and pick again" on status; "re-read the key's
+  edges and merge" on blocked-by.
+- **Scope**: the precondition guards the written field's own event history
+  (field-scoped — the rev-4 correction of the key-scoped spike, which let
+  any triage label kill in-flight claims). Notes never invalidate it:
+  `--expect` guards field state, not discussion; reading a key's notes
+  before working it stays doctrine.
+- **One guarded field per conditional set.** `set key status=x labels=y
+  --expect <id>` is `bad_usage`: a single `--expect` cannot speak for two
+  independent field histories (adversarially flagged as four-ways-ambiguous;
+  the rule removes the ambiguity). Unguarded fields may ride along with a
+  guarded write only when the set touches exactly one guarded field.
+- **Atomicity**: the precondition (including `none`) re-validates against a
+  fresh read inside the store's CAS retry loop on every attempt — never a
+  pre-loop snapshot. Citation for the mechanism:
+  `research/scripts/expect-race-harness.sh` (20/20 forced-race status
+  rounds, one winner + one clean `claim_lost` per round, independently
+  re-run). Validation plan, pre-implementation: extend the harness with a
+  first-edge round (two concurrent `blocked-by` writes under `--expect
+  none`) and an interleaved-triage round (label writes racing status
+  claims must NOT produce claim_lost).
+- Performance note for the implementation: the spike re-read the full chain
+  per retry (~70ms per 5k events per attempt, a cost no other write pays);
+  the precondition read must narrow to the target key/field or reuse the
+  fold the retry already holds.
 
-Bare `show` stays unfiltered (it serves every ledger role; boards get
-their kata-style open-by-default view from doctrine's first line, not from
-a changed global default). Filter evaluation is fold-side: rows whose
-named field's current value matches. A `--where` naming an undeclared
-field is `bad_usage` with the declared-field list in the hint.
+## Filtered reads (`show --where`)
 
-## Addition 3: edge validation on write
+`show --where <field>=<value>` (exact) and `--where <field>~=<token>`
+(token membership, multi-fields only — `~=` on an enum field is
+`bad_usage`). Repeatable, AND'd. Two `=` clauses on the same field are
+`bad_usage` (unsatisfiable by construction — flagged as a silent
+always-empty footgun). `--where` naming an undeclared field is
+`unknown_field` with the declared-field list in the hint (rev 13 already
+owns that identifier; `bad_usage`'s hint stays "the verb's --help").
+Bare `show` stays unfiltered; boards get their open-by-default view from
+doctrine's first line.
 
-A `set` writing to a multi-field named `blocked-by` (by convention: any
-multi-field whose name ends in `-by` or is declared `--edges`? — **ruling:
-keep it simple, `blocked-by` is a reserved multi-field name** with edge
-semantics; other multi-fields are plain tags) validates each token is an
-existing key in this ledger, failing with `unknown_event`-style error
-(`unknown_key`, exit 4, hint listing near-miss keys). Catches typos at
-write time, same philosophy as rollup's children-must-exist. Dangling refs
-can still arise later only via... nothing — keys are never deleted. Cycles
-(A blocked-by B, B blocked-by A) are representable and not rejected
-(detection at write time costs a graph walk; the failure mode is visible,
-not silent — see `ready`).
+## `ready`: pick unblocked work
 
-## Addition 4: the `ready` verb (pick unblocked work)
+`ledger ready [--where …] [--limit N]` — one JSON envelope, three lists,
+each bounded by `--limit` (default 50, kata's default; the parent spec
+earned bounded reads through a measured incident and its newest, hottest
+read verb inherits the discipline):
 
-`--terminal <field>=<v1>,<v2>` at create declares which values mean "this
-key no longer blocks anything" (recorded in meta). **Rev 4
-(reviewer-proven): terminal values MUST be validated as a subset of the
-field's declared vocab at create time** — the spike accepted
-`--terminal status=closed,wontfxi` without complaint, and since meta is
-immutable and no extension verb exists, that one-character typo permanently
-deadlocks every dependent key with no recovery short of abandoning the
-board. (`--require-evidence` has the same missing validation with a milder
-failure; the real implementation fixes both.) Boards name their
-availability field `status` and their edge field `blocked-by` — stated
-convention, not emergent; `ready` depends on it and says so when it's
-absent.
+- **ready**: keys with `status=open` whose `blocked-by` tokens all have
+  terminal status. Oldest first; timestamp ties break by chain position
+  (rev 4 correction — the spike's alphabetical tie-break systematically
+  favored early-alphabet keys; trial 1's contrary claim was false and its
+  report carries an erratum). Each entry: `key`, `note`, `ts`, `by`, and
+  `id` — the status field's latest event id, the claim ticket — all derived
+  from that same status event (the spike's mixed derivation desynced ticket
+  from row). Entries whose blockers include a terminal event carrying no
+  evidence refs gain `unblocked_without_evidence: [keys]` — generalized
+  from rev 4's literal-`wontfix` annotation, keyed to the property that
+  matters (an unevidenced resolution) rather than a vocab string, so
+  boards with `duplicate`-style vocabs keep the signal. The annotation is
+  derived and recomputable from the chain at any time; doctrine has the
+  claimer copy it into the claim's `-m` so it persists on the key's own
+  history.
+- **blocked**: same availability filter, unresolved edges, each with
+  `waiting_on: [keys]`.
+- **in_progress**: keys with `status=in-progress` (filter stated; the
+  rev-4 text left it inferable), each with `by`, `age`, `id` (the claim
+  event's id — the input the reclaim idiom needs and rev 4 forgot to
+  provide), and `stale: true` when past the board's `--stale-after`.
 
-`ledger ready [--where …]` returns the work-picking view, one JSON
-envelope:
+`ready` implies `--where status=open`; a caller clause contradicting the
+availability filter is `bad_usage`. Additional `--where` clauses compose
+(`ready --where labels~=relay`). Rev-14 bookkeeping: `ready` joins rev 13's
+data-verb list (`--ledger` addressing, standard envelope and exit codes).
 
-- **ready**: keys where `status=open` AND every `blocked-by` token's status
-  is terminal. Sorted oldest-first; timestamp ties break by **chain
-  position** (rev 4 correction: the spike broke ties alphabetically, which
-  systematically favors early-alphabet keys — trial 1's contrary claim was
-  wrong and its report carries an erratum). Each entry carries the claim
-  ticket `id` (see Claiming) plus, when a blocker was resolved via
-  `wontfix`, an `unblocked_via_wontfix: [keys]` annotation — an abandoned
-  prerequisite is not an evidence-backed one, and downstream pickers get to
-  know (rev 4). The example config requires evidence on `wontfix` too, for
-  the same reason.
-- **blocked**: keys matching the availability filter whose edges are
-  unresolved, each with `waiting_on: [keys]`. A cycle appears as keys
-  waiting on each other: visible, never silently dropped.
-- **in_progress** (rev 4): claimed keys with claimant and age — without
-  this list, a claim whose worker died vanishes from both other lists and
-  nothing ever surfaces it (reviewer-proven). Doctrine: an in-progress
-  entry older than the board's staleness horizon is reclaimable by
-  reopening it with `--expect` and a message naming the takeover.
+## Claiming, closing, reclaiming — all the same write
 
-Additional `--where` flags compose (e.g. `ready --where labels~=relay`
-scopes picking to a subsystem). A caller `--where` that contradicts the
-availability filter (`ready --where status=closed`) is `bad_usage` — rev 4:
-the spike happily presented closed issues as pickable work.
+- **Claim**: `set <key> status=in-progress --expect <ready-entry id> -m
+  "claiming" --as <you>`. `claim_lost` → re-run `ready`, pick again. The
+  claimer's `--as` is the assignee; no owner field exists — the claim
+  event's author and provenance name who has it, when, from which host.
+- **Touch-base** (the liveness idiom rev 4 lacked): a long-running claimer
+  re-sets `status=in-progress --expect <own claim id> -m "still on it"`,
+  resetting its `in_progress` age. Reclaimers check the age they see IS the
+  latest signal — that's what the mechanism gives them.
+- **Close**: `set <key> status=closed --evidence <ref> --expect <own claim
+  id>`. Conditioned like every guarded write — the round-2 Critical: an
+  unconditioned close racing a reclaim replays trial 1's double-work at the
+  loop's last step. A `claim_lost` at close means you were reclaimed while
+  working: read the key's history, reconcile honestly (usually: note your
+  result as a comment on the key, let the current claimant decide), never
+  re-close over the newer claim blind.
+- **Reclaim**: a stale `in_progress` entry is retaken with `set <key>
+  status=in-progress --expect <its id> -m "reclaiming from <by>: stale
+  <age>"`. Two concurrent reclaimers serialize on the same `--expect`.
+- **Reopen**: a terminal→non-terminal transition is just another guarded
+  write — `--expect` the status field's latest event id (the close you're
+  reopening). The former PROPOSED reopen rule is subsumed by the invariant;
+  nothing special remains to implement. Trial 2's zombie-reopen becomes
+  structurally impossible.
+- **Wontfix / triage writes**: also just guarded writes — `--expect`
+  required. The round-2 Critical: an unconditioned triage `wontfix` could
+  silently overwrite an active claim; under the invariant the triager gets
+  `claim_lost` and sees the claim they were about to bulldoze.
 
-## Claiming (rev 2: conditional write, mechanism required)
+## Board doctrine (the skill)
 
-Rev 1 bet that a claim-then-verify idiom sufficed. The spike trial falsified
-it: the verify step is a point-in-time snapshot, and a claim landing after
-one worker's check but before its close is invisible to both sides — both
-workers legitimately "held" the same key and duplicated the work. Claiming
-needs atomicity the fold can't retroactively supply.
+- First read: `ledger show --where status=open`.
+- Picking loop: `ready` → claim (`--expect`) → work → close (`--expect`,
+  evidence) → repeat. Stop when `ready` is empty and every `blocked` entry
+  waits (directly or transitively) on a key that is `in_progress` (someone
+  is on it) or carries the reserved label `human` (the mechanism behind
+  rev 4's undefined "human-owned": `labels~=human`, stated convention).
+  Don't poll.
+- When claiming a key annotated `unblocked_without_evidence`, name it in
+  the claim message ("prereq X resolved without evidence") — that persists
+  the warning into the key's own history.
+- Triage moment: walk `show --where status=open`; every status write in
+  triage carries `--expect` like any other (read the row, pass its id).
+  The wontfix "why" lives in `-m`; evidence on wontfix is NOT required —
+  rev 5 reverses rev 4 here, adjudicating the round-2 finding that
+  evidence-of-a-non-decision forces theater (an unvalidated ref pasted to
+  satisfy a gate), which the trust model gets nothing from. The honest
+  signal is the derived annotation above, which tells downstream pickers
+  precisely what happened.
+- Recovery idiom (canonized from trial 2's kit): on discovering you
+  clobbered or duplicated state — read the key's history, correct with an
+  evidenced write naming what happened, report it. Never quietly re-fix.
+- Discussion: keyed notes (`comment`, `repro`, `ruling`); dup defense is
+  search-before-create; dups close `wontfix -m "dup of [[key]]"`.
+- Every paste-ready command line in board doctrine carries the absolute
+  binary path (two of three trial-2 workers typed bare `ledger` because
+  the command lines did; one silently used an old binary past every rail).
 
-**Addition 5: conditional writes.** `set <key> … --expect <event-id>`
-succeeds only if the precondition still holds at append time; otherwise
-`claim_lost`, exit 4, message naming the event that beat you (and only the
-fields it actually touched — the spike's message fabricated a `status=`
-attribution for non-status winners). The store's ref-CAS retry loop
-re-validates on every retry, so the check is genuinely atomic — citation:
-`research/scripts/expect-race-harness.sh`, 20/20 forced-race rounds, one
-winner and one clean `claim_lost` per round, re-run independently.
+## Deferred, with reasons
 
-**Scope (rev 4, reviewer-proven):** the precondition is **field-scoped, not
-key-scoped**: it guards the latest event touching the field(s) this set
-writes. The spike's key-wide precondition meant any triage write — a label,
-an edge edit — spuriously killed in-flight status claims, and `ready`'s
-claim ticket silently desynced from the status row it described. Under
-field scoping, `ready`'s `id`, `note`, `ts`, and `by` all derive from the
-same (status) event. Stated plainly: `--expect` guards field state only —
-notes never invalidate it, so a "don't duplicate this" comment posted
-mid-claim does not stop the claim; reading a key's notes before working it
-stays doctrine. `--expect` with an empty value is `bad_usage`, not a silent
-unconditional write; a first-touch sentinel (key must have no prior event)
-is deferred until a consumer needs it. Performance note for the real
-implementation: the spike re-reads the full chain per CAS retry (~70ms per
-5k events per attempt, a cost no other write pays); the precondition read
-should narrow to the target key or reuse the fold the retry already has.
+- **`min_writer` floor** (version-skew guard): next round, not rev 14 —
+  it cannot protect against the binaries already in the field (trial 2's
+  v0.1.0 writer), so its value starts accruing only after it ships;
+  fleet doctrine (same binary, absolute paths) is the working mitigation.
+  Moved out of the implementation scope explicitly — round 2 flagged that
+  "PROPOSED" inside the spec body read as maybe-in-scope.
+- **Multi-field token filters on `watch`/`since`** (`--value ~=`):
+  deferred until an orchestrator needs to watch label/edge changes;
+  workaround is `--key` + client-side filtering. Stated, not silent.
+- Additive `block`/`unblock` verbs (ergonomic sugar over guarded
+  `blocked-by` writes); FTS search; TUI; short IDs; sharing (Plan 2).
 
-The claim idiom becomes: read `ready` (each entry carries its key's latest
-event id), then `set <key> status=in-progress --expect <id> -m "claiming"`.
-A `claim_lost` means someone beat you — re-run `ready`. Verify-after-claim
-remains documented only as the fallback for boards driven through tools
-without `--expect`.
+## Implementation scope (rev 14, SDD with tests)
 
-The **claimer's `--as` is the assignee** — no owner field exists. The
-in-progress event's author and provenance answer "who has this" with more
-honesty than an assignee box (it names the session that actually claimed
-it, when, from which host). Unclaiming is `status=open -m "yielding: <why>"`.
-
-**PROPOSED, unimplemented, unvalidated** (rev 4 labels these honestly —
-the adversarial round caught the reopen rule reading as tested when the
-spike contains no code for it and the zombie-reopen still reproduces on the
-spike binary):
-
-- **Reopening requires proof of knowledge.** A `set` that moves a key FROM
-  a terminal status to a non-terminal one requires `--expect` — trial 2
-  produced the exact stale-write this stops. A deliberate reopen trivially
-  satisfies the rule: read the key, pass its id.
-- **`min_writer` floor.** Boards created with rev-14 features record a
-  minimum writer version in meta; rev-14+ binaries refuse to write above
-  their version. Honest limit: binaries predating the mechanism can't be
-  retrofitted — trial 2's v0.1.0 writer would sail past this too. The floor
-  guards future skew only; fleet-dispatch doctrine (same binary, absolute
-  paths in dictated commands) guards the rest.
-
-Doctrine additions from the trials: the stop condition spells out that
-"blocked only on another worker's in-progress key" counts as finished for
-your session (don't poll); `ready`'s oldest-first ordering breaks timestamp
-ties by chain position; every paste-ready command line in board doctrine
-carries the absolute binary path (two of three trial-2 workers typed bare
-`ledger` because the command lines did); and the recovery idiom when you
-discover you've clobbered someone's state: read the key's history, correct
-with an evidenced write naming what happened, report it — never quietly
-re-fix.
-
-## Board doctrine (the skill sketch, `using-ledger` addition or sibling)
-
-- First line of every board read: `ledger show --where status=open`
-  (kata's default, as doctrine).
-- Work-picking loop: `ready` → claim → verify → work → `status=closed
-  --evidence <ref>` → repeat until `ready` returns empty and `blocked` is
-  empty or human-owned.
-- Triage moment (kata's `kata-triage`, adapted): walk `show --where
-  status=open`, decide each — keep / close with evidence / `wontfix` with
-  why / add `blocked-by` edges / re-label. At session end or on request.
-- Discussion: notes with `--key`, kind `comment`; repros as kind `repro`;
-  decisions as kind `ruling`. Search is the grep idiom over `tail --raw`.
-- Duplicate defense: search before create (grep the board for key
-  candidates); a duplicate discovered later is closed `wontfix -m
-  "dup of [[<key>]]"`.
-- Cross-refs: `[[key]]` in messages; commits as evidence refs.
-
-## Deliberately not taken (from kata, with reasons)
-
-Daemon and TUI (git is the daemon; projections are the human surface);
-soft-delete/restore/purge tiers (append-only + status filtering + ref
-surgery for secrets); counter short-IDs (slugs for humans, SHAs for
-precision); FTS search (grep idiom until scale demands otherwise);
-in-repo `.kata.toml`-style binding (store resolution already does this).
-Sharing across machines/people remains Plan 2's sync layer — issue boards
-are its best forcing function yet, but that's a separate decision.
-
-## Spike scope (tiniest, throwaway, no tests — per Jesse)
-
-Branch of the Go tool: `--multi-field` + `--terminal` recorded in create
-meta; multi-field set values skip vocab validation (stored as the literal
-comma string — zero model change); `blocked-by` token existence check;
-`show --where` (= and ~=); `ready` verb with ready/blocked+waiting_on
-output. Skip: tail filtering, cycle detection, near-miss hints, render
-changes, doc changes. Validated by a two-worker field trial: seeded board
-with a dependency chain, two concurrent agents running the picking loop,
-success = work completed in dependency order with no double-completion
-and the claim-verify idiom surviving a real race.
-
-## Open questions the spike should answer
-
-1. Does replace-wholesale on `blocked-by` bite when two writers edit edges
-   concurrently, or is it as benign as predicted?
-2. Is claim-verify discipline followable by agents from doctrine alone, or
-   does it need a `claim` verb (mechanism) in the real version?
-3. Does `ready`'s blocked+waiting_on output actually get used by agents,
-   or do they only read the ready list?
+`--multi-field`, `--terminal` (validated), `--guard`, `--stale-after`,
+grammar enforcement, `show --where` (incl. `unknown_field`, same-field and
+`~=` rules), `set --expect <id>|none` (field-scoped, atomic per the
+harness contract, single-guarded-field rule), `ready` (three bounded lists,
+annotations, tie-break by chain position), meta export/import round-trip,
+the extended race harness (first-edge and interleaved-triage rounds) as
+real tests, the board skill, and rev-13 spec amendments (verb taxonomy,
+error-identifier notes). The spike branch (`wip/issues-spike`) is
+historical evidence and is not merged.
