@@ -1,7 +1,7 @@
 # Ledger as issue tracker (design)
 
-2026-08-16, revision 14 — the rethink (rev 12) hardened by two blind
-adversarial rounds (the seventh and eighth). Eleven revisions, three spikes,
+2026-08-16, revision 15 — the rethink (rev 12) hardened by three blind
+adversarial rounds (the seventh through ninth). Eleven revisions, three spikes,
 three chain-audited field trials, and six adversarial rounds (twelve
 reviewers) validated the core mechanics and repeatedly punished the same
 three composition mistakes: protection built by enumerating cases instead
@@ -79,8 +79,14 @@ whose immutable declarations forgot it. On a ready-capable board, keys must matc
 grammar, enforced at each key's first write (`bad_value`) — otherwise
 legally-named keys can exist that no `blocked-by` edge can reference.
 
-**`blocked-by` tokens are keys**, each validated as existing at write time
-(`unknown_key`, exit 4, naming the token; no near-miss suggestions).
+**On a ready-capable board, `blocked-by` tokens are keys**, each
+validated as existing at write time (`unknown_key`, exit 4, naming the
+token; no near-miss suggestions). On a plain board a multi-field named
+`blocked-by` is just a multi-field — no existence validation, no edge
+semantics; everything issue-tracker-specific in this document (the
+rule-5 signals, `blocked-by`'s special treatment, key grammar, titles,
+`ready`) is ready-capable-board behavior, and a plain board's `--guard`
+buys the CAS rules alone.
 Cycles are representable; the tool surfaces them (see `ready`), never
 silently drops them. A "blocked" status value is deliberately absent:
 blocked is derived state.
@@ -92,10 +98,12 @@ carried by every read surface. The first status write REQUIRES a
 non-empty `-m` after trimming (`empty_body`, exit 4, hint naming it as
 the title).
 
-**Export/import round-trips meta byte-for-byte**; import never re-derives
-declarations. An exported-then-imported board's `ready` output is
-identical except event `id`s, which import re-mints — the parent spec's
-rule that identities never cross.
+**Export/import round-trips meta byte-for-byte except `slug`**, which a
+same-store import necessarily re-mints (import refuses an existing
+slug); import never re-derives declarations. An exported-then-imported
+board's `ready` output is identical except event `id`s and the
+envelope's `ledger` name; importing into a fresh store under the
+original slug is identical except `id`s alone.
 
 ## The invariant: guarded fields take conditional writes only
 
@@ -118,9 +126,13 @@ the single interference gate that replaced three enumerated ones.
    invalidate it; notes never invalidate it. Mismatch → `claim_lost`,
    exit 4; the message names the winning event's id, author, and the
    exact value it wrote to this field (tested format — a trial shipped a
-   malformed one); hints: status → "re-run ledger ready and pick again",
-   blocked-by → "re-read the key's edges and merge", any other guarded
-   field → "re-read '<field>' and try again".
+   malformed one); hints: status → "re-run ledger ready and pick again"
+   — EXCEPT when the attempted write's value is terminal, where it is
+   "you were reclaimed while working — leave a handoff note; never
+   re-close blind" (the Close idiom's doctrine, produced by the tool
+   itself, since a field-only hint would tell a failed closer to abandon
+   finished work); blocked-by → "re-read the key's edges and merge";
+   any other guarded field → "re-read '<field>' and try again".
 4. `--expect none`: succeeds only if the field has no prior event on this
    key. Racing first writes serialize to one winner; the loser's hint on
    a status seed is "this key already exists — read it; if yours is a
@@ -131,7 +143,10 @@ the single interference gate that replaced three enumerated ones.
    exists to undo. Any other field falls back to rule 3's generic hint.
 5. **Standing signals and `--override`.** Before landing, a guarded write
    is checked against three signals the tool computes from current state.
-   **Scope, stated**: `human` is key-scoped and gates every guarded
+   Rule 5 exists only on ready-capable boards — a plain guarded board
+   has no `status` vocab or `labels` reservation to compute signals
+   from, so its guarded writes get the CAS rules (1–4, 6–8) and nothing
+   else. **Scope, stated**: `human` is key-scoped and gates every guarded
    write; `claim` and `settled` are computed from the key's `status`
    field and gate `status` writes only. An edge edit on a claimed or
    settled key is deliberately ungated beyond CAS and `human`: an edge
@@ -258,7 +273,10 @@ now ordinary tested tool code):
   matter how pickable — quarantine is mechanism). The label dominates
   status for placement, never information: a human-labeled key that is
   also actively claimed renders `kind: human` AND carries the claim
-  fields (`by` the claimant, `age`, claim `id`, `stale`). Entries carry
+  fields (`by` the claimant, `age`, claim `id`, `stale`), and human
+  entries carry `waiting_on` under the same unresolved-edges condition
+  as claims — a human-owned key's dependencies stay visible even though
+  the label excludes it from `blocked`. Entries carry
   the `id` needed to act on them.
 - **blocked**: waiting — open, unlabeled, unresolved edges. `waiting_on`
   entries are `{key, state}` objects, `state` ∈ `terminal | open |
@@ -268,7 +286,9 @@ now ordinary tested tool code):
   `held`'s carve-out. (`waiting_on` folds staleness into `state`
   because one discriminator covers six states; `held`'s claims are
   always `in-progress`, so a bare `stale` boolean suffices there —
-  deliberate, not drift.) `waiting_on` is informational — the frontier
+  deliberate, not drift. One accepted flattening: a blocker both
+  human-owned and actively claimed renders `state: human` — the claim
+  detail lives in that key's own `held` entry.) `waiting_on` is informational — the frontier
   verdict already did the walking — but blocked entries carry the
   status field's latest `id`, so "blocked is not locked" (below) is
   exercisable straight from the envelope.
@@ -357,6 +377,15 @@ typed bare `ledger` because the doctrine's lines did).
   `set <key> blocked-by=<full,new,set> --expect <the edge field's latest
   id>`. Never combined with a status write (rule 2); a human-labeled
   key needs `--override` here like everywhere.
+- **Label edit**: the same read-union-write pattern, with the optional
+  CAS rule 2 already grants: `set <key> labels=<full,new,set> --expect
+  <the labels field's latest id>` (`--expect none` on a key's first
+  labels write, including the `human` reservation's label step).
+  `labels` is unguarded, so the tool never demands this — but
+  replace-wholesale means two unprotected concurrent label edits
+  silently clobber (no error, nothing greppable), and `labels` carries
+  the `human` reservation; the skill teaches the protected form
+  verbatim.
 - **Recovery** (after discovering a clobber or duplication): a `handoff`
   note with what happened, then the corrective guarded write with
   `--evidence` and a message naming the mistake. Never quietly re-fix.
@@ -395,7 +424,8 @@ frontmatter `description` gains the triggers "running an issue board" and
   claims to reclaim or take over, statusless keys to finish seeding or
   abandon, cycles to break by edge edit); walk `show --where status=open`
   for staleness of content (close with evidence / wontfix with the why
-  in `-m` / re-label / edge edits); grep the chain for `override:` events
+  in `-m` / re-label via the Label-edit idiom — protected, since triage
+  is exactly where label edits run concurrently / edge edits); grep the chain for `override:` events
   and review each — every override is somebody deciding a standing
   signal didn't apply, and reviewing them is the entire point of making
   them greppable. Evidence on wontfix is NOT required (evidence of a
@@ -464,11 +494,14 @@ semantics) is historical evidence, never merged.
    → `empty_body`; titles survive claim/close/revision; present on every
    list entry and `show` row.
 4. Field-scoping: label writes racing status claims never produce
-   `claim_lost` (harness, 10/10); notes never invalidate `--expect`.
+   `claim_lost` (harness, 10/10); notes never invalidate `--expect`;
+   label edits carrying the optional `--expect` serialize (one
+   `claim_lost`), without it last-write-wins — the stated trade the
+   Label-edit idiom exists to avoid.
 5. First-edge race under `--expect none` (harness, 10/10).
 6. `claim_lost` format: id, author, exact value, per-field hints —
-   including the reclaim path, the edge-seed collision hint, and the
-   generic-field fallback hint.
+   including the reclaim path, the terminal-value (failed-close) hint,
+   the edge-seed collision hint, and the generic-field fallback hint.
 7. Rule 5 signals, each in isolation and composed (mandatory before the
    validation claim covers them): live cross-author claim →
    `needs_override` naming claimant and age; stale claim → no signal,
@@ -485,7 +518,9 @@ semantics) is historical evidence, never merged.
    missing `in-progress` from vocab → `bad_value`;
    third non-terminal value → `bad_value`; `--guard` naming an undeclared
    field → `bad_value`; `ready` on a non-ready-capable board →
-   `bad_usage` with the create-time fix.
+   `bad_usage` with the create-time fix; `--guard` on a plain board
+   gives CAS only — no rule-5 signals, no `blocked-by` existence
+   validation, no title enforcement.
 9. Frontier verdict: `work-available` on non-empty ready AND on
    stale-claim-only boards — but a board whose only stale claim sits on
    a human-labeled key is `attention-needed`, never `work-available`;
@@ -500,8 +535,10 @@ semantics) is historical evidence, never merged.
     held merges claims and human keys with correct `kind`, `id`, `stale`,
     and claimed-but-blocked `waiting_on`; a human-labeled claimed key
     renders `kind: human` with the claim fields present, live or stale;
-    blocked entries carry the status field's latest `id`; attention
-    entries for
+    a human-labeled key with unresolved edges carries `waiting_on` in
+    `held` (claimed and unclaimed variants) and never appears in
+    `blocked`; blocked entries carry the status field's latest `id`;
+    attention entries for
     stale-claim / statusless / cycle; ordering (ready oldest-first with
     chain-position ties; others key-ascending).
 11. `show --where`: `unknown_field`, `~=` on enum → `bad_usage`,
@@ -513,7 +550,8 @@ semantics) is historical evidence, never merged.
     write with the edge-referenceability message.
 14. Declaration validation: `--terminal`/`--require-evidence` subset
     checks; `--stale-after` parse; export/import meta round-trip with
-    identical `ready` output modulo re-minted `id`s.
+    identical `ready` output modulo re-minted `id`s and, on same-store
+    import, the re-minted `slug`/envelope `ledger` name.
 15. Timestamps: fixed-millisecond UTC on new events; old events parse;
     staleness math across mixed precision; sub-second `--stale-after`
     behaves.
@@ -569,6 +607,17 @@ semantics) is historical evidence, never merged.
   idiom reserves for people — the one place the trial-3
   mechanism-beats-doctrine lesson hadn't reached. All folded as rev 14.
   First round with no adjudicated Critical.
+  A ninth round, also blind, ran against rev 14 — the second straight
+  round with no Critical, and the first whose findings all sat in old
+  material rather than the newest fixes: the labels field had no
+  CAS-safe edit idiom (concurrent label edits silently clobbered on the
+  field carrying the `human` reservation — enumeration missing a case,
+  again); rule 5 and `blocked-by`'s special treatment were never scoped
+  to ready-capable boards; the byte-for-byte export claim was false
+  against the import code (slug re-mint); the close-time `claim_lost`
+  hint told a failed closer to abandon finished work, contradicting the
+  Close idiom; `held`'s human entries never said whether they carry
+  `waiting_on`. All folded as rev 15.
 - **Kata reconnaissance**: `~/git/kata` — two-status minimalism, labels,
   triage doctrine, open-by-default lists; what we took and declined is in
   Deferred.
