@@ -1,6 +1,7 @@
 # Ledger as issue tracker (design)
 
-2026-08-15, revision 12 — the rethink. Eleven revisions, three spikes,
+2026-08-15, revision 13 — the rethink (rev 12) hardened by a seventh,
+blind adversarial round. Eleven revisions, three spikes,
 three chain-audited field trials, and six adversarial rounds (twelve
 reviewers) validated the core mechanics and repeatedly punished the same
 three composition mistakes: protection built by enumerating cases instead
@@ -67,11 +68,14 @@ bad declaration has no repair path):
 **Ready-capability is syntactic and all-or-nothing**: declaring
 `--terminal` on a field named `status` opts the board in, and create then
 REQUIRES the full shape — `--guard status`; non-terminal vocab exactly
-`{open, in-progress}`, both present; `--guard blocked-by` whenever
-`blocked-by` is declared — each violation `bad_value` naming the fix. (A
-board wanting terminal semantics without issue-tracker behavior names its
-field something else.) The reserved label `human` marks keys that belong
-to people. On a ready-capable board, keys must match the multi-field token
+`{open, in-progress}`, both present; a `labels` multi-field declared;
+`--guard blocked-by` whenever `blocked-by` is declared — each violation
+`bad_value` naming the fix. (A board wanting terminal semantics without
+issue-tracker behavior names its field something else.) The reserved
+token `human` in `labels` — that field only, never another multi-field —
+marks keys that belong to people; requiring `labels` at create is what
+keeps the quarantine signal from being silently impossible on a board
+whose immutable declarations forgot it. On a ready-capable board, keys must match the multi-field token
 grammar, enforced at each key's first write (`bad_value`) — otherwise
 legally-named keys can exist that no `blocked-by` edge can reference.
 
@@ -82,13 +86,15 @@ silently drops them. A "blocked" status value is deliberately absent:
 blocked is derived state.
 
 **Titles**: a key's title is the message of its first status event,
-derived like scars, immutable, carried by every read surface. The first
+computed from history rather than stored, immutable, carried by every
+read surface. The first
 status write REQUIRES a non-empty `-m` after trimming (`empty_body`,
 exit 4, hint naming it as the title).
 
 **Export/import round-trips meta byte-for-byte**; import never re-derives
 declarations. An exported-then-imported board's `ready` output is
-identical.
+identical except event `id`s, which import re-mints — the parent spec's
+rule that identities never cross.
 
 ## The invariant: guarded fields take conditional writes only
 
@@ -108,21 +114,33 @@ the single interference gate that replaced three enumerated ones.
    exit 4; the message names the winning event's id, author, and the
    exact value it wrote to this field (tested format — a trial shipped a
    malformed one); hints: status → "re-run ledger ready and pick again",
-   blocked-by → "re-read the key's edges and merge".
+   blocked-by → "re-read the key's edges and merge", any other guarded
+   field → "re-read '<field>' and try again".
 4. `--expect none`: succeeds only if the field has no prior event on this
    key. Racing first writes serialize to one winner; the loser's hint on
    a status seed is "this key already exists — read it; if yours is a
-   different issue, re-seed under a new key."
+   different issue, re-seed under a new key." On an edge seed it is "this
+   key already has edges — read it; if yours is a different issue,
+   re-seed under a new key" — never a merge suggestion, which on a name
+   collision is exactly the contamination the Seed idiom's recovery text
+   exists to undo.
 5. **Standing signals and `--override`.** Before landing, a guarded write
-   is checked against three signals the tool computes from current state:
-   - **claim**: the field's current value is `in-progress`, non-stale,
+   is checked against three signals the tool computes from current state.
+   **Scope, stated**: `human` is key-scoped and gates every guarded
+   write; `claim` and `settled` are computed from the key's `status`
+   field and gate `status` writes only. An edge edit on a claimed or
+   settled key is deliberately ungated beyond CAS and `human`: an edge
+   added to a live claim surfaces in its `held` entry's `waiting_on`,
+   and a settled key's own edges are moot — its terminal value already
+   ended its life as a blocker.
+   - **claim**: the status field's current value is `in-progress`, non-stale,
      by a different author. (Your own claim is never a signal against
      you; a stale claim is not a signal — stale work is freely
      reclaimable.)
    - **human**: the key carries the `human` label. Applies to everyone,
      including the claimant and a key's very first seed — labeling is how
      a person says "mine."
-   - **settled**: the field's current value is terminal. Applies to
+   - **settled**: the status field's current value is terminal. Applies to
      everyone, including the author of the close — reopening or
      re-resolving a settled outcome is a revision, and revisions are
      visible. (This replaces the old terminal→terminal ban and the
@@ -153,8 +171,11 @@ the single interference gate that replaced three enumerated ones.
    must pass before the validation claim covers them.
 8. **Performance requirement**: the precondition read narrows to the
    **target key** (all its fields — a field-narrowed read cannot answer
-   the label check): walk the chain backward from head with early-stop
-   once the key's guarded field, labels, and staleness inputs resolve.
+   the label or status checks): walk the chain backward from head through
+   the parent spec's batched read path (chunked reads, window growing
+   backward — the per-event-subprocess pattern the parent spec bans stays
+   banned here), early-stopping once the key's status, the written field,
+   labels, and staleness inputs resolve.
    Honest worst case: a long-untouched key degrades toward a full scan;
    the bound test measures the common case and states the degenerate one.
    "Reuse" of reads is within-attempt only; cross-attempt caching is the
@@ -163,7 +184,9 @@ the single interference gate that replaced three enumerated ones.
 ## Filtered reads (`show --where`)
 
 `show --where <field>=<value>` (exact) and `--where <field>~=<token>`
-(membership, multi-fields only; `~=` on an enum field is `bad_usage`).
+(membership, multi-fields only; `~=` on an enum field is `bad_usage`,
+and `=` on a multi-field is `bad_usage` too — sets have no
+exact-string identity; use `~=`).
 Repeatable, AND'd; two `=` clauses on one field are `bad_usage`
 (unsatisfiable). Undeclared field → `unknown_field` with the declared
 list. Bare `show` stays unfiltered; on ready-capable boards `show` rows
@@ -204,7 +227,8 @@ now ordinary tested tool code):
   `work-available` when anything is pickable now or reclaimable
   (non-empty ready, or a stale claim); else `attention-needed` when the
   attention list is non-empty; else `all-handled` — every dependency
-  chain terminates in a live claim or a human-owned key, verified
+  chain terminates in a live claim or a non-terminal human-owned key (a
+  terminal status resolves an edge regardless of label), verified
   internally with a correct DFS (path-stack cycle detection, shared-
   dependency memo — diamonds are legal and never false-flagged).
 - **ready**: pickable now — `status=open`, not human-labeled, every edge
@@ -219,11 +243,17 @@ now ordinary tested tool code):
   edges: claimed-but-blocked is legal and visible) and human-owned keys
   (`kind: human`, any non-terminal status; excluded from `ready` no
   matter how pickable — quarantine is mechanism). The label dominates
-  status for placement; entries carry the `id` needed to act on them.
+  status for placement, never information: a human-labeled key that is
+  also actively claimed renders `kind: human` AND carries the claim
+  fields (`by` the claimant, `age`, claim `id`, `stale`). Entries carry
+  the `id` needed to act on them.
 - **blocked**: waiting — open, unlabeled, unresolved edges. `waiting_on`
   entries are `{key, state}` objects, `state` ∈ `terminal | open |
-  in-progress | in-progress-stale | human | statusless` — informational;
-  the frontier verdict already did the walking.
+  in-progress | in-progress-stale | human | statusless` — `terminal`
+  wins whenever the blocker's status is terminal, labeled or not;
+  `human` names only a non-terminal human-owned blocker, mirroring
+  `held`'s carve-out. Informational; the frontier verdict already did
+  the walking.
 - **attention**: the triage queue, tool-computed — stale claims,
   statusless keys (half-seeds and orphans), cycles (with the cycle's
   keys). Entries may also appear in their home lists; this list is the
@@ -234,11 +264,17 @@ Lists are bounded by `--limit` (default 50, per list) with true counts in
 first with chain-position ties; the other lists sort by key ascending
 (stable doc-harness output). Extra `--where` clauses apply uniformly to
 all lists; a clause contradicting `ready`'s own `status=open` is
-`bad_usage`. `ready` joins rev 13's data-verb taxonomy (`--ledger`
+`bad_usage`; beyond that, `--where` is for fields orthogonal to list
+membership — a filter may legitimately empty `held` or `attention`
+(a claim is never `status=open`), which is filtering, not an error.
+`ready` joins rev 13's data-verb taxonomy (`--ledger`
 addressing, standard envelope, exit codes). **Performance**: `ready` is
-the loop's hottest read; a measured bound at the parent spec's 5k-event
-scale (including touch-base churn, which scales with wall-clock, not
-issue count) is implementation acceptance, stated before merge. Stated
+the loop's hottest read; implementation acceptance is pinned now, not
+deferred: at the parent spec's 5k-event scale (including touch-base
+churn, which scales with wall-clock, not issue count), on the hardware
+of its measurements, the full envelope completes within 2× the measured
+batched fold — 70ms measured, so a 150ms bound, degenerate cases stated
+in the test report. Stated
 intent: **blocked is not locked** — claiming a blocked key by name with a
 valid `--expect` is legal, visible, attributable; the fences are
 non-surfacing and doctrine.
@@ -251,8 +287,10 @@ typed bare `ledger` because the doctrine's lines did).
 
 - **Seed**: `set <key> status=open --expect none -m "<title>"`. With
   dependencies, **edges first**: `set <key> blocked-by=<k1>,<k2>
-  --expect none`, then the status seed — a statusless key is in no list
-  and unpickable, so the dependency window doesn't exist. Seed collision:
+  --expect none`, then the status seed — a statusless key is unpickable
+  and in neither `ready` nor `blocked` (a `ready` run inside the window
+  shows it only under `attention` as a half-seed: momentary, harmless),
+  so the dependency window doesn't exist. Seed collision:
   the corrupting write is the one that SUCCEEDS (your edge write landing
   on a stranger's edge-free key); your own `--expect none` success proves
   the key had no prior edges, so recovery is deterministic —
@@ -279,8 +317,10 @@ typed bare `ledger` because the doctrine's lines did).
   `notes --key <key>` for `handoff` notes before closing.
 - **Reclaim**: a stale claim (from `attention`) is retaken with
   `set <key> status=in-progress --expect <its id> -m "reclaiming from
-  <by>: stale <age>"` — no override needed; staleness dissolved the
-  claim signal. Concurrent reclaimers serialize on the same id.
+  <by>: stale <age>"` — no override needed unless the key is also
+  human-labeled (`human` has no staleness exception); staleness
+  dissolved the claim signal. Concurrent reclaimers serialize on the
+  same id.
 - **Revise a settled outcome** (reopen, re-resolve, wontfix a closed
   issue): one write with `--override -m "<why>"` against the terminal
   event's id — the event records `override: settled`, greppable, which
@@ -290,7 +330,8 @@ typed bare `ledger` because the doctrine's lines did).
   `override: claim`.
 - **Edge edit**: read the current set, union or prune, write whole:
   `set <key> blocked-by=<full,new,set> --expect <the edge field's latest
-  id>`. Never combined with a status write (rule 2).
+  id>`. Never combined with a status write (rule 2); a human-labeled
+  key needs `--override` here like everywhere.
 - **Recovery** (after discovering a clobber or duplication): a `handoff`
   note with what happened, then the corrective guarded write with
   `--evidence` and a message naming the mistake. Never quietly re-fix.
@@ -335,7 +376,8 @@ frontmatter `description` gains the triggers "running an issue board" and
 - Dup defense: search titles before seeding (`ready`/`show` carry titles
   for live keys; `tail --raw` — never the curated view — for closed
   ones; rollup summaries on boards SHOULD retain key names verbatim,
-  advisory). Dups close `wontfix -m "dup of [[key]]"`.
+  advisory). Dups close `wontfix -m "dup of [[key]]"` — `[[key]]` is a
+  plain-text grep convention, no rendering semantics.
 - What no mechanism supplies: honoring what the id you fetched actually
   said. `--expect` proves you read the state; the signal gate makes
   ignoring it visible; judgment does the rest.
@@ -395,7 +437,8 @@ semantics) is historical evidence, never merged.
    `claim_lost` (harness, 10/10); notes never invalidate `--expect`.
 5. First-edge race under `--expect none` (harness, 10/10).
 6. `claim_lost` format: id, author, exact value, per-field hints —
-   including the reclaim path.
+   including the reclaim path, the edge-seed collision hint, and the
+   generic-field fallback hint.
 7. Rule 5 signals, each in isolation and composed (mandatory before the
    validation claim covers them): live cross-author claim →
    `needs_override` naming claimant and age; stale claim → no signal,
@@ -404,22 +447,28 @@ semantics) is historical evidence, never merged.
    everyone incl. the close's own author; multiple standing signals
    listed together and recorded together (`override: claim,human`);
    override without a trimmed message → `bad_usage`; `override:` values
-   computed by the tool, never caller-asserted.
+   computed by the tool, never caller-asserted; a `blocked-by` write
+   against a claimed or settled key triggers neither `claim` nor
+   `settled` (`human` still gates it).
 8. Ready-capability validation: `--terminal status=…` without `--guard
-   status` → `bad_value`; missing `in-progress` from vocab → `bad_value`;
+   status` → `bad_value`; missing `labels` multi-field → `bad_value`;
+   missing `in-progress` from vocab → `bad_value`;
    third non-terminal value → `bad_value`; `--guard` naming an undeclared
    field → `bad_value`; `ready` on a non-ready-capable board →
    `bad_usage` with the create-time fix.
 9. Frontier verdict: `work-available` on non-empty ready AND on
    stale-claim-only boards; `all-handled` only when every chain ends at a
-   live claim or human key (verified against hand-built graphs: linear
+   live claim or non-terminal human key — a closed human-labeled blocker
+   resolves its dependents' edges (verified against hand-built graphs: linear
    chains, diamonds — no false cycle; true cycles → `attention-needed`;
    statusless references → `attention-needed`; open targets recursed);
    verdict computed over the full board when lists are `--limit`
    truncated.
 10. Envelope: five members and totals match the pinned example's shape;
     held merges claims and human keys with correct `kind`, `id`, `stale`,
-    and claimed-but-blocked `waiting_on`; attention entries for
+    and claimed-but-blocked `waiting_on`; a human-labeled claimed key
+    renders `kind: human` with the claim fields present; attention
+    entries for
     stale-claim / statusless / cycle; ordering (ready oldest-first with
     chain-position ties; others key-ascending).
 11. `show --where`: `unknown_field`, `~=` on enum → `bad_usage`,
@@ -431,7 +480,7 @@ semantics) is historical evidence, never merged.
     write with the edge-referenceability message.
 14. Declaration validation: `--terminal`/`--require-evidence` subset
     checks; `--stale-after` parse; export/import meta round-trip with
-    identical `ready` output.
+    identical `ready` output modulo re-minted `id`s.
 15. Timestamps: fixed-millisecond UTC on new events; old events parse;
     staleness math across mixed precision; sub-second `--stale-after`
     behaves.
@@ -468,6 +517,15 @@ semantics) is historical evidence, never merged.
   The recurring failure patterns those rounds exposed — enumerated
   protection, doctrine-side algorithms, unbacked substrate assumptions —
   are what this revision is designed against, not merely patched for.
+  A seventh round, blind like the fifth and sixth, ran against rev 12:
+  its two reviewers found the rule-5 scope ambiguity (claim/settled vs
+  edge writes — the general rule contradicted the seed-collision idiom),
+  the missing `labels` requirement in the ready-capable shape (both
+  reviewers, independently), terminal-vs-human edge precedence, the
+  human+claim composite `held` shape, and the unpinned `ready` bound —
+  all folded here as rev 13. One reviewer independently rebuilt the
+  spike and re-ran both harnesses (20/20 and 30/30 reproduced) and
+  verified the trial citations verbatim.
 - **Kata reconnaissance**: `~/git/kata` — two-status minimalism, labels,
   triage doctrine, open-by-default lists; what we took and declined is in
   Deferred.
