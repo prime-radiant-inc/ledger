@@ -186,7 +186,12 @@ func resolveExpectTarget(fields map[string]string, guard []string, slug string, 
 // setPrecondition builds the closure AppendChecked runs against a fresh,
 // backward-windowed event read on every CAS attempt (spec rule 7: never a
 // pre-loop snapshot; spec rule 8: the read narrows to the target key,
-// growing only as far back as this write's own checks require). Which
+// growing only as far back as this write's own checks require) — narrowing
+// that covers only AppendChecked's own per-attempt read (see store.
+// Precondition's doc comment). runSet's caller-side work — PickLedger/Load
+// resolving the ledger, and the idempotency-key scan just above this
+// function's call site — already folded the FULL event chain once before
+// this closure is even built; this narrowing never touches that. Which
 // (key, field) facts those checks need is entirely static — knowable from
 // this write's own shape (target, fields, ready, meta.Guard, key) before any
 // event is even read — so it's computed once, outside the returned closure:

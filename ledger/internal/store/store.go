@@ -35,6 +35,16 @@ const (
 // decide definitively once reachedRoot is true, since there is no more
 // history to give. Returning any other error aborts the append with that
 // error; nothing is written.
+//
+// SCOPE, stated plainly: this narrowing covers only the fresh read taken
+// inside each CAS retry attempt (runPrecondition, below) — it is a property
+// of AppendChecked's retry loop, not of the command that calls it. A
+// command like `set` still resolves the ledger (and folds its full event
+// history) once up front via Ctx.Load/PickLedger, and any of its own
+// pre-append bookkeeping (e.g. an idempotency-key scan over that already-
+// loaded history) runs before AppendChecked or this Precondition are ever
+// invoked. Nothing about that up-front read scales with this contract; only
+// the per-attempt precondition read does.
 type Precondition func(events []model.Event, reachedRoot bool) error
 
 // ErrNeedsMoreHistory is the sentinel a Precondition returns to request a
@@ -206,11 +216,27 @@ func (s Store) Events(slug string) ([]model.Event, model.Meta, error) {
 // windowSizes is the sanctioned chunked backward-read shape (spec rule 8):
 // runPrecondition tries these in order, each one bounded `git log -n <n>`
 // plus one `cat-file --batch` — never a per-event subprocess — before
-// falling back to Events' whole-chain fold. Growing sizes, not incremental
-// deltas: each retry re-reads from the tip, so a Precondition that resolves
-// from the target key's recent history stops after the FIRST size below and
-// never pays for a bigger one.
-var windowSizes = []int{64, 256, 1024}
+// falling back to Events' whole-chain fold.
+//
+// A single 64-event probe, not a 64/256/1024 staircase: review caught an
+// intermediate-tier staircase actively losing to a plain whole-chain read
+// on the canonical guarded write. Rule 5's human signal is key-scoped and
+// gates every guarded write regardless of which field it touches, so a
+// Precondition needs the target key's labels resolved on essentially every
+// guarded write — and most keys are never labeled at all, which (per rule
+// 8's own stated asymmetry) can only be PROVEN by walking to the chain
+// root. On that walk, 256 and 1024 are never big enough either — a
+// never-labeled key's absence proof only resolves at the root, however far
+// that is — so a 64/256/1024 staircase paid for three wasted reads before
+// falling back to Events' own whole-chain fold anyway: worse than just
+// reading the whole chain once (internal/cmd/scale_test.go's
+// TestSetPreconditionScalingShape measures both shapes side by side at the
+// parent spec's 5,000-event scale — see its doc comment for this
+// sandbox's numbers). One 64-event probe keeps the win for the
+// actually-common case (a recently-touched key whose every needed fact —
+// including labels — resolves in the newest 64 events) while paying for
+// the inherent absence-proof cost exactly once, not three times over.
+var windowSizes = []int{64}
 
 // EventsWindow reads the most recent n commits (oldest-first within the
 // window), with the same two-subprocess shape as Events: one bounded `git
