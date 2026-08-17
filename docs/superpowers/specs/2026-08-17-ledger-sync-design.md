@@ -1,13 +1,22 @@
 # Ledger sync: activation and the partition contract (design)
 
-2026-08-17, revision 3 — revision 2 survived its structure and lost
-most of its sentences: a second adversarial round (two reviewers, both
-probing git and the shipped tree) falsified the cursor rule, the `--at`
-scope, the contested clearing rules, three membership claims, and the
-window fallback's story. Revision 3 keeps rev 2's two sound decisions —
-the parent's sync section stands; determinism is a scoped, tested
-requirement — and rebuilds the additions on what the probes showed.
-History: Validation record, bottom.
+2026-08-17, revision 4 — revision 3 SURVIVED its spike and trial: a
+full throwaway implementation (branch `spike/sync-rev3`, kept as
+reference for the production build) passed the smoke, the existing
+suite, and the two-replica partition trial end to end — every audit in
+the Trial plan came back green on the first run. Rev 4 changes no
+architecture; it pins the decisions the spike had to make that rev 3
+left open, states two hazards the spike found that rev 3 missed, and
+folds in the trial's usability findings. History: Validation record,
+bottom.
+
+Rev 3 history: revision 2 survived its structure and lost most of its
+sentences — a second adversarial round (two reviewers, both probing
+git and the shipped tree) falsified the cursor rule, the `--at` scope,
+the contested clearing rules, three membership claims, and the window
+fallback's story. Revision 3 kept rev 2's two sound decisions — the
+parent's sync section stands; determinism is a scoped, tested
+requirement — and rebuilt the additions on what the probes showed.
 
 **The parent tool spec's "Sync and push" section
 (`2026-08-13-ledger-tool-design.md`) stands IN FULL and unamended. It
@@ -79,6 +88,18 @@ Revision 2 had this exactly backwards; the probes settle it:
   (`indexOf` + `Events[idx+1:]`, silently lossy under merges) to range
   semantics — ancestry validity, `rev-list cursor..tip` delivery — and
   make every emitted cursor the tip-at-drain.
+- **Paged delivery re-delivers, never loses** (spike finding, rev 4):
+  a `--limit`-truncated drain must emit the LAST DELIVERED event as its
+  cursor, not the tip — the tip would silently drop the remainder. On
+  merged history that event's concurrent siblings are not its
+  ancestors, so the next page may re-deliver them. Pinned as documented
+  behavior: duplicates possible under paging on merged chains, loss
+  never; consumers are idempotent by event id, which is already
+  doctrine.
+- **Batch order pinned** (rev 4): a range's events are ordered by the
+  GLOBAL fold order restricted to the range, not by folding the range
+  in isolation — rev 3 permitted either; the global-restricted form is
+  simpler and makes `since` agree with `tail`.
 
 ## Addition 3 — `contested`: the partition race, fold-derived
 
@@ -115,7 +136,33 @@ exists to flag (rev-2 rule cut, probed rationale).
   writer knew of the contest or not (a routine touch-base that resolves
   a contest still records it). Rule 5 is unchanged: no new standing
   signal; where the corrective write trips `claim`/`settled`/`human`,
-  the override message doubles as the resolution note.
+  the override message doubles as the resolution note. Pinned by the
+  spike and trial (rev 4): (a) the field is a JSON ARRAY of losing
+  event ids (the spike's comma-joined string is a spike-ism); (b) the
+  `set` response ECHOES `contested_resolved` — a writer must be able to
+  see they just resolved a contest, especially the unwitting
+  touch-base case; (c) the TTY render shows a resolution marker on the
+  event, same mandatory-labeling class as `override:` — the spike's
+  JSON-only visibility fails the reader the record exists for.
+- **Same-value collapses go through the settled gate, stated** (trial
+  finding): resolving a contested terminal write re-asserts a settled
+  value, so the corrective write trips `needs_override` and the
+  resolution path is `--expect <ticket's expect> --override` with the
+  message doing double duty — the trial's recovery agent walked this
+  correctly, but only after finding that the quickstart's
+  `needs_override` doctrine line over-narrows ("a human labeled this,
+  walk away" — false for `settled`/`claim` trips). The quickstart line
+  is REWORDED in the production build: name all three signal sources
+  and point the settled/claim cases at the revise-a-settled-outcome
+  idiom rather than at walking away.
+- **Two-root key collisions render honestly** (trial finding): when
+  contested heads descend from different seed events, the key may hold
+  two genuinely different tasks (the trial's colliding `task-signup`
+  seeds). The entry's `title` is pinned as the fold-winner head's
+  title, and the skill's contested-recovery line carries the doctrine:
+  before collapsing, read both heads — a seed collision can hide two
+  distinct tasks under one key, and collapsing adjudicates only the
+  field value, not the identity; renaming/splitting is a human call.
 - **Scope, honest**: ready-capable boards only — a plain board's
   `--guard` buys CAS, and its cross-replica races resolve by fold
   order, last write wins, unflagged (it has no envelope to carry the
@@ -162,7 +209,15 @@ excluded — their output is a function of the cursor argument and, for
   and rule 6 pins append-time staleness to the real clock. `watch`'s
   timeout is a wall-clock duration, unaffected. `--at` moves the clock
   only, never the chain; an event newer than `--at` renders age `0s`
-  (pinned). There is no time-travel rendering in v1.
+  (pinned). There is no time-travel rendering in v1. Write-verb
+  rejection may ride the flag's simple absence (unknown flag ⇒
+  `bad_usage`), spike-validated; a pointed "the write clock cannot be
+  moved" hint is optional polish, not required machinery.
+- **Age clamping is a GENERAL rule, not an `--at` rule** (spike
+  finding, reachable with no `--at` at all): a peer host whose clock
+  runs AHEAD syncs in events with future timestamps, and unclamped
+  rendering produced `age: "-58099h1m24s"`. Every age/staleness render
+  clamps at zero, everywhere, under both clocks.
 - **The standing determinism test**: hand-built replicas of one event
   set differing in merge structure and merge parent order (the tool's
   own sync mostly precludes divergent merges — probed — so the test
@@ -188,6 +243,33 @@ re-pinned for merged boards at the full-fold class. A fold-order-aware
 suffix predicate that restores windowing on merged boards is a named
 v2 optimization, not v1 scope.
 
+## Pins from the spike (rev 4 — decisions the spike had to make)
+
+- **Remote resolution order**: `--remote` > the breadcrumb's remote
+  name > `origin` > the sole configured remote > clean no-op. The
+  parent names the breadcrumb's optional remote but never ordered the
+  fallbacks.
+- **Push exit code**: exit 3 covers all-failed as well as partial —
+  one code means "read the per-slug outcomes", and the outcomes
+  payload is always written before exit.
+- **First-adoption root trust, stated gap**: adoption has no local
+  chain to check the remote's root against; a hand-crafted
+  multi-rooted remote chain is caught by the same-root rule on every
+  SUBSEQUENT sync, never the first adoption. Stating this is cheaper
+  than machinery; v2 if the field shows the need.
+- **Production-build notes, named so they're decisions**: push is
+  batched (the spike's per-slug subprocess is dozens of round trips at
+  fleet scale); `ready` folds ONCE with ancestor bitsets threaded
+  through resolution (the spike folds twice). The clock funnel
+  (`model.Now()`) stays, but the spike's `LEDGER_TIME_OFFSET` env
+  override is TRIAL INFRASTRUCTURE ONLY — a released binary must never
+  let an env var move the clock that stamps immutable events; the
+  production test seam is internal.
+- **Quickstart budget 110 → 120 lines**: two new verbs plus the sync
+  habit, selective push, skew-vs-horizon, and contested-recovery
+  doctrine don't fit the round-6 budget; the verb-coverage guard test
+  caught this, which is what it's for.
+
 ## Implementation scope (tool rev 15, one work order)
 
 The parent's entire Sync-and-push section (verbs, tracking namespace,
@@ -200,7 +282,12 @@ with sentinel contraction; `since`/`watch` range-semantics conversion;
 read-verb `--at` with write-verb rejection; the perturbed determinism
 test; merged-history precondition fallback + re-pinned bounds; skill
 lines (sync habit, selective push, skew-vs-horizon, contested
-recovery).
+recovery incl. the read-both-heads seed-collision doctrine); the
+quickstart `needs_override` rewording. The spike branch
+`spike/sync-rev3` implements all of this except the rev 4 pins
+(array-shaped `contested_resolved` + its response echo and TTY marker,
+batched push, single-fold `ready`, no clock env var) and is reference
+material for the production build, not a base to merge.
 
 ## Test plan (delta to the parent's)
 
@@ -282,3 +369,26 @@ stable throughout.
   definition adopted above. Rev 3 is the corrective; the durable
   `contested_resolved` record and sentinel contraction are its two
   genuinely new mechanisms.
+- Rev 3 spike + trial (branch `spike/sync-rev3`, opus builder; full
+  scope built including the range conversion; existing suite green —
+  the fold rewrite touches every read path, so that is the
+  load-bearing regression signal). Two-replica trial: bare remote,
+  six-agent mixed-model partition fleet, side B 3h behind, then a
+  sonnet recovery agent. Every Trial-plan audit passed first run:
+  six contested (key,field) entries each with a valid `expect`
+  (same-value closes flagged, twin cycle-breaks flagged, two-root
+  seed collision flagged, cross-field human-vs-claim correctly
+  UNFLAGGED per the stated limit); exactly one keeper per key after
+  recovery with `contested_resolved` durable in the chain; exactly
+  one sentinel merge per divergence, zero growth on idle syncs;
+  projections byte-identical across replicas under perturbed
+  TZ/LC_ALL at fixed `--at`; adoption bootstrapped the skewed
+  replica and re-validated declarations. Fleet behavior: the human
+  label held (an agent hit `needs_override` and walked away), claim
+  races resolved by CAS with clean `claim_lost` handling, both
+  cycle-breakers followed the break ticket literally, and the
+  recovery agent collapsed all six contests using the tickets'
+  `expect` values. Rev 4's changes all trace to spike/trial findings:
+  paged-cursor re-delivery, general age clamp, `contested_resolved`
+  shape/echo/render, the settled-gate resolution path and quickstart
+  rewording, seed-collision title doctrine, and the pins section.
