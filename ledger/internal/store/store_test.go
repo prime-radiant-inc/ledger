@@ -345,6 +345,99 @@ func TestAppendCheckedPreconditionErrorAbortsNothingWritten(t *testing.T) {
 	}
 }
 
+// TestEventsFoldsAcrossDivergentBranches builds a real divergent chain (two
+// branches off one root, joined by a sentinel sync merge) and pins the
+// Kahn-fold read shape (spec Addition 1) end to end: Events must order both
+// branches' events by timestamp across the whole chain, never by git's
+// commit-build/traversal order, must never surface the sentinel, and must
+// still read meta.json. EventsDAG must expose a single root and the
+// contracted cross-sentinel Children edge from both branch tips forward to
+// the event that follows the merge.
+func TestEventsFoldsAcrossDivergentBranches(t *testing.T) {
+	s := testStore(t)
+	slug := "demo"
+
+	metaJSON := `{"slug":"demo","scope":"x","fields":{"status":["open","done"]}}`
+	rootEv := model.Event{TS: "2026-08-17T10:00:00.000", Type: "create", Author: "a"}
+	rootSHA, err := s.BuildCommit(slug, "", rootEv, map[string]string{"meta.json": metaJSON})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Branch A is built first but timestamped LATER than branch B — the
+	// fold must key off (ts, sha), never off build/traversal order.
+	aEv := model.Event{TS: "2026-08-17T12:00:00.000", Type: "set", Key: "a1", Author: "alice"}
+	aSHA, err := s.BuildCommit(slug, rootSHA, aEv, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bEv := model.Event{TS: "2026-08-17T11:00:00.000", Type: "set", Key: "b1", Author: "bob"}
+	bSHA, err := s.BuildCommit(slug, rootSHA, bEv, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A sentinel sync merge joining the two branches: never dropped from the
+	// DAG, but contracted out before the sort — it must never appear in
+	// Events and must never delay or reorder a real event.
+	blob, _, code := s.Repo.Git(`{"type":"sync","ts":"2026-08-17T23:00:00.000","author":"host"}`,
+		"hash-object", "-w", "--stdin")
+	if code != 0 {
+		t.Fatal("hash-object for sentinel failed")
+	}
+	tree, _, code := s.Repo.Git("100644 blob "+blob+"\tevent.json\n", "mktree")
+	if code != 0 {
+		t.Fatal("mktree for sentinel failed")
+	}
+	mergeSHA, _, code := s.Repo.Git("", append(gitx.IdentityArgs("host", "sync"),
+		"commit-tree", tree, "-p", aSHA, "-p", bSHA, "-m", "sync")...)
+	if code != 0 {
+		t.Fatal("commit-tree for sentinel failed")
+	}
+
+	afterEv := model.Event{TS: "2026-08-17T13:00:00.000", Type: "set", Key: "after", Author: "carol"}
+	afterSHA, err := s.BuildCommit(slug, mergeSHA, afterEv, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, code := s.Repo.Git("", "update-ref", ref(slug), afterSHA); code != 0 {
+		t.Fatal("update-ref failed")
+	}
+
+	evs, meta, err := s.Events(slug)
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+	var keys []string
+	for _, ev := range evs {
+		keys = append(keys, ev.Type+":"+ev.Key)
+	}
+	want := []string{"create:", "set:b1", "set:a1", "set:after"}
+	if strings.Join(keys, ",") != strings.Join(want, ",") {
+		t.Fatalf("fold order = %v, want %v (b1's earlier ts must win despite a1 being built first)", keys, want)
+	}
+	for _, ev := range evs {
+		if ev.Type == "sync" {
+			t.Fatal("a sentinel sync event must never appear in Events")
+		}
+	}
+	if meta.Slug != "demo" {
+		t.Fatalf("meta not read: %+v", meta)
+	}
+
+	_, _, result, err := s.EventsDAG(slug)
+	if err != nil {
+		t.Fatalf("EventsDAG: %v", err)
+	}
+	if len(result.Roots) != 1 {
+		t.Fatalf("roots = %v, want a single root", result.Roots)
+	}
+	if !model.Contains(result.Children[aSHA], afterSHA) || !model.Contains(result.Children[bSHA], afterSHA) {
+		t.Fatalf("Children must carry the cross-sentinel edge from both branch tips to after: %v", result.Children)
+	}
+}
+
 func TestCatBatchTrailingNewlinePreserved(t *testing.T) {
 	s := testStore(t)
 	blob1, _, code := s.Repo.Git("no trailing newline here", "hash-object", "-w", "--stdin")

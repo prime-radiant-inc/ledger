@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"ledger/internal/dag"
 	"ledger/internal/gitx"
 	"ledger/internal/model"
 )
@@ -176,41 +177,83 @@ func (s Store) HeadID(slug string) (string, error) {
 	return h[:10], nil
 }
 
-// Events reads the whole chain with exactly two subprocesses: one `git log`
-// for the commit list, one `cat-file --batch` requesting <sha>:event.json
-// and <sha>:meta.json for every commit. git resolves each rev:path
-// server-side, so no per-commit ls-tree is needed. A commit with no
-// meta.json (every commit but the create) comes back "missing" for that
-// request and is simply skipped.
+// Events reads the whole chain in the spec's pinned fold order (Addition
+// 1: Kahn's topological sort, ready set keyed on parsed timestamp then full
+// sha, sentinels contracted out before the sort) rather than git's own
+// traversal order, which is merge-parent-dependent and wrong on a divergent
+// (synced) DAG. It is a thin wrapper over EventsDAG that discards the
+// dag.Result.
 func (s Store) Events(slug string) ([]model.Event, model.Meta, error) {
+	evs, meta, _, err := s.EventsDAG(slug)
+	return evs, meta, err
+}
+
+// EventsDAG is Events plus the dag.Result the fold was computed from
+// (Children/Roots over the sentinel-contracted DAG) — sync's merge-target
+// and contested-ancestry logic needs the DAG shape, not just the flattened
+// event list.
+//
+// Reads the whole chain with exactly two subprocesses: one `git log` for
+// the commit list AND every commit's parents (traversal order is
+// irrelevant — the fold order comes from dag.Sort, not from git), one
+// `cat-file --batch` requesting <sha>:event.json and <sha>:meta.json for
+// every commit. git resolves each rev:path server-side, so no per-commit
+// ls-tree is needed. meta.json is read independently of event.json's
+// presence — a torn commit's missing event never hides a meta.json sitting
+// alongside it. A commit is a sentinel (contracted out of the fold, never
+// dropped) when its event.json is missing or unparseable, or its event
+// type is "sync".
+func (s Store) EventsDAG(slug string) ([]model.Event, model.Meta, dag.Result, error) {
 	var meta model.Meta
-	out, _, code := s.Repo.Git("", "log", "--reverse", "--format=%H", ref(slug))
+	out, _, code := s.Repo.Git("", "log", "--format=%H%x09%P", ref(slug))
 	if code != 0 || out == "" {
-		return nil, meta, fmt.Errorf("%w: %s", ErrUnknownLedger, slug)
+		return nil, meta, dag.Result{}, fmt.Errorf("%w: %s", ErrUnknownLedger, slug)
 	}
-	commits := strings.Split(out, "\n")
+	lines := strings.Split(out, "\n")
+	commits := make([]string, len(lines))
+	parents := make([][]string, len(lines))
+	for i, line := range lines {
+		c, p, _ := strings.Cut(line, "\t")
+		commits[i] = c
+		if p = strings.TrimSpace(p); p != "" {
+			parents[i] = strings.Fields(p)
+		}
+	}
+
 	reqs := make([]string, 0, len(commits)*2)
 	for _, c := range commits {
 		reqs = append(reqs, c+":event.json", c+":meta.json")
 	}
 	contents, present := s.catBatch(reqs)
-	evs := make([]model.Event, 0, len(commits))
+
+	nodes := make([]dag.Node, len(commits))
+	byEvent := make(map[string]model.Event, len(commits))
 	for i, c := range commits {
 		evIdx, metaIdx := 2*i, 2*i+1
-		if !present[evIdx] {
-			continue // torn/foreign commit: skip, never crash a read
-		}
-		var ev model.Event
-		if err := json.Unmarshal([]byte(contents[evIdx]), &ev); err != nil {
-			continue
-		}
-		ev.ID = c[:10]
 		if present[metaIdx] {
 			json.Unmarshal([]byte(contents[metaIdx]), &meta)
 		}
-		evs = append(evs, ev)
+		node := dag.Node{SHA: c, Parents: parents[i]}
+		var ev model.Event
+		if !present[evIdx] {
+			node.IsSentinel = true // torn/foreign commit: contract out, never crash a read
+		} else if err := json.Unmarshal([]byte(contents[evIdx]), &ev); err != nil {
+			node.IsSentinel = true
+		} else {
+			ev.ID = c[:10]
+			node.TS = ev.TS
+			node.IsSentinel = ev.Type == "sync"
+			byEvent[c] = ev
+		}
+		nodes[i] = node
 	}
-	return evs, meta, nil
+
+	result := dag.Sort(nodes)
+	evs := make([]model.Event, 0, len(result.Order))
+	for _, sha := range result.Order {
+		evs = append(evs, byEvent[sha])
+	}
+	return evs, meta, result, nil
 }
 
 // windowProbeSize is the sanctioned chunked backward-read shape (spec rule
