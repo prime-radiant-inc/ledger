@@ -1,17 +1,23 @@
 # Ledger sync: activation and the partition contract (design)
 
-2026-08-17, revision 6 — a simplification-lens adversarial round
-deleted three pieces of rev 5 machinery by replacing them with less:
-the merged-history `--limit` refusal (which silently un-fixed the
-parent's bounded-recovery guarantee) gives way to a one-rule pager;
-the n²/8 ancestor bitsets and their merge-conditioning special case
-give way to a width-bounded cover-set pass; the windowed precondition
-read and its linear/merged bifurcation are deleted outright (the
-window was a net loss on the common key). With those three gone, the
-load-time merge detector has no remaining consumer and is deleted
-too. The round also fixed a wrong-signed skew doctrine line, a
-self-defeating multi-root runbook exit, and determinism-scope gaps.
-History: Validation record, bottom.
+2026-08-17, revision 7 — a second simplification round falsified rev
+6's pager law twice (a sentinel tip has no single maximal delivered
+element; a branch-local cursor is incomparable with the candidate) and
+found the document's structure itself failing its "simple to
+understand" requirement: rules stated in multiples, revision
+narration displacing law, scope lists disagreeing. Rev 7 repairs the
+pager with two clauses (cursor-descent condition; exhaust-and-emit-
+tip), states the whole cursor contract in one place, completes the
+amendment inventory (four issues-spec amendments, one parent
+amendment — the watch bound — now all named), and restates every
+multiply-stated rule once. History: Validation record, bottom.
+
+Rev 6 history: a simplification round deleted three rev 5 mechanisms
+by replacing them with less — the merged-history `--limit` refusal
+(one-rule pager), the n²/8 ancestor bitsets and their
+merge-conditioning (width-bounded cover-set pass), and the windowed
+precondition read with its linear/merged bifurcation and merge
+detector (whole-chain reads, one mode).
 
 Rev 5 history: revision 4's adversarial round falsified four of its
 pins — the paged-cursor livelock, the batch-order parent amendment,
@@ -35,10 +41,11 @@ parent's sync section stands; determinism is a scoped, tested
 requirement — and rebuilt the additions on what the probes showed.
 
 **The parent tool spec's "Sync and push" section
-(`2026-08-13-ledger-tool-design.md`) stands IN FULL and unamended. It
-is the sync design — and it is SPECIFIED, NOT YET IMPLEMENTED: no
-`sync`/`push` verb, tracking namespace, or refspec install exists in
-the tree today. Tool rev 15 is one work order: the parent's sync
+(`2026-08-13-ledger-tool-design.md`) stands IN FULL, with exactly one
+amendment, named in Addition 2: the watch batch bound is deferred to
+v2. It is the sync design — and it is SPECIFIED, NOT YET IMPLEMENTED:
+no `sync`/`push` verb, tracking namespace, or refspec install exists
+in the tree today. Tool rev 15 is one work order: the parent's sync
 section plus the additions below.** The issues layer
 (`2026-08-15-ledger-issues-design.md`, rev 17) is normative for
 everything board-shaped. Operator requirements: offline-first (reduced
@@ -78,77 +85,81 @@ whose clock runs AHEAD writes claims the slower replica renders as
 age-clamped `0s` — indistinguishable from fresh — so that replica
 cannot see them go stale, and cannot reclaim, until its own clock
 passes the claim's timestamp; the clamp keeps the number honest but
-makes this anomaly silent. The doctrine line is ASYMMETRIC (rev 6 —
-rev 5's "both directions" was wrong-signed, probed on both horizons:
-the horizon is a threshold on age and the skew an offset on it, so a
-larger horizon delays an ahead-writer's reclaim further, by exactly
-the skew, at every horizon setting): **board horizons MUST exceed
-expected inter-host skew in the BEHIND direction, so claims are not
-born stale** (skill line); the AHEAD direction is unmitigated by any
-horizon and is an accepted v1 hazard — clock discipline is the
-defense. The trial stages a skewed-clock host, and
-born-stale/born-future anomaly flagging is v2.
+makes this anomaly silent. The doctrine is ASYMMETRIC, because skew
+is an offset on the age and the horizon a threshold on it: a
+behind-writer's claim ages `+skew` and is born stale whenever skew
+exceeds the horizon, so raising the horizon fixes it; an
+ahead-writer's claim ages `-skew` and goes stale exactly `skew` LATE
+at every horizon setting, so no horizon fixes it (probed at two
+horizons). Hence the skill line covers one direction: **board
+horizons MUST exceed expected inter-host skew, so claims are not born
+stale**; the ahead direction is an accepted v1 hazard whose only
+defense is clock discipline. The trial stages a skewed-clock host,
+and born-stale/born-future anomaly flagging is v2.
 
 ## Addition 2 — Cursors under merges
 
-Revision 2 had this exactly backwards; the probes settle it:
+The whole cursor contract, in one place. (Every superseded formulation
+and its falsification lives in the Validation record.)
 
-- **A cursor is a reachability token against the ref, never a fold
-  position.** Validity: the cursor is an ancestor of (or equal to) the
-  ref tip (`merge-base --is-ancestor`); otherwise `reset_required`.
-  Delivery: the non-sentinel commits in `cursor..tip` — the parent's
-  set-based law, which after a merge delivers merged-in events sitting
-  fold-BELOW a consumed cursor exactly once.
-- **"From now" is the ref tip, sentinel included** — the sentinel is
-  the only commit whose pending range is empty after a merge, and it is
-  already a legal cursor ("a cursor may legitimately land on a sync
-  sentinel", shipped comment). The resume cursor a drain emits is the
-  tip it drained against. Emitting the fold head instead (rev 2's rule)
-  re-delivers the other branch forever, probed.
-- **Batch order is local to the range**, per the parent (topological,
-  ts, SHA within the batch). Stated consequence (probed divergence): a
-  range fold can order two events concurrent with the cursor
-  differently than the global fold renders them. Replaying consumers
-  converge on the SET of events; state-rebuilders use `status`/`tail`
-  (the parent's recovery doctrine), not a replayed stream.
-- Implementation scope (the largest single item, previously unnamed):
-  convert `since`/`watch` from positional slice arithmetic
-  (`indexOf` + `Events[idx+1:]`, silently lossy under merges) to range
-  semantics — ancestry validity, `rev-list cursor..tip` delivery.
-- **The cursor-emission law, one rule** (rev 6, replacing rev 5's
-  refusal — which silently deleted the parent's bounded-recovery
-  guarantee from every board that had ever synced a divergence, the
-  boards this spec exists for): an UNPAGED drain emits the tip it
-  drained against — always, sentinel included. A `--limit` drain
-  delivers in the parent's batch order until it has delivered at
-  least `--limit` events AND the delivered set has a SINGLE MAXIMAL
-  element; that element is the emitted cursor. Why this is the whole
-  rule: batch order is topological-first, so the delivered set is
-  always downward-closed in the range; a downward-closed set with one
-  maximal element is exactly that element's down-set, so `cursor..C`
-  = delivered and `C..tip` = remainder — exactly-once by
-  construction. The tip is always such an element, so every page
-  terminates. Honest caveat, stated: a page may exceed `--limit`
-  while crossing a concurrent region (it runs to the first event
-  whose ancestry covers both branches); sentinel-merge histories are
-  as narrow as the replica count, so the excess is small and
-  one-time per merge. Probed rationale for abandoning naive
-  last-delivered cursors (rev 4's rule): on a merged chain that
-  cursor is a DAG node whose next range re-admits delivered
-  non-ancestors — the pager oscillates between two cursors forever
-  and the tail is never delivered. `watch` has no `--limit` in v1
-  and always emits the tip; if it gains one, it uses this same law.
-- **Batch order is the parent's law, restated** (rev 5, retracting rev
-  4's pin): the range's events are ordered within the batch
-  topologically, timestamp-tiebroken, SHA-tiebroken last — computed on
-  the range, exactly as the parent states. Rev 4 pinned
-  global-fold-restricted order instead; probed, that silently amends
-  the parent (the global heap lets an out-of-range ancestor's
-  timestamp reorder in-range concurrent events) and contradicted the
-  retained rev 3 bullet above. The spike implements the retracted
-  form; the production build implements the parent's — a named delta,
-  and the "since agrees with tail on ranges" property is explicitly
-  NOT promised (the divergence consequence stated above stands).
+- **Validity.** A cursor is a reachability token against the ref,
+  never a fold position: valid iff it is an ancestor of (or equal to)
+  the ref tip (`merge-base --is-ancestor`); otherwise
+  `reset_required`.
+- **Delivery.** A drain delivers the non-sentinel commits in
+  `cursor..tip` — the parent's set-based law, which after a merge
+  delivers merged-in events sitting fold-below a consumed cursor
+  exactly once.
+- **Batch order.** Addition 1's Kahn min-heap — same parsed-ts /
+  full-SHA keys, same unparseable-ts rule — restricted to the range's
+  sentinel-contracted sub-DAG. This is the parent's "topological,
+  timestamp-tiebroken, SHA-tiebroken" order made unique by naming the
+  algorithm; a second ordering routine would be a place for replicas
+  to disagree. Stated consequence: a range fold can order two events
+  concurrent with the cursor differently than the global fold renders
+  them — "`since` agrees with `tail` on ranges" is explicitly NOT
+  promised. Replaying consumers converge on the SET of events;
+  state-rebuilders use `status`/`tail` (the parent's recovery
+  doctrine), not a replayed stream.
+- **Cursor emission.** An unpaged drain emits the tip it drained
+  against — always, sentinel included (after a merge the sentinel is
+  the only commit whose pending range is empty, and it is already a
+  legal cursor). A `--limit` drain delivers in batch order and ends
+  at the first point where BOTH hold: at least `--limit` events are
+  delivered, and there is a delivered event C that (i) descends from
+  the incoming cursor and (ii) has every delivered event as an
+  ancestor-or-equal — maximality judged on the SENTINEL-CONTRACTED
+  DAG, where it reduces to "no delivered child" (on the raw DAG the
+  parent-edge test miscounts across sentinels). C is the emitted
+  cursor; conditions (i)+(ii) make `cursor..C` exactly the delivered
+  set, so exactly-once holds page over page and the cursor strictly
+  advances. If the range exhausts before such a C exists, the page
+  runs to exhaustion and emits the TIP, sentinel included — the same
+  rule as unpaged. Two shapes hit that exhaustion clause, both
+  probed: a fresh divergence (the tip is a sentinel, whose two branch
+  heads are incomparable — no single C exists until real work lands
+  above the merge) and an incremental consumer whose cursor sits on
+  one branch (nothing in the other branch descends from it; without
+  condition (i) the pager re-delivers the consumer's own branch and
+  oscillates).
+- **`--limit` is a floor, not a ceiling — stated plainly**: a page
+  that crosses a divergence delivers the WHOLE concurrent region in
+  one page, and the region's size is the partition's event count, not
+  the replica count. Bounded paging resumes on the far side of the
+  merge. A consumer that cannot afford one region-sized page uses the
+  parent's `status` + `tail` recovery instead of the stream — the
+  same doctrine as `reset_required`.
+- **`watch`.** No `--limit` in v1; every batch emits the tip. This
+  DEFERS the parent's "the same bound applies to watch's batch
+  delivery" sentence (and its test-31 clause) to v2 — an explicit
+  amendment to the parent, the only one this spec makes, named here
+  and in the header. Consequence, stated: a cold-start or post-merge
+  `watch` batch is unbounded; consumers past harness limits use
+  `status` + `tail`. If `watch` gains `--limit`, it uses the pager
+  law above.
+- Implementation scope (the largest single item): convert
+  `since`/`watch` from positional slice arithmetic (`indexOf` +
+  `Events[idx+1:]`, silently lossy under merges) to this contract.
 
 ## Addition 3 — `contested`: the partition race, fold-derived
 
@@ -170,7 +181,14 @@ exists to flag (rev-2 rule cut, probed rationale).
   `{"reason": "contested", "key", "title" (omitted when the key is
   statusless), "contest": {"field", "ids": [fold order, winner last],
   "authors": [parallel], "expect", "human": <key carries the label>}}`.
-  Attention sort gains the tiebreak `(key, reason, field)`.
+  **The attention sort, complete and total over every entry kind**
+  (the issues spec never defined one, and cycle entries carry `keys`,
+  not `key`): entries sort on `(sort_key, reason, field)`, where
+  `sort_key` is `key` for keyed entries and the sorted member list
+  joined by `,` for cycle entries, and `field` is the empty string
+  where absent. Total by construction — the envelope's
+  byte-determinism must not rest on an implementation's incidental
+  sort stability.
 - **Membership is unchanged and visible at the point of decision**: a
   contested key keeps its ordinary list placement (it can be in
   `ready` — e.g. concurrent seeds — or `held` or none), and any
@@ -219,24 +237,20 @@ exists to flag (rev-2 rule cut, probed rationale).
   contested-recovery line says read both heads before collapsing — a
   seed collision can hide two distinct tasks under one key, and
   collapsing adjudicates only the field value, never the identity;
-  renaming/splitting is a human call — and the work order adds
-  **`show --id <sha>`** (render one event with provenance): the
-  contested and break tickets hand agents bare ids, and the one
-  existing id path, `notes --id`, is kind-scoped — probed, a
-  non-note id returns a clean silent empty, violating the parent's
-  "empty results announce themselves" rule and telling a ticket
-  holder the event doesn't exist. Rev 6 pins one behavior for both:
-  `show --id` renders any event; `notes --id` on a non-note id
-  ANNOUNCES ("event <sha> is not a note — see `show --id`") instead
-  of returning empty (rev 5's "v1 has no read path for an id" was
-  false; the real defect was a silently lying one).
-- The attention sort's tiebreak is a TOTAL order (rev 6, closing a
-  probed determinism gap): contested entries sort by
-  `(key, reason, field)`; cycle entries carry `keys`, not `key`, and
-  no field, so among themselves they sort by their sorted member
-  list — without this, two coexisting cycles tie on all three
-  components and the envelope's byte-determinism rests on an
-  implementation's incidental sort stability.
+  renaming/splitting is a human call. The tickets hand agents bare
+  event ids; `show --id` (pinned below) is how they read one.
+- **Id reads, both paths pinned**: `show --id <sha>` renders ONE
+  event in full — type, key, fields, message, evidence, author with
+  provenance marker, timestamp — including note bodies under the
+  parent's per-line quoting and control-character escaping (a ticket
+  holder following a redirect must never land on less than the
+  event); unknown id ⇒ `bad_value` naming it. `notes --id` keeps its
+  note-rendering contract; on any id that is NOT a note event of this
+  ledger — non-note event and unknown id alike — it errors
+  `bad_value` naming the id with a hint pointing at `show --id`,
+  never a silent empty list (the parent's "empty results announce
+  themselves" rule; probed, the silent empty told a contested-ticket
+  holder the event didn't exist).
 - **Scope, honest**: ready-capable boards only — a plain board's
   `--guard` buys CAS, and its cross-replica races resolve by fold
   order, last write wins, unflagged (it has no envelope to carry the
@@ -252,9 +266,16 @@ exists to flag (rev-2 rule cut, probed rationale).
   when sync or push contacts the remote — reads never touch the
   network, by design, so a partitioned replica renders a clean board
   with no warning (probed). The warning is the second net — it
-  catches fetched-but-unmerged state — and it EXTENDS TO `ready`
-  (stderr + a `--json` field outside the envelope), since `ready` is
-  the read the picking loop actually uses.
+  catches fetched-but-unmerged state — and it EXTENDS TO `ready`,
+  since `ready` is the read the picking loop actually uses. Placement,
+  stated precisely (the parent's envelope is the WHOLE JSON document,
+  so "outside the envelope" was not a place): on a TTY the warning is
+  stderr; in JSON it is a single top-level `freshness` sibling key in
+  the same document, and `ready`'s PROJECTION — the members the
+  issues spec enumerates (`frontier`/`ready`/`held`/`blocked`/
+  `attention`/`totals`) — is byte-unchanged by its presence or
+  absence. Determinism language everywhere in this spec (test 9, the
+  trial audit) binds the projection, not the document.
 - **Machinery, honestly priced** (rev 6 — the rev 3–5 design carried
   full n²/8 ancestor bitsets, 3MB at 5k but ~312MB at the parent's
   named heavy-year 50k, plus a merge-conditioning special case that
@@ -267,14 +288,18 @@ exists to flag (rev-2 rule cut, probed rationale).
   so peak residency is DAG width × candidate pairs — and a
   sentinel-merge history's width is the replica count. Probed:
   identical heads to the bitset algorithm on shared fixtures, with
-  kilobytes resident where the bitsets held hundreds of MB. The same
-  pass serves BOTH consumers: `ready`'s envelope, and the write
-  path's `contested_resolved` computation — which rule 7 requires
-  inside the CAS retry loop against a fresh read on every attempt,
-  so its cost is paid per write attempt and is priced and tested as
-  such. The issues spec's 140ms `ready` bound is re-measured on a
-  merged board with contested entries present — a named acceptance
-  number, not an assumption.
+  kilobytes resident where the bitsets held hundreds of MB. `ready`
+  runs the board-wide pass once, in its fold. The write path needs
+  no board-wide pass: a conditional set touches exactly one guarded
+  field (issues rule 2), so `contested_resolved` is the heads of
+  that single (key, field) — one descendant-write-exists boolean per
+  event, computed from the whole-chain precondition read already in
+  hand, inside the CAS retry loop against each attempt's fresh read
+  (the same freshness discipline as rule 7's checks; the cost is
+  per-attempt and is priced and tested as such). The issues spec's
+  `ready` bound is re-measured on a merged board with contested
+  entries present — a named acceptance number, not an assumption;
+  the 140ms bound still binds merge-free boards.
 
 Adoption (the parent's remote-only CAS-create) is a third meta-minting
 path and therefore RE-VALIDATES declarations exactly as import does —
@@ -283,40 +308,37 @@ with the defect named, never minted.
 
 ## Addition 4 — Determinism, scoped and tested
 
-**Every single-ledger read verb's PROJECTION is a deterministic
-function of (chain, evaluation time).** The projection excludes:
-store-resolution breadcrumbs, freshness warnings (parent law: outside
-the projection), TTY chrome, `ls`'s store-wide listing, and cross-slug
-presence lines (`show`'s superseded-by resolution reads other slugs —
-probed; it stays outside the guarantee). Verbs under the guarantee:
-`show`, `status`, `tail`, `notes`, `ready`, `render` (rev 6 — the one
-verb whose entire contract is a deterministic file-written
-projection was missing from the list and from the byte-diff test),
-and **`since`, as a function of (chain, cursor, evaluation time)**
-(rev 6 — being parameterized by a cursor is no more non-determinism
-than being parameterized by `--at`, and `since` is the verb
-cross-host resume runs on: two replicas holding the same chain
-deliver byte-identical batches for the same cursor. Without this
-clause, nothing in the spec promised that). Only `watch` is excluded
-— its output genuinely depends on arrival timing.
+**A covered verb's PROJECTION is a deterministic function of (chain,
+evaluation time) — for `since`, of (chain, cursor, evaluation
+time).** *Chain* means the set of non-sentinel events reachable from
+the ref, independent of sentinel structure and merge-parent order —
+the standing test's replicas are literally different commit graphs
+holding the same chain, and the guarantee is exactly that they render
+identically. One closed list. Covered: `show`, `status`, `tail`,
+`notes`, `ready`, `render`, `since`. Excluded, each with its reason:
+`watch` (arrival timing), `ls` (store-wide — two clones legitimately
+hold different stores), `export` and bare `rollup` (dumps and
+indexes, not projections; their determinism is untested in v1). The
+projection also excludes: store-resolution breadcrumbs, freshness
+warnings (parent law), TTY chrome, and cross-slug presence lines
+(`show`'s superseded-by resolution reads other slugs — probed; it
+stays outside the guarantee).
 
 - **`--at <ts>`** (millisecond UTC layout; the legacy layout
-  accepted): a flag fixing the evaluation clock for age/staleness
-  rendering, scoped to the verbs whose OUTPUT actually depends on the
-  clock — `ready`, `notes` (`--latest` ages), and `ls` (rev 6; rev 5
-  put it on every read verb, but `show`/`status`/`tail` render
-  absolute timestamps per the parent and the flag was probed
-  accepted-and-ignored there — the pattern the issues spec forbids
-  for `--expect`; their projections are deterministic without a
-  clock, which is simpler than a flag plus a disclaimer). It does not
-  exist on write verbs — threading a fake clock into rule 5's
-  append-time staleness would let a caller dissolve the `claim`
-  signal and skip `needs_override` unrecorded, and rule 6 pins
-  append-time staleness to the real clock; the flag's absence rejects
-  as `bad_usage`, spike-validated. `watch`'s timeout is a wall-clock
-  duration, unaffected. `--at` moves the clock only, never the chain;
-  an event newer than `--at` renders age `0s` (pinned). There is no
-  time-travel rendering in v1.
+  accepted): fixes the evaluation clock for age/staleness rendering.
+  The complete rule: the flag EXISTS on `ready` and `notes`
+  (`--latest` ages) — the only verbs whose covered output depends on
+  the clock — and on NO other verb; everywhere else, reads
+  (`show`/`status`/`tail`/`since`/`watch`/`render`/`ls`) and writes
+  alike, the flag's absence rejects as `bad_usage`. (`show`/`status`/
+  `tail` render absolute timestamps per the parent — the flag was
+  probed accepted-and-ignored there, the pattern the issues spec
+  forbids; on write verbs a fake clock would dissolve rule 5's
+  `claim` signal and skip `needs_override` unrecorded, and rule 6
+  pins append-time staleness to the real clock.) `watch`'s timeout is
+  a wall-clock duration, unaffected. `--at` moves the clock only,
+  never the chain; an event newer than `--at` renders age `0s`
+  (pinned). There is no time-travel rendering in v1.
 - **Age clamping is a GENERAL rule, not an `--at` rule** (spike
   finding): future-timestamped events reach a reader two ways — `--at`
   fixed in the past (the spike's `-58099h1m24s` came from this case;
@@ -330,8 +352,10 @@ clause, nothing in the spec promised that). Only `watch` is excluded
   own sync mostly precludes divergent merges — probed — so the test
   builds them directly), read under perturbed `TZ`, `LC_ALL`, `HOME`,
   and user, on BOTH sinks (pipe-JSON and forced-TTY render — the TTY
-  renderer is where locale/zone bugs live), fixed `--at`, every
-  covered verb byte-diffed; plus a fresh-clone re-fold of the same
+  renderer is where locale/zone bugs live), every covered verb
+  byte-diffed — with fixed `--at` on the verbs that take it, without
+  it on the clock-free verbs, `render`'s written file included, and
+  `since` at a fixed cursor; plus a fresh-clone re-fold of the same
   refs.
 
 ## Addition 5 — Guarded writes on merged history
@@ -353,20 +377,36 @@ fold-order suffix subtlety, the linear/merged bifurcation, the
 load-time merge detector (whose other consumers rev 6 also deleted),
 and the fold-order-aware-window v2 item. Residual cost, stated: the
 rare window-winning key's guarded write moves ~4MB instead of ~26KB
-— roughly the parent's measured 70–78ms batched 5k fold on a write
-path already costing ~0.4s. Guarantee, restated uniformly and
-flagged as an EXPLICIT AMENDMENT to the issues spec's rule 8:
-guarded-write precondition reads are full-fold class on every board
-(rule 8's depth-scaling claim was already conditional — the issues
-spec's own "honest worst case" names the full-scan degradation —
-and measured wall time at 5k is ~0.4s regardless); `ready`'s
-acceptance number on a merged 5k board with contested entries
-present is **≤ 350ms median-of-3** (same methodology as the issues
-spec's 140ms bound; the spike measured ~270ms). A second explicit
-amendment rides with it (rev 6): the issues spec's "boards assume
-same-host clock coherence; multi-host fleets are a Plan 2 concern"
-sentence is superseded by this spec — Addition 1's skew doctrine and
-Addition 4's age clamp are that Plan 2 answer.
+— roughly the parent's measured 70ms batched 5k fold on a write
+path already costing ~0.4s.
+
+**The complete issues-spec amendment inventory** (this spec amends
+its sibling in exactly four places; nothing else in the issues spec
+moves):
+
+1. **Rule 8 and its test-16 clause.** Guarded-write precondition
+   reads are full-fold class on every board (rule 8's depth-scaling
+   claim was already conditional — the issues spec's own "honest
+   worst case" names the full-scan degradation — and measured wall
+   time at 5k is ~0.4s regardless). Issues test 16's "not a full
+   re-fold per retry" clause is retracted with it: the precondition
+   read IS the full read, per attempt.
+2. **The `ready` bound splits.** The issues spec's 140ms bound still
+   binds merge-free boards; a merged board with contested entries
+   present is bound at **≤ 350ms median-of-3** (same methodology;
+   the spike measured ~270ms, so this is a bound, not an
+   aspiration).
+3. **Clock scope.** The "boards assume same-host clock coherence;
+   multi-host fleets sharing a store are a Plan 2 concern" sentence
+   and the Deferred list's cross-machine item are superseded — this
+   document is that Plan 2 answer (Addition 1's skew doctrine,
+   Addition 4's age clamp).
+4. **The attention sort** (Addition 3): the issues spec never
+   defined an order for `attention`; the total order pinned there
+   now binds it.
+
+(The single amendment to the PARENT spec — the watch batch bound —
+is named in Addition 2 and the header.)
 
 ## Pins from the spike (rev 4 — decisions the spike had to make)
 
@@ -377,12 +417,13 @@ Addition 4's age clamp are that Plan 2 answer.
   two-remote/no-origin repo an exit-0 "no git remote configured"
   no-op at the checkpoint push, asserting the opposite of the truth):
   ZERO remotes ⇒ the parent's clean no-op with message; two or more
-  remotes and nothing selects one ⇒ an error whose hint NAMES the
-  candidates — the identifier is `bad_value`, matching the shape the
-  tree already uses for `--remote <unknown>` (rev 6; rev 5 said
-  `bad_usage`, whose parent-pinned hint contract is "the verb's
-  --help", which cannot carry the candidate list — the whole point of
-  the error).
+  remotes and nothing selects one ⇒ **`ambiguous_remote`**, exit 4,
+  hint = the candidate list plus `--remote <name>` — the parent's
+  `ambiguous_ledger` precedent, an identifier whose job is carrying
+  candidates. Distinct from `bad_value` (`--remote <unknown>` — a
+  name that doesn't exist), so an agent keying on identifiers can
+  tell "you named a bad remote" from "you named none and there are
+  several".
 - **Push and sync outcome envelope** (rev 6 widens rev 5's push-only
   pin — the parent gives sync identical exit-3 semantics and the
   implementation shares the code path): exit 3 covers all-failed as
@@ -446,7 +487,7 @@ with the single-maximal-element pager; whole-chain precondition reads
 (deleting the window primitive); `contested` (the cover-set pass in
 the fold, envelope entry + per-entry `contested` flags,
 `contested_resolved` recording on the write path, the total-order
-attention sort, skill paragraph); `--at` on `ready`/`notes`/`ls`;
+attention sort, skill paragraph); `--at` on `ready`/`notes` only;
 the perturbed determinism test incl. `since` and `render`; skill
 lines (sync habit, selective push, behind-direction skew doctrine,
 contested recovery incl. the read-both-heads seed-collision
@@ -456,7 +497,8 @@ quickstart `needs_override` rewording. The spike branch
 not a base to merge; its delta list is long — it implements the
 rev 4 rules this spec has since replaced (livelocking pager,
 global-restricted batch order, n² bitsets with merge conditioning,
-windowed preconditions, every-read-verb `--at`, `bad_usage`
+windowed preconditions, `--at` on five read verbs where production
+has two, `bad_usage`
 ambiguity, `ok:true` failure envelopes, comma-joined
 `contested_resolved` without echo or TTY marker, per-slug push,
 double fold, clock env var) and lacks every skill line, the
@@ -474,16 +516,18 @@ quickstart rewording, `show --id`, and the multi-root refusal.
    below a consumed cursor deliver exactly once; a fold-head cursor
    is VALID (it is an ancestor) and re-delivers the other branch —
    pinned as documented behavior so nobody mistakes it for loss;
-   `reset_required` on non-ancestors; `--limit` pages BOTH a linear
-   chain and the probed rev-4 livelock DAG to completion under the
-   single-maximal-element law (union of pages = unpaged drain, every
-   event exactly once, termination — the livelock fixture is kept
-   precisely because the naive rule oscillates on it); a page
-   crossing a concurrent region exceeds `--limit` by the region's
-   size (pinned as documented behavior); batch order within a range
-   is the parent's (topological, ts, SHA computed on the range —
-   fixture where global-restricted order differs, asserting the
-   parent's order).
+   `reset_required` on non-ancestors; `--limit` pages to completion
+   (union of pages = unpaged drain, every event exactly once,
+   termination) on ALL THREE probed fixtures — a linear chain, the
+   rev-4 livelock DAG, and the two exhaustion shapes (sentinel tip
+   with incomparable branch heads; incremental cursor on one branch
+   of a merge, which must exhaust-and-emit-tip rather than
+   re-deliver the consumer's own branch); a page crossing a
+   concurrent region delivers the whole region (floor-not-ceiling
+   pinned as documented behavior); batch order within a range is
+   Addition 1's Kahn heap restricted to the contracted range
+   sub-DAG (fixture where global-restricted order differs, asserting
+   the range order).
 3. `contested`: write-heads definition — two concurrent claims flag;
    claim-then-close per side flags ONCE per field with a valid
    `expect` (the fold-last head); same-value concurrent claims STILL
@@ -507,17 +551,18 @@ quickstart rewording, `show --id`, and the multi-root refusal.
    entries ≤ 350ms median-of-3; a merged 5k guarded write's
    wall time and the cover-set pass's peak residency measured and
    within the stated class (width-bounded, not n²).
-7. `--at`: `ready`/`notes`/`ls` honor it (pinned `0s` future-age);
-   `show`/`status`/`tail` and every write verb reject it `bad_usage`;
-   `watch` timeout unaffected.
+7. `--at`: `ready`/`notes` honor it (pinned `0s` future-age); every
+   other verb — reads and writes — rejects it `bad_usage`; `watch`
+   timeout unaffected.
 8. Determinism: the perturbed both-sinks byte-diff over the covered
    verbs, `render`'s written file included, plus `since` at a fixed
    cursor byte-diffed across replicas holding the same chain;
    freshness warnings and cross-slug lines verified OUTSIDE the
    diffed projection.
-9. `ready` freshness: a stale replica's `ready` warns on stderr and in
-   the `--json` side-channel; the envelope bytes are unchanged by the
-   warning.
+9. `ready` freshness: a fetched-but-unmerged replica's `ready` warns
+   on stderr (TTY) and via the top-level `freshness` key (JSON); the
+   PROJECTION members are byte-unchanged by the warning's presence or
+   absence.
 10. Skew, both directions demonstrated, asymmetric doctrine
     verified: a host 3h behind writes a claim on a 2h-horizon board
     — born stale, reclaimable, and a horizon exceeding the skew
@@ -530,15 +575,22 @@ quickstart rewording, `show --id`, and the multi-root refusal.
     adoption, naming both roots and creators and the tracking ref;
     the legitimate single-root chain still syncs.
 12. Remote ambiguity: zero remotes ⇒ clean no-op with message; two
-    remotes, no origin/breadcrumb/flag ⇒ `bad_value` whose hint
-    names both; breadcrumb and `--remote` each resolve it.
+    remotes, no origin/breadcrumb/flag ⇒ `ambiguous_remote` whose
+    hint names both; breadcrumb and `--remote` each resolve it;
+    `--remote <unknown>` stays `bad_value` — the two identifiers are
+    distinct.
 13. Push and sync outcome envelopes: all-failed and partial carry
     `ok: false`, `error: "partial_failure"`, per-slug outcomes, exit
     3; all-ok carries `ok: true`, exit 0.
-14. Id reads: `show --id` renders exactly the named event with
-    provenance for a contested ticket's loser id; unknown id errors
-    cleanly; `notes --id` on a non-note id announces instead of
-    returning a silent empty.
+14. Id reads: `show --id` renders exactly the named event — a note
+    event's body included, under the parent's quoting — for a
+    contested ticket's loser id; unknown id ⇒ `bad_value`;
+    `notes --id` errors `bad_value` with the `show --id` hint on
+    BOTH non-note branches (non-note event, unknown id) and never
+    returns a silent empty list.
+15. Watch bound deferral: post-merge cold-start `watch` delivers the
+    whole concurrent region in one batch (the deferred parent bound,
+    pinned as documented v1 behavior, named as the parent amendment).
 
 ## Trial plan
 
@@ -547,8 +599,8 @@ clock; fleet agents on both sides of a staged partition claim, close,
 label, seed colliding keys, and break cycles offline; sync; audit:
 every contested (key, field) carries exactly one entry with a valid
 `expect`; exactly one keeper per contested key after recovery, with
-`contested_resolved` in the chain; envelopes and `show`/`status`/`tail`
-byte-identical across replicas under perturbed environments; IDs
+`contested_resolved` in the chain; the projections of every covered
+verb byte-identical across replicas under perturbed environments; IDs
 stable throughout.
 
 ## Validation record
@@ -664,3 +716,42 @@ stable throughout.
   (both paths now pinned); the outcome-envelope pin widened to sync;
   refusal errors name the tracking ref; and the issues-spec clock
   amendment is now flagged explicitly alongside rule 8's.
+- Rev 6 clarity round (two opus reviewers, simplicity +
+  ease-of-understanding lens; 12 vs 11 legitimate findings, five
+  shared, zero disqualified). Rev 6's pager law falsified TWICE,
+  probed: after every divergent sync the tip is a sentinel, so the
+  delivered set ends with two incomparable maximal elements and the
+  law names no cursor and never terminates ("the tip is always such
+  an element" was false — sentinels are never delivered); and a
+  single maximal element, when it exists, can be INCOMPARABLE with
+  the incoming cursor (a consumer whose cursor sits on one branch),
+  making `C..tip` re-admit the consumer's own branch — the rev-4
+  oscillation reproduced under the rev-6 rule. Fix: condition (i)
+  cursor-descent, condition (ii) dominates-delivered on the
+  contracted DAG, exhaust-and-emit-tip otherwise. Also probed: the
+  "excess is small" paging caveat confused DAG width with region
+  event count (a divergence-crossing page delivers the whole
+  region; `--limit` is a floor — now stated); maximality on the raw
+  DAG miscounts across sentinels (contracted-DAG judgment pinned);
+  `watch`'s missing bound was a silent parent amendment in a
+  document claiming none (now the named parent amendment);
+  "outside the envelope" was not a place — the parent defines the
+  envelope as the whole document (projection vs document
+  distinction pinned; the spike's top-level warning keys change
+  envelope bytes); the determinism scope was stated three
+  disagreeing ways with `ls` both in and out and "chain" undefined
+  (one closed list; chain = the sentinel-independent event set);
+  `--at`'s scope contradicted the standing test it serves (complete
+  existence rule pinned; `ls` dropped — no promise consumed it);
+  the attention sort was still not total across entry types (one
+  tuple, all kinds); `show --id` was unspecified inside a bullet
+  about seed collisions and `notes --id` still silently lied on
+  unknown ids (both paths pinned, full-body render, `bad_value` on
+  both bad branches); the write path was priced for a board-wide
+  pass it doesn't need (narrowed to one pair's boolean); the
+  amendment inventory was short by two (test-16 clause, 140ms
+  linear bound — four issues amendments now enumerated); the
+  ambiguity identifier moved to the parent's `ambiguous_*`
+  precedent; the 70–78ms fold figure misquoted the parent (70ms);
+  and Addition 2's rules were each stated twice in
+  revision-narrative form (restated once; history moved here).
