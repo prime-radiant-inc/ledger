@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -204,13 +205,18 @@ func keys(m map[string][]string) string {
 	return strings.Join(ks, ", ")
 }
 
+// mapStoreErr classifies store-layer errors by errors.Is against the
+// store's own sentinels — never by matching err.Error() text. A caller-
+// controlled string (e.g. an --as author, embedded verbatim in a
+// checkCAS-produced claim_lost message) can legitimately contain
+// "slug_exists" or "unknown_ledger"; substring matching on the rendered
+// message would relabel that error under the wrong code.
 func mapStoreErr(err error, slug string) error {
-	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "slug_exists"):
+	case errors.Is(err, store.ErrSlugExists):
 		return out.Errf("slug_exists", "ledger ls --all — then pick a new slug, e.g. "+slug+"-2", 4,
 			"ledger '%s' already exists (slugs are never reused)", slug)
-	case strings.Contains(msg, "unknown_ledger"):
+	case errors.Is(err, store.ErrUnknownLedger):
 		return out.Errf("unknown_ledger", "ledger ls --all", 4, "no ledger '%s' here", slug)
 	}
 	return err

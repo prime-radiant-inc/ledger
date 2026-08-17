@@ -435,6 +435,88 @@ func TestUnknownFieldStillRejectsUndeclared(t *testing.T) {
 	}
 }
 
+// TestExpectEmptyRejectedAsBadUsage: --expect "" (e.g. an unset shell
+// variable interpolated into the flag) must never be treated as an
+// unconditional write — strings.HasPrefix(id, "") is vacuously true for
+// every id, so an empty --expect would otherwise silently bypass CAS
+// entirely. It must be rejected as bad_usage, and the write must never
+// land.
+func TestExpectEmptyRejectedAsBadUsage(t *testing.T) {
+	dir := setupReady(t)
+	so, _, code := run(t, dir, "set", "k1", "status=open", "--expect", "none", "-m", "title", "--as", "a")
+	if code != 0 {
+		t.Fatal(so)
+	}
+	seedID := mustJSON(t, so)["id"].(string)
+
+	_, se, code := run(t, dir, "set", "k1", "status=in-progress", "--expect", "", "-m", "x", "--as", "a")
+	if code != 4 {
+		t.Fatalf("empty --expect must be rejected, not silently succeed: %d %s", code, se)
+	}
+	doc := mustJSON(t, se)
+	if doc["error"] != "bad_usage" {
+		t.Fatalf("%s", se)
+	}
+	want := "--expect requires an event id or the literal 'none' (got empty — an unset shell variable?)"
+	if doc["message"] != want {
+		t.Fatalf("exact message: got %q want %q", doc["message"], want)
+	}
+
+	// Nothing was written: seedID must still be the correct CAS target — if
+	// the rejected write had landed anyway, this would lose the race with a
+	// stale-expect claim_lost instead of succeeding.
+	so2, se2, code := run(t, dir, "set", "k1", "status=in-progress", "--expect", seedID, "-m", "claiming", "--as", "a")
+	if code != 0 {
+		t.Fatalf("rejected empty --expect must not have written anything: %s %s", so2, se2)
+	}
+}
+
+// TestExpectShortPrefixRejectedAsBadUsage: --expect below git's own
+// abbreviation floor (4 hex characters) is rejected as bad_usage rather
+// than accepted as an unusably ambiguous CAS target.
+func TestExpectShortPrefixRejectedAsBadUsage(t *testing.T) {
+	dir := setupReady(t)
+	run(t, dir, "set", "k1", "status=open", "--expect", "none", "-m", "title", "--as", "a")
+
+	_, se, code := run(t, dir, "set", "k1", "status=in-progress", "--expect", "abc", "-m", "x", "--as", "a")
+	if code != 4 {
+		t.Fatalf("short --expect must be rejected: %d %s", code, se)
+	}
+	doc := mustJSON(t, se)
+	if doc["error"] != "bad_usage" {
+		t.Fatalf("%s", se)
+	}
+}
+
+// TestClaimLostNeverRelabeledByAuthorSubstring: mapStoreErr used to
+// classify store errors by substring-matching err.Error() for
+// "slug_exists"/"unknown_ledger". claim_lost's message embeds the winning
+// author's name verbatim, so an author literally named "unknown_ledger"
+// would get any later claim_lost against that write mis-relabeled as
+// unknown_ledger. Classification must be immune to caller-controlled text.
+func TestClaimLostNeverRelabeledByAuthorSubstring(t *testing.T) {
+	dir := setupReady(t)
+	so, _, code := run(t, dir, "set", "k1", "status=open", "--expect", "none", "-m", "title", "--as", "a")
+	if code != 0 {
+		t.Fatal(so)
+	}
+	seedID := mustJSON(t, so)["id"].(string)
+
+	so2, se2, code := run(t, dir, "set", "k1", "status=in-progress", "--expect", seedID, "-m", "claiming", "--as", "unknown_ledger")
+	if code != 0 {
+		t.Fatal(so2, se2)
+	}
+
+	_, se, code := run(t, dir, "set", "k1", "status=in-progress", "--expect", seedID, "-m", "claiming", "--as", "loser")
+	if code != 4 {
+		t.Fatalf("%d %s", code, se)
+	}
+	doc := mustJSON(t, se)
+	if doc["error"] != "claim_lost" {
+		t.Fatalf("author 'unknown_ledger' embedded in the claim_lost message must never re-label the error: got %q, full: %s", doc["error"], se)
+	}
+}
+
 // TestOverrideFlagRequiresMessage: --override's message discipline (spec
 // rule 5) is unconditional, independent of board capability — even on a
 // plain board, where rule 5 itself never applies, an empty -m is still

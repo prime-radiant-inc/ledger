@@ -104,7 +104,7 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts, expect string
 
 	// Rules 1-2 (the invariant): flag validation, not a precondition — a
 	// malformed guarded write never reaches AppendChecked at all.
-	target, usageErr := resolveExpectTarget(fields, led.Meta.Guard, led.Slug, expectSet)
+	target, usageErr := resolveExpectTarget(fields, led.Meta.Guard, led.Slug, expect, expectSet)
 	if usageErr != nil {
 		return usageErr
 	}
@@ -151,7 +151,26 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts, expect string
 // as real CAS, but only when it touches exactly one field — there is
 // otherwise no way to say which field the id names (guarding makes --expect
 // mandatory, never exclusive; it is never accepted-and-ignored).
-func resolveExpectTarget(fields map[string]string, guard []string, slug string, expectSet bool) (target string, usageErr error) {
+//
+// A flag value of "" (trimmed) is rejected outright, before any of that:
+// checkCAS matches expect via strings.HasPrefix(latest.ID, expect), which is
+// vacuously true for "" — an empty --expect would otherwise silently pass
+// CAS unconditionally instead of failing closed. The realistic trigger is
+// `--expect "$ID"` against an unset shell variable, so the message names
+// that. Below git's own abbreviation floor (4 hex characters) is rejected
+// too: a shorter prefix is unusably ambiguous as a CAS target.
+func resolveExpectTarget(fields map[string]string, guard []string, slug, expect string, expectSet bool) (target string, usageErr error) {
+	if expectSet {
+		trimmed := strings.TrimSpace(expect)
+		if trimmed == "" {
+			return "", out.Errf("bad_usage", "pass --expect <event-id> or --expect none", 4,
+				"--expect requires an event id or the literal 'none' (got empty — an unset shell variable?)")
+		}
+		if trimmed != "none" && len(trimmed) < 4 {
+			return "", out.Errf("bad_usage", "pass at least 4 hex characters of the event id, or --expect none", 4,
+				"--expect '%s' is shorter than git's own minimum abbreviation (4 hex characters)", trimmed)
+		}
+	}
 	var guardedTouched []string
 	for _, g := range guard {
 		if _, ok := fields[g]; ok {

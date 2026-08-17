@@ -143,7 +143,10 @@ func (b *Board) Envelope(now time.Time, limit int, filter func(*Key) bool) Envel
 	})
 	sort.Slice(held, func(i, j int) bool { return held[i].Key < held[j].Key })
 	sort.Slice(blocked, func(i, j int) bool { return blocked[i].Key < blocked[j].Key })
-	sort.Slice(attention, func(i, j int) bool { return attention[i].Key < attention[j].Key })
+	// SliceStable: cycle entries all share Key "" (they're keyed by Keys, not
+	// Key), so a plain sort.Slice would let their relative order flap between
+	// runs.
+	sort.SliceStable(attention, func(i, j int) bool { return attention[i].Key < attention[j].Key })
 
 	totals := Totals{Ready: len(ready), Held: len(held), Blocked: len(blocked), Attention: len(attention)}
 
