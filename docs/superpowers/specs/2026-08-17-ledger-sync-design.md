@@ -1,212 +1,208 @@
-# Ledger sync (design)
+# Ledger sync: activation and the partition contract (design)
 
-2026-08-17, revision 1. Extends the tool spec
-(`2026-08-13-ledger-tool-design.md`, rev 14) and the issues spec
-(`2026-08-15-ledger-issues-design.md`, rev 17). This is Plan 2 —
-sharing ledgers across machines — designed to three requirements set by
-the operator: it works offline (reduced guarantees accepted), it is
-simple to understand, and any host reading a synced ledger after the
-fact produces exactly the same output as any other.
+2026-08-17, revision 2 — a rewrite after an adversarial round falsified
+revision 1 (see Validation record). The decisive finding: the parent
+tool spec (`2026-08-13-ledger-tool-design.md`, rev 13) already contains
+a complete, seven-round-hardened sync design — tracking refs, the
+sync/push verb pair, the same-root rule, remote-only adoption, sentinel
+merges, range cursors, degraded modes, the breadcrumb, the privacy and
+trust model — and revision 1 rewrote it from memory, worse, without
+declaring a supersession. Revision 2 deletes that mistake:
 
-The whole design in one breath: **sync is a fetch, a deterministic
-merge commit, and a push; everything else is the fold learning to read
-a DAG.** No daemon, no locks, no leader, no new storage, no new
-configuration store.
+**The parent spec's "Sync and push" section stands IN FULL and
+unamended. It is the sync design.** This document adds only what the
+issues layer (`2026-08-15-ledger-issues-design.md`, rev 17) and the
+operator's determinism requirement need on top of it. These additions
+are the tool's rev 15. The operator's three requirements, restated:
+works offline (reduced guarantees accepted); simple to understand; any
+host reading a synced ledger after the fact shows exactly the same
+output.
 
-## The model
+What the parent already settles (cited, not restated — read it there):
+tracking refs at `refs/ledger-remote/<remote>/<slug>` with refspec
+repair; `ledger sync` (fetch, ff/no-op, one sentinel merge under CAS,
+remote-only adoption; NEVER pushes) and `ledger push` (non-force,
+selective by slug, per-slug outcomes, exit 3 partial); the same-root
+rule with `root_mismatch`; sentinel `type:"sync"` merge events skipped
+by every read; set-based cursor delivery over `cursor..head`
+(topological, ts-tiebroken, SHA-tiebroken); appender-vs-syncer CAS;
+degraded modes (`GIT_TERMINAL_PROMPT=0`, `credentials_needed`,
+no-remote no-op); `.ledger.toml` with a remote NAME never a URL;
+read-time freshness warnings outside the projection; the secrets
+runbook; lifecycle-across-merges anomaly flags. Nothing here changes
+any of it.
 
-Your machine is always right about itself. Sync is two couriers
-swapping mail. If two writers touched the same dial while apart, the
-board says so at the next sync, and the ordinary recovery idioms apply.
+## Addition 1 — The total order, stated as an algorithm
 
-Stated as guarantees:
+The parent pins the order ("topological, timestamp-tiebroken,
+SHA-tiebroken last") per delivery batch. This revision makes it THE
+fold order, global, and states it as an algorithm because a comparator
+phrasing invites `sort.Slice`, and a pairwise ancestry/timestamp
+comparator is not transitive under clock skew (round-1 falsification):
 
-- On one replica, guarded writes are race-proof exactly as today —
-  nothing about local operation changes.
-- Across replicas, guarded writes are race-proof for everything both
-  sides have seen. Work done while apart can collide; a collision is
-  never lost, never silently resolved, and always surfaced
-  (`contested`, below).
-- `--expect` is a promise about your replica. A merge may reveal that
-  another replica superseded you; the record shows both, and the fold's
-  one ordering rule decides current state identically everywhere.
+**Kahn's topological sort over the event DAG; the ready set is a
+min-heap keyed on (event timestamp, commit SHA).** Ancestry is
+structurally guaranteed; skew can reorder only genuinely concurrent
+events; ties cannot exist past the SHA key. Every read surface folds in
+this order; `Events()` walks with `--topo-order` (its current
+`git log --reverse` emits date order, verified wrong on merged DAGs)
+and keeps the parent's two-subprocess batching. Merge growth, chain
+shape, and convergence are the parent's mechanics unchanged —
+convergence needs no deterministic merge minting (revision 1's
+centerpiece, cut entirely: merge commits carry no events, so merge
+SHAs never appear in any projection, and the remote ref is the
+serialization point).
 
-## Remotes are git remotes
+Fold-order consequences the implementation must honor, named:
+- Every cursor the tool EMITS is an event id, never a ref tip
+  (`watch`'s cold-start cursor currently publishes `HeadID()` — after
+  a merge that is a sentinel; it must emit the fold head instead).
+- The windowed precondition read (`EventsWindow`, issues rule 8) is
+  sound only on linear history — its suffix invariant is
+  by-git-log-order, not fold order. A ledger whose walk encounters any
+  merge commit falls back to the whole-chain precondition read. Honest
+  cost, stated: guarded writes on merged boards pay the full fold;
+  the window optimization returns when history is linear again.
 
-There is no ledger-specific remote configuration.
+## Addition 2 — `contested`: the partition race, fold-derived
 
-- A repo-embedded store syncs to the repo's own remotes; `sync`
-  defaults to the current branch's upstream remote, else `origin`
-  (`--remote <name>` overrides).
-- A standalone store (`.ledger.git`) uses its own git remote config,
-  set with plain `git remote add` against that git dir.
-- Ledger refs live under `refs/ledger/*`, which default refspecs do not
-  carry; `sync` supplies `refs/ledger/*:refs/ledger/*` explicitly.
-  Hosts accept such refs; their UIs simply don't show them.
-
-**Sharing is the act of syncing, not a setting.** `ledger sync <name>`
-shares a ledger the first time it is named; bare `ledger sync` syncs
-every local ledger that already exists on the remote — the remote's own
-ref list is the configuration, inspectable with plain git
-(`git ls-remote <remote> 'refs/ledger/*'`). One warning line in the
-skill: syncing a ledger to the project's origin shares it with everyone
-who can read the repo — investigation ledgers on public repos deserve a
-thought first.
-
-## The sync verb
-
-`ledger sync [<name>] [--remote <r>]`, per ledger:
-
-1. Fetch the remote ref.
-2. If either side is an ancestor of the other: fast-forward. Done.
-3. Otherwise mint the **deterministic merge commit**: parents sorted by
-   SHA; committer and author pinned to a fixed identity ("ledger-sync");
-   commit timestamp = the later of the two parent tips' committer
-   times; empty tree delta (a merge commit carries NO event — it is a
-   pure join, and the fold skips it). Determinism means two replicas
-   merging the same two heads mint the identical SHA and converge
-   without coordinating.
-4. Push with `--force-with-lease` against the fetched value; on
-   rejection (the remote moved), refetch and repeat — the CAS retry
-   loop, remote edition. Bounded attempts, then a clean error telling
-   the user to re-run.
-
-Local writes are never blocked by sync state; `sync` is never run
-implicitly. Doctrine, not machinery: sync when you sit down and when
-you finish something — the `git pull`/`git push` reflex.
-
-Merges of merges need nothing special: step 3 is always a two-parent
-join of the local and remote heads, whatever shape lies beneath them.
-Many replicas converge pairwise through the shared remote (a star, with
-the remote at the center, purely by usage — the tool has no topology
-concept).
-
-Export/import is unchanged and different on purpose: import re-mints
-identities into a new store; sync converges replicas of the SAME store,
-and IDs are stable across it forever.
-
-## History is a DAG; reading is linear
-
-Merges never rewrite anything. The record permanently keeps the shape
-of what happened — including "these writes did not know about each
-other," which is evidence, not noise. Event IDs (commit SHAs) never
-change.
-
-Every reader linearizes the DAG with ONE rule, stated once: **ancestry
-first; concurrent events by event timestamp; exact ties by SHA.** All
-derived surfaces (latest-per-field, titles, the envelope, the frontier,
-staleness inputs) fold over that order unchanged. `tail` and `status`
-show the derived sequence — a sequence is what humans read — and the
-raw DAG stays underneath for anyone who asks git.
-
-`Events()` learns to walk multi-parent histories (deduplicating by SHA)
-and emit the pinned order; nothing downstream changes.
-
-## `contested`: partition races are fold-derived, not sync-recorded
-
-Sync writes no markers. The DAG already encodes concurrency, so the
-fold computes it, the way it computes staleness and cycles:
+The parent already flags causally-unordered lifecycle collisions
+(competing closes, competing successor links) by total-order-wins-plus-
+anomaly-flag. `contested` extends exactly that pattern to guarded
+fields, computed by the fold the way staleness and cycles are — sync
+writes no markers; the DAG's own concurrency is the evidence.
 
 - **Definition**: two or more writes to the same GUARDED field of the
-  same key that are concurrent (neither an ancestor of the other) and
-  not superseded — no later write to that field has all of them as
-  ancestors.
-- **Surface**: an `attention` entry
-  `{reason: "contested", key, field, ids: [...], by: [...]}` carrying
-  the competing events' ids and authors, titles per the stale-claim
-  convention; drives `attention-needed` like any attention item.
-- **Clearing**: any subsequent write to that field lands after the
-  merge, supersedes all competitors, and the entry evaporates — the
-  corrective write is the resolution, made with the existing Recovery
-  idiom (handoff note, corrective guarded write, message naming what
-  happened). For contested claims specifically: one claimant keeps the
-  key (their `--expect` is the fold-order winner's id), the other's
-  work arrives as a handoff note — trial-1's duplicate-work outcome,
-  now detected by mechanism instead of luck.
+  same key, pairwise concurrent (no one an ancestor of another), where
+  no later write to that field has ALL of them as ancestors.
+- **Entry shape, pinned** (its own shape, like `CycleBreak` — it is a
+  self-service ticket, not a stale-claim variant):
+  `{"reason": "contested", "key", "field", "title",
+    "ids": [...fold order, winner LAST...], "by": [...parallel...],
+    "expect": "<the winner's id — the corrective write's CAS ticket>",
+    "human": <true iff the key carries the human label>}`
+  It joins `attention`, drives `attention-needed` exactly like other
+  attention items (subordinate to `work-available` — a contested key is
+  in `held`, not `ready`, so a busy board surfaces it via
+  `totals.attention`, the standing triage cue).
+- **Clearing, ancestry-based**: the entry evaporates when (a) any write
+  to that field has all competitors as ancestors — including a
+  competitor's own later write — or (b) all competing writes wrote the
+  SAME value (the race was real, the outcome identical; nothing to
+  resolve). A deliberate dismissal is an ordinary corrective write and
+  may legitimately require `--override` under rule 5 (re-asserting a
+  terminal value trips `settled`; taking over a claim trips `claim`) —
+  the override message is the resolution record, which is rule 5's
+  whole point, and the skill says so.
+- **Scope, honest**: this guarantee covers guarded fields — which
+  exist only on boards that declared them. On plain ledgers and
+  unguarded fields (labels included), cross-partition collisions
+  resolve by fold order, last write wins, both writes in history,
+  nothing flagged: the same stated trade those fields already accept
+  on one store, extended. Rule 5's standing signals are likewise
+  local-view gates: a partition can admit a state the gate would have
+  refused (a key labeled `human` on one replica while claimed on
+  another — different fields, not contested). Accepted, stated; the
+  triage sweep's override grep and the anomaly flags are the net.
+  Extending concurrency detection across field pairs is v2 if the
+  field ever shows the need.
 
-Unguarded fields (labels) cross-partition behave exactly as unguarded
-fields behave on one store: last write in fold order wins, both writes
-stay in history, nothing is flagged. That is the existing stated trade,
-extended; the Label-edit idiom's optional CAS still protects
-same-replica races.
+Recovery doctrine (one skill paragraph, break-on-sight style): a
+contested entry carries its `expect`; the keeper is the fold-order
+winner; the loser's work arrives as a `handoff` note per the Recovery
+idiom. Trial-1's duplicate-work disease, detected by mechanism.
 
-## Determinism is a requirement, not a property
+## Addition 3 — Determinism as a scoped, tested requirement
 
-**Every read verb's output is a deterministic function of
-(chain, evaluation time).** Same chain + same evaluation time = same
-bytes, on any host, always. Enforced two ways:
+**Every single-ledger read verb's PROJECTION is a deterministic
+function of (chain, evaluation time).** Same chain, same evaluation
+time: same bytes, any host, always. Scope words, load-bearing:
+projections — store-resolution breadcrumbs, freshness warnings (parent:
+outside the projection by law), TTY chrome, and `ls`'s store-wide
+listing are outside it.
 
-- Every read verb gains `--at <ts>` (the pinned UTC layout) fixing the
-  evaluation time for age/staleness math; omitted means now. With
-  `--at`, output is byte-reproducible forever — audits can re-render
-  the board exactly as it stood at any moment, from any replica.
-- A standing determinism test: clone a store, run every read verb on
-  both copies with a fixed `--at`, diff the bytes. Any future feature
-  that sneaks host state into a read path fails it.
+- One root-level `--at <ts>` (pinned UTC layout) fixes the evaluation
+  clock for every verb through `Ctx` — one flag, not N; `out.Age` and
+  the envelope's staleness math read it. `--at` moves the CLOCK only;
+  it does not time-travel the chain (revision 1's "re-render the board
+  as it stood" claim is deleted — that requires chain truncation with
+  its own merged-events semantics, deferred until wanted). Omitted
+  means now, and now moves.
+- **The standing determinism test is perturbed, not a clone-diff**: two
+  replicas of the same DAG, converged via DIFFERENT merge orders, read
+  under different `TZ`, `LC_ALL`, `HOME`, and user, stdout a pipe,
+  fixed `--at` — every single-ledger read verb's projection byte-diffed.
+  (Revision 1's clone-and-diff was verified vacuous: a plain clone
+  carries no `refs/ledger/*` at all.)
 
-Clocks get one honest sentence: event timestamps are recorded by the
-writer and travel with the chain (identical everywhere); cross-host
-staleness and the fold's concurrent-event ordering assume NTP-class
-clock sync, which is why board horizons are hours, not milliseconds. A
-writer with a badly wrong clock mis-orders only against events it was
-already concurrent with — ancestry always wins first.
+## Implementation scope (tool rev 15)
 
-## What sync deliberately does not do
+Fold order → Kahn+(ts,SHA) in `Events()` (`--topo-order`); merged-
+history fallback for `EventsWindow` preconditions; `watch` cold-start
+cursor = fold head, never ref tip; `contested` in fold + envelope +
+skill paragraph; root `--at` threaded through `Ctx` into `out.Age` and
+`Envelope`; the perturbed determinism test; the sync/push doctrine
+lines in the issues skill section (sync at sit-down, selective push at
+checkpoints — the parent quickstart's existing rules, cross-referenced
+not duplicated). Everything else in the parent's sync section is
+already specified there and implemented per its own plan.
 
-Auto-sync (hooks, watchers, daemons); partial or filtered sync; sync
-topology (mesh, relay); encryption at rest; permissions beyond the
-remote's own access control; conflict resolution beyond surfacing
-(`contested` names the race; people and doctrine resolve it); rebasing
-or history rewriting of any kind, ever.
+## Test plan (delta to the parent's)
 
-## Implementation scope
-
-`sync` verb (fetch/ff/deterministic-merge/lease-push with retry);
-DAG-aware `Events()` with the pinned total order; `contested` in the
-fold + envelope + one skill paragraph (break-on-sight style: the entry
-carries the competing ids; resolution is one Recovery write);
-`--at <ts>` on every read verb; the determinism test; refspec plumbing
-and remote defaulting; skill section for the sync habit + the sharing
-warning; the two-replica trial.
-
-## Test plan
-
-1. Fast-forward sync both directions; no-op sync is a no-op.
-2. Divergent sync: both replicas mint the IDENTICAL merge commit SHA
-   independently; both converge; no history rewritten (all pre-merge
-   SHAs stable).
-3. Fold order over a merged DAG: ancestry beats timestamp; concurrent
-   events order by ts then SHA; derived state identical on both
-   replicas (byte-diff of every read verb with fixed `--at`).
-4. `contested`: concurrent guarded writes to one key/field on two
-   replicas → after sync, both replicas show the identical contested
-   entry; frontier `attention-needed`; a corrective write clears it on
-   both after the next sync; non-concurrent (sequential-with-sync)
-   writes never flag.
-5. Unguarded concurrent writes: fold-order winner identical on both
-   replicas; no flag; both events in history.
-6. Claims across partition: both replicas claim the same key offline →
-   contested after sync; the fold-order winner's id is what a
-   subsequent `--expect` must name; the loser's close attempt gets
-   `claim_lost` naming the winner.
-7. Push race: two replicas syncing simultaneously → lease rejection →
-   retry converges; bounded-retry error path exercised.
-8. `--at`: byte-identical output for a fixed past ts across replicas
-   and across repeated runs; age/staleness math honors the pinned time.
-9. Refspec/remotes: repo-embedded store syncs to branch upstream by
-   default; standalone store uses its own git remote; `sync <name>`
-   shares a previously unshared ledger; bare `sync` picks up exactly
-   the remote's ledger ref list.
-10. Determinism guard: the clone-and-diff test over every read verb.
-11. Doctrine: the skill's sync section commands execute verbatim
-    (doctrine-test pattern); the sharing warning is present.
-12. Merge commits carry no event and never surface in `tail`/`notes`;
-    `Events()` deduplicates across merge parents.
+1. Fold order: hand-built merged DAGs (skewed clocks, late-dated roots,
+   criss-cross merges) fold identically on replicas built in different
+   merge orders; ancestry never violated; the round-1 three-cycle
+   counterexample (fast-clock ancestor) linearizes deterministically.
+2. `contested`: same-field concurrent guarded writes → identical entry
+   (ids fold-ordered, winner last, valid `expect`) on both replicas;
+   cleared by (a) superseding write and (b) same-value auto-clear;
+   dismissal requiring `--override` records it; subordinate to
+   work-available; absent for sequential-with-sync writes; absent on
+   unguarded fields.
+3. Signals under partition: the human-label-vs-claim cross-field case
+   lands unflagged (the stated accepted limit) — pinned as a test so
+   the limit is a decision, not an accident.
+4. `EventsWindow` fallback: a merged ledger's guarded write uses the
+   whole-chain read (instrumented, per the existing byte-count tests);
+   linear ledgers keep the window.
+5. `watch`/`since` across a merge: cursors remain valid (range
+   semantics, parent's law); cold-start cursor is an event id; merged-
+   in events below a consumed cursor still deliver exactly once.
+6. Determinism: the perturbed two-replica byte-diff, all single-ledger
+   read verbs, fixed `--at`; `--at` with events newer than it renders
+   sane non-negative ages (clock semantics only).
+7. Parent-section regressions exercised through the new fold: sentinel
+   merges invisible to reads; same-root refusal; remote-only adoption;
+   appender-vs-syncer CAS; selective push; per-slug partial exit 3.
 
 ## Trial plan
 
-Two checkout directories against one bare "remote" directory; a staged
-partition (both sides claim, close, label, and break cycles offline);
-sync; chain-audit: exactly one keeper per contested key, byte-identical
-envelopes on both replicas afterward, IDs stable throughout. Fleet
-agents drive both replicas per the existing trial pattern.
+Two working directories, one bare remote; fleet agents on both sides of
+a staged partition claim, close, label, and break cycles offline; sync;
+audit: exactly one keeper per contested key, contested entries
+byte-identical across replicas, IDs stable, and the full read-verb
+byte-diff under perturbed environments.
+
+## Validation record
+
+- Revision 1 was reviewed by two competing adversarial reviewers
+  (both opus). Convergent Criticals, all probed against git 2.50.1:
+  the fetch refspec (`refs/ledger/*:refs/ledger/*`) is rejected by git
+  in exactly the divergence case sync exists for, and its forced form
+  destroys local events; bare `--force-with-lease` rejects every push
+  absent tracking refs, and is unnecessary (every push is a
+  fast-forward by construction — the parent's non-force push IS the
+  CAS); the "ancestry first; concurrent by ts" rule is a non-transitive
+  comparator, cycling under ordinary skew; the "deterministic" merge
+  SHA varies with the ambient timezone (probed: three TZs, three SHAs)
+  and four further unpinned byte inputs. One reviewer additionally
+  showed "empty tree delta" has two readings, one of which folds the
+  merge as a duplicated event (probed), that wildcard push publishes
+  never-named ledgers (probed), that a fresh clone could never adopt a
+  remote ledger, and that the clone-diff determinism test was vacuous
+  (probed). Both independently identified the deepest defect: revision
+  1 silently reversed eight decisions of its own parent's hardened
+  sync section. Revision 2 is the corrective: the parent stands; this
+  document is additions only; the deterministic merge minting, the
+  lease push, the per-verb `--at` flags, and the audit time-travel
+  claim are all cut.
