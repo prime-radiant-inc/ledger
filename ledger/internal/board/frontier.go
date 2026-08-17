@@ -82,13 +82,21 @@ type BlockedEntry struct {
 // included — title appears on this reason only); "statusless" carries only
 // key (a half-seed or an orphan reference); "cycle" carries Keys (every
 // member of the cycle) instead of a singular Key, plus Break, the
-// self-service paste-ready fix (spec: "a cycle entry carries its own fix").
+// self-service paste-ready fix (spec: "a cycle entry carries its own fix");
+// "unknown-status" carries key/value/by/ts/id — a non-human key whose
+// status is neither terminal nor one of the two declared non-terminal
+// values ({open, in-progress}), the belt-and-braces catch-all for a status
+// vocab that was extended out from under board.Build's classification
+// switch (see vocab.go's rejection of exactly that on a ready-capable
+// board) or folded from an already-polluted or imported chain.
 type AttentionEntry struct {
 	Reason string      `json:"reason"`
 	Key    string      `json:"key,omitempty"`
 	Title  string      `json:"title,omitempty"`
+	Value  string      `json:"value,omitempty"`
 	By     string      `json:"by,omitempty"`
 	Age    string      `json:"age,omitempty"`
+	TS     string      `json:"ts,omitempty"`
 	ID     string      `json:"id,omitempty"`
 	Keys   []string    `json:"keys,omitempty"`
 	Break  *CycleBreak `json:"break,omitempty"`
@@ -219,6 +227,19 @@ func (b *Board) buildLists(now time.Time, filter func(*Key) bool) (ready []Ready
 			held = append(held, b.heldEntry(k, "claim", now))
 		case human && k.Status != nil && !b.IsTerminal(k.Status.Value):
 			held = append(held, b.heldEntry(k, "human", now))
+		// Belt-and-braces default arm (finding: a live-extended vocab must
+		// never make a key vanish from every list): every case above
+		// requires human, "open", or "in-progress" — a non-human key whose
+		// non-terminal status is none of those falls through to here
+		// instead of disappearing unclassified. The explicit !IsTerminal
+		// guard is what keeps an ordinary closed/wontfix key silent, as
+		// intended — it never reaches this arm either.
+		case k.Status != nil && !human && !b.IsTerminal(k.Status.Value):
+			attention = append(attention, AttentionEntry{
+				Reason: "unknown-status", Key: k.Name, Value: k.Status.Value,
+				By: k.Status.Author, TS: k.Status.TS, ID: k.Status.ID,
+			})
+			attSeen[k.Name] = true
 		}
 
 		if k.Status != nil && k.Status.Value == "in-progress" {
@@ -291,8 +312,8 @@ func cycleSurvivesFilter(b *Board, entry AttentionEntry, filter func(*Key) bool)
 // the caller's --where filter or --limit (buildLists never truncates).
 // work-available: anything pickable now (non-empty ready) or reclaimable (a
 // stale claim on a non-human-labeled key); else attention-needed: the
-// attention list (stale claims, statusless references, cycles) is
-// non-empty; else all-handled.
+// attention list (stale claims, statusless references, cycles,
+// unknown-status keys) is non-empty; else all-handled.
 func (b *Board) frontierVerdict(now time.Time) string {
 	ready, _, _, attention, workAvailable := b.buildLists(now, alwaysTrue)
 	switch {
@@ -304,14 +325,18 @@ func (b *Board) frontierVerdict(now time.Time) string {
 		// VERIFIED, not a fallback: ready empty and attention empty together
 		// mean every key is terminal, a live claim, or a non-terminal human
 		// key (all three are valid termini) — anything stale or statusless
-		// would be in attention, and an open+unlabeled key either has every
-		// edge resolved (would be in ready) or, in a finite graph, its
+		// would be in attention, a non-human key carrying a non-terminal
+		// status outside {open, in-progress} would be in attention too (the
+		// unknown-status default arm — belt-and-braces against a status
+		// vocab extended out from under this switch, e.g. by a polluted or
+		// imported chain), and an open+unlabeled key either has every edge
+		// resolved (would be in ready) or, in a finite graph, its
 		// unresolved walk either reaches a terminus or cycles back on
 		// itself, which detectCycles already covers (would be in
 		// attention). Depends on ready's membership rule, the stale/
-		// statusless attention passes, and detectCycles' coverage all
-		// staying as they are — changing any of them re-opens this
-		// argument.
+		// statusless/unknown-status attention passes, and detectCycles'
+		// coverage all staying as they are — changing any of them re-opens
+		// this argument.
 		return "all-handled"
 	}
 }

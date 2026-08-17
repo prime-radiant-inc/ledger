@@ -296,7 +296,8 @@ func TestFormatAge(t *testing.T) {
 		d    time.Duration
 		want string
 	}{
-		{500 * time.Millisecond, "0s"},
+		{500 * time.Millisecond, "500ms"},
+		{600*time.Millisecond + 700*time.Microsecond, "600ms"},
 		{90 * time.Second, "1m30s"},
 		{2*time.Hour + 30*time.Minute, "2h30m0s"},
 	} {

@@ -64,10 +64,18 @@ var expectCommentRE = regexp.MustCompile(`^(.*?)\s+# expect: exit (\d+)(?: error
 
 // doctrineCmd is one parsed, not-yet-substituted command line from the
 // section: verb+args (binary placeholder already stripped) plus its
-// documented outcome (default: exit 0, no error).
+// documented outcome (default: exit 0, no error). pipeTo is non-empty for
+// a line shaped `<ledger invocation> | <shell tail>` (e.g. the triage
+// sweep's `| grep '"override"'`) — the raw text after the pipe, verbatim,
+// deliberately NOT tokenized by tokenizeCommand: a real shell (`sh -c`)
+// runs it against the ledger invocation's captured stdout, so single-quote
+// shell-quoting (`'"override"'`) is interpreted by the same rules a caller
+// pasting this line into a real shell would get, not by this test's own
+// simplified space/quote/bracket tokenizer.
 type doctrineCmd struct {
 	raw      string
 	tokens   []string
+	pipeTo   string
 	wantExit int
 	wantErr  string
 }
@@ -163,7 +171,13 @@ func parseDoctrineCommands(t *testing.T) []doctrineCmd {
 			wantExit, _ = strconv.Atoi(m[2])
 			wantErr = m[3]
 		}
-		toks := tokenizeCommand(strings.TrimSpace(body))
+		// A piped line (the triage sweep's `| grep ...`) splits here: only
+		// the ledger invocation ahead of " | " is tokenized and run
+		// in-process below; the raw shell tail runs verbatim via a real
+		// shell against that invocation's captured stdout (see doctrineCmd's
+		// doc comment for why it isn't tokenized the same way).
+		ledgerPart, pipeTo, hasPipe := strings.Cut(body, " | ")
+		toks := tokenizeCommand(strings.TrimSpace(ledgerPart))
 		if len(toks) == 0 {
 			continue
 		}
@@ -175,9 +189,51 @@ func parseDoctrineCommands(t *testing.T) []doctrineCmd {
 		if len(toks) == 0 || toks[0] != doctrineBinary {
 			t.Fatalf("doctrine command line must open with %q (drifted binary-path convention): %q", doctrineBinary, l)
 		}
-		cmds = append(cmds, doctrineCmd{raw: l, tokens: toks[1:], wantExit: wantExit, wantErr: wantErr})
+		cmd := doctrineCmd{raw: l, tokens: toks[1:], wantExit: wantExit, wantErr: wantErr}
+		if hasPipe {
+			cmd.pipeTo = strings.TrimSpace(pipeTo)
+		}
+		cmds = append(cmds, cmd)
 	}
+
+	checkNoBareInlineDoctrineSnippets(t, section)
 	return cmds
+}
+
+// inlineCodeRE matches a single-backtick inline code span (never a fenced
+// block, which parseDoctrineCommands' own inFence toggle already consumes
+// line-by-line above this check).
+var inlineCodeRE = regexp.MustCompile("`([^`]+)`")
+
+// checkNoBareInlineDoctrineSnippets is the belt-and-braces guard against
+// the exact class of drift that let finding 2 slip through: a runnable-
+// looking ledger command written as prose (an inline single-backtick span)
+// instead of a fenced block, so parseDoctrineCommands' fence-only walk
+// above never sees it and it silently goes unexecuted forever. Any inline
+// span that opens with the binary placeholder is, by construction, never
+// parseable into a valid doctrineCmd — it can't carry the required
+// `cd <board dir> &&` prefix inline — so finding one is itself the
+// failure: fail loud and name it, rather than skip it, forcing it into a
+// proper fenced block (exactly the fix finding 2 needed).
+func checkNoBareInlineDoctrineSnippets(t *testing.T, section []string) {
+	t.Helper()
+	inFence := false
+	for _, l := range section {
+		if strings.TrimSpace(l) == "```" {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+		for _, m := range inlineCodeRE.FindAllStringSubmatch(l, -1) {
+			if strings.HasPrefix(m[1], doctrineBinary) {
+				t.Fatalf("inline backtick span opens with the binary placeholder outside a fenced block "+
+					"(can never carry the required %q prefix — move it into a fenced block): %q in line %q",
+					strings.Join(doctrineCdTokens, " "), m[1], l)
+			}
+		}
+	}
 }
 
 // equalTokens reports whether a and b are the same tokens in the same
@@ -354,6 +410,9 @@ func TestDoctrineVerbatimWalkthrough(t *testing.T) {
 				t.Fatalf("doctrine line %q: error %v (want %q)\nstderr: %s", c.raw, doc["error"], c.wantErr, se)
 			}
 		}
+		if c.pipeTo != "" {
+			runDoctrinePipe(t, c, so)
+		}
 		if code == 0 && len(args) > 0 && args[0] == "set" {
 			doc := mustJSON(t, so)
 			id, _ := doc["id"].(string)
@@ -363,6 +422,28 @@ func TestDoctrineVerbatimWalkthrough(t *testing.T) {
 			hk := args[1] + "/" + setField(args)
 			history[hk] = append(history[hk], id)
 		}
+	}
+}
+
+// runDoctrinePipe executes c.pipeTo (the raw shell tail after " | ", e.g.
+// `grep '"override"'`) via a real shell, feeding it the ledger
+// invocation's own captured stdout — proving the doctrine line's pipe
+// syntax genuinely works end to end, not just that the tool's JSON would
+// satisfy it in principle. Asserts a real match: by this point in the
+// walkthrough several earlier idioms (docs-typo's wontfix override, the
+// squat/hotfix overrides, cycle-human-b's break) have already recorded
+// override events, so the sweep's output must be non-empty.
+func runDoctrinePipe(t *testing.T, c doctrineCmd, ledgerStdout string) {
+	t.Helper()
+	sh := exec.Command("sh", "-c", c.pipeTo)
+	sh.Stdin = strings.NewReader(ledgerStdout)
+	var out, errOut bytes.Buffer
+	sh.Stdout, sh.Stderr = &out, &errOut
+	if err := sh.Run(); err != nil {
+		t.Fatalf("doctrine line %q: piped command %q failed: %v\nstderr: %s", c.raw, c.pipeTo, err, errOut.String())
+	}
+	if strings.TrimSpace(out.String()) == "" {
+		t.Fatalf("doctrine line %q: piped command %q produced no output — expected at least one recorded override by this point in the walkthrough", c.raw, c.pipeTo)
 	}
 }
 

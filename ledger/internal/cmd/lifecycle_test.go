@@ -85,6 +85,50 @@ func TestVocabAddOnFreeTextField(t *testing.T) {
 	}
 }
 
+// TestVocabAddRejectedOnReadyCapableStatus: a ready-capable board's status
+// vocab is folded into board.Build's classification switch at declaration
+// time — extending it live via `vocab add` would silently desync the two
+// (the value lands in Schema, but the switch never learns about it), so
+// this path must be closed off entirely rather than merely undocumented.
+func TestVocabAddRejectedOnReadyCapableStatus(t *testing.T) {
+	dir := setupReady(t)
+	_, se, code := run(t, dir, "vocab", "add", "issues", "status", "blocked", "-m", "needed")
+	if code != 4 {
+		t.Fatalf("%d %s", code, se)
+	}
+	doc := mustJSON(t, se)
+	if doc["error"] != "bad_value" {
+		t.Fatalf("want bad_value: %s", se)
+	}
+	if !strings.Contains(se, "immutable declaration") {
+		t.Fatalf("message must name the all-or-nothing shape: %s", se)
+	}
+	if !strings.Contains(se, "open, in-progress, closed, wontfix") {
+		t.Fatalf("hint must point at the declared vocab: %s", se)
+	}
+}
+
+// TestVocabAddStillAllowedOnReadyCapableNonStatusField: the rejection is
+// scoped to "status" specifically — a ready-capable board's other declared
+// enum fields (never consulted by the frontier's classification switch)
+// keep the ordinary extend-live behavior.
+func TestVocabAddStillAllowedOnReadyCapableNonStatusField(t *testing.T) {
+	dir := initRepo(t)
+	so, _, code := run(t, dir, "create", "issues", "--scope", "test",
+		"--field", "status=open,in-progress,closed,wontfix",
+		"--field", "priority=low,high",
+		"--terminal", "status=closed,wontfix",
+		"--multi-field", "labels", "--multi-field", "blocked-by",
+		"--guard", "status", "--guard", "blocked-by")
+	if code != 0 {
+		t.Fatal(so)
+	}
+	so, se, code := run(t, dir, "vocab", "add", "issues", "priority", "urgent", "-m", "needed")
+	if code != 0 {
+		t.Fatalf("%s %s", so, se)
+	}
+}
+
 func TestCloseSupersededNeedsSuccessor(t *testing.T) {
 	dir := initRepo(t)
 	run(t, dir, "create", "old", "--scope", "x")

@@ -216,7 +216,8 @@ the single interference gate that replaced three enumerated ones.
    backward windowed walk that meets this bound is rev-14
    implementation work validated by the measured test, not an inherited
    primitive. An edge write's `blocked-by` existence checks resolve
-   from the same single walk (a key exists once any event names it) —
+   from the same single walk (a key exists once any set event names it —
+   note-only keys are not blockers) —
    with the honest asymmetry that proving a token NONEXISTENT requires
    reaching the chain root, so the `unknown_key` rejection path is the
    walk's degenerate case, stated and measured with the rest.
@@ -495,10 +496,15 @@ frontmatter `description` gains the triggers "running an issue board" and
   abandon, cycles to break by edge edit); walk `show --where status=open`
   for staleness of content (close with evidence / wontfix with the why
   in `-m` / re-label via the Label-edit idiom — protected, since triage
-  is exactly where label edits run concurrently / edge edits); grep the chain for `override:` events
-  and review each — every override is somebody deciding a standing
-  signal didn't apply, and reviewing them is the entire point of making
-  them greppable. Evidence on wontfix is NOT required (evidence of a
+  is exactly where label edits run concurrently / edge edits); sweep the
+  chain for override events with `tail --raw -n 0 --ledger <board> | grep
+  '"override"'` — unbounded (`-n 0`; `tail`'s own `--limit` default of 20
+  would silently cover only the most recent events) and matching the
+  JSON `override` field `tail --raw` actually emits, not prose's
+  `override: <value>` shorthand for it — and review each: every override
+  is somebody deciding a standing signal didn't apply, and reviewing
+  them is the entire point of making them greppable. Evidence on wontfix
+  is NOT required (evidence of a
   non-decision is pasted-string theater); the honest signal is the
   annotation.
 - Dup defense: search titles before seeding (`ready`/`show` carry titles

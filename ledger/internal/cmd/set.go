@@ -91,8 +91,16 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts, expect string
 			}
 		}
 		if vocab != nil && !contains(vocab, v) {
-			return out.Errf("vocab_unknown",
-				fmt.Sprintf("ledger vocab add %s %s %s -m \"why this value is needed\"  — then re-run this set", led.Slug, f, v),
+			hint := fmt.Sprintf("ledger vocab add %s %s %s -m \"why this value is needed\"  — then re-run this set", led.Slug, f, v)
+			if f == "status" && ready {
+				// A ready-capable board's status vocab is part of its
+				// immutable declaration (vocab.go's runVocabAdd rejects
+				// exactly this) — never hand out the command that would
+				// silently desync board.Build's classification switch from
+				// a live-extended Schema.
+				hint = "status on a ready-capable board is fixed at create: " + strings.Join(vocab, ", ")
+			}
+			return out.Errf("vocab_unknown", hint,
 				4, "%q is not in %s's vocabulary (valid: %s)", v, f, strings.Join(vocab, ", "))
 		}
 		if contains(led.Require[f], v) && len(o.evidence) == 0 {

@@ -343,6 +343,41 @@ func TestEnvelopeBlockedWaitingOnAllStates(t *testing.T) {
 	}
 }
 
+// TestEnvelopeBlockedWaitingOnTerminalBeatsHumanPrecedence: blockerState's
+// documented precedence — terminal wins whenever the blocker's status is
+// terminal, labeled or not — has exactly one case TestEnvelopeBlocked
+// WaitingOnAllStates never exercises: a blocker that is BOTH terminal AND
+// human-labeled. That test's own "human-claimed-dep" is open+human, not
+// closed+human, so swapping blockerState's terminal/human branches passes
+// the whole suite. This test isolates the missing case: closed+human must
+// render "terminal", open+human must render "human".
+func TestEnvelopeBlockedWaitingOnTerminalBeatsHumanPrecedence(t *testing.T) {
+	evs := []model.Event{
+		setEv("t1", "closed-human-dep", "status", "closed", func(e *model.Event) { e.Evidence = []string{"commit:x"} }),
+		setEv("t2", "closed-human-dep", "labels", "human", nil),
+		setEv("o1", "open-human-dep", "status", "open", nil),
+		setEv("o2", "open-human-dep", "labels", "human", nil),
+		setEv("k1", "deploy", "status", "open", func(e *model.Event) {
+			e.Text = "ship it"
+			e.Author = "alice"
+			e.TS = "2026-08-16T09:00:00.000"
+		}),
+		setEv("k2", "deploy", "blocked-by", "closed-human-dep,open-human-dep", nil),
+	}
+	b := Build(envelopeMeta(), evs)
+	env := b.Envelope(envNow, 50, allowAll)
+	if len(env.Blocked) != 1 {
+		t.Fatalf("expected 1 blocked entry, got %+v", env.Blocked)
+	}
+	want := []WaitingOn{
+		{Key: "closed-human-dep", State: "terminal"},
+		{Key: "open-human-dep", State: "human"},
+	}
+	if !reflect.DeepEqual(env.Blocked[0].WaitingOn, want) {
+		t.Fatalf("waiting_on precedence:\n got  %+v\n want %+v", env.Blocked[0].WaitingOn, want)
+	}
+}
+
 // TestEnvelopeBlockedSortKeyAscending: blocked sorts key-ascending — three
 // entries seeded in a deliberately non-alphabetical, non-map-iteration-safe
 // order, asserted against the envelope's actual returned order (no
@@ -445,6 +480,45 @@ func TestEnvelopeAttentionStatuslessHalfSeedAndOrphan(t *testing.T) {
 		if a.Reason == "statusless" && a.Title != "" {
 			t.Fatalf("statusless entry must not carry a title: %+v", a)
 		}
+	}
+}
+
+// TestEnvelopeUnknownStatusIsAttentionNeverInvisible: a status value the
+// board's declared vocab never sanctioned — e.g. a board hand-polluted by
+// directly folding events board.Build never validates against Meta.Fields,
+// standing in for a live-extended Schema an already-shipped `vocab add`
+// bypass (finding 1) could have produced on an already-polluted or
+// imported board — must never silently vanish from every envelope list.
+// It's outside {open, in-progress} and not terminal, and the key carries
+// no human label, so none of buildLists' three classification cases fire;
+// the belt-and-braces default arm must catch it as attention instead of
+// letting it fall through unclassified.
+func TestEnvelopeUnknownStatusIsAttentionNeverInvisible(t *testing.T) {
+	evs := []model.Event{
+		setEv("s1", "polluted", "status", "blocked", func(e *model.Event) {
+			e.Text = "title"
+			e.Author = "bob"
+			e.TS = "2026-08-16T11:00:00.000"
+		}),
+	}
+	b := Build(envelopeMeta(), evs)
+	env := b.Envelope(envNow, 50, allowAll)
+	if len(env.Ready) != 0 || len(env.Held) != 0 || len(env.Blocked) != 0 {
+		t.Fatalf("an unknown status value must never appear in ready/held/blocked: %+v", env)
+	}
+	if len(env.Attention) != 1 {
+		t.Fatalf("expected exactly 1 attention entry, got %+v", env.Attention)
+	}
+	want := AttentionEntry{Reason: "unknown-status", Key: "polluted", Value: "blocked",
+		By: "bob", TS: "2026-08-16T11:00:00.000", ID: "s1"}
+	if !reflect.DeepEqual(env.Attention[0], want) {
+		t.Fatalf("unknown-status entry:\n got  %+v\n want %+v", env.Attention[0], want)
+	}
+	if env.Frontier != "attention-needed" {
+		t.Fatalf("frontier must be attention-needed, got %q", env.Frontier)
+	}
+	if env.Totals.Attention != 1 {
+		t.Fatalf("totals.attention must be 1, got %d", env.Totals.Attention)
 	}
 }
 

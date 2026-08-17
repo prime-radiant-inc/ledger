@@ -389,10 +389,18 @@ abandon, cycles to break by edge edit). Walk `show --where status=open`
 for staleness of content (close with evidence / `wontfix` with the why
 in `-m` / re-label via the Label-edit idiom above — protected, since
 triage is exactly where label edits and edge edits run concurrently).
-Grep the chain for `override:` events and review each — every override
-is somebody deciding a standing signal didn't apply, and reviewing them
-is the entire point of making them greppable (`ledger tail --raw | grep
-'override:'`). Evidence on `wontfix` is NOT required — evidence of a
+Sweep the chain for override events and review each — every override is
+somebody deciding a standing signal didn't apply, and reviewing them is
+the entire point of making them greppable: `tail --raw` emits each
+event's `override` field as JSON, so grep for the quoted key — unbounded
+with `-n 0`, since `tail`'s own `--limit` default of 20 would silently
+cover only the most recent events, not the whole chain:
+
+```
+cd <board dir> && ~/path-to/ledger tail --raw -n 0 --ledger issues | grep '"override"'
+```
+
+Evidence on `wontfix` is NOT required — evidence of a
 non-decision is pasted-string theater; the honest signal is the
 annotation itself. Any non-zero `totals.attention` is a triage cue on
 its own, regardless of what `frontier` says.

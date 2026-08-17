@@ -207,8 +207,14 @@ func (b *Board) StaleAge(k *Key, now time.Time) (stale bool, age time.Duration) 
 }
 
 // FormatAge renders a duration the way the envelope shows ages:
-// time.Duration.String(), truncated to whole seconds.
+// time.Duration.String(), truncated to whole seconds — except a sub-second
+// age, which truncating to whole seconds would flatten to the misleading
+// "0s" (a stale claim seconds old rendering identically to a brand new
+// one); truncate to whole milliseconds instead so it reads as e.g. "600ms".
 func FormatAge(d time.Duration) string {
+	if d < time.Second {
+		return d.Truncate(time.Millisecond).String()
+	}
 	return d.Truncate(time.Second).String()
 }
 
