@@ -1,14 +1,22 @@
 # Ledger sync: activation and the partition contract (design)
 
-2026-08-17, revision 4 — revision 3 SURVIVED its spike and trial: a
-full throwaway implementation (branch `spike/sync-rev3`, kept as
-reference for the production build) passed the smoke, the existing
-suite, and the two-replica partition trial end to end — every audit in
-the Trial plan came back green on the first run. Rev 4 changes no
-architecture; it pins the decisions the spike had to make that rev 3
-left open, states two hazards the spike found that rev 3 missed, and
-folds in the trial's usability findings. History: Validation record,
-bottom.
+2026-08-17, revision 5 — revision 4's own adversarial round (two
+reviewers probing the spike binary directly) falsified four of its
+pins: the paged-cursor rule LIVELOCKS on merged chains, the
+batch-order pin silently amended the parent, the title pin
+contradicted the issues spec's immutable-title law, and the
+first-adoption root-trust sentence was factually wrong (the same-root
+check is an intersection test — a grafted multi-root chain passes
+every sync). Rev 5 is the corrective; the architecture is still rev
+3's, which survived the spike and trial intact. History: Validation
+record, bottom.
+
+Rev 4 history: revision 3 SURVIVED its spike and trial — a full
+throwaway implementation (branch `spike/sync-rev3`, kept as reference
+for the production build) passed the smoke, the existing suite, and
+the two-replica partition trial end to end. Rev 4 pinned the
+decisions the spike had to make and folded in the trial's usability
+findings.
 
 Rev 3 history: revision 2 survived its structure and lost most of its
 sentences — a second adversarial round (two reviewers, both probing
@@ -53,13 +61,18 @@ one a falsified-ambiguity repair:
   Addition 2.
 
 Skew, stated: ancestry is structural and immune; skew reorders only
-genuinely concurrent events. Two skew consequences are accepted and
+genuinely concurrent events. Three skew consequences are accepted and
 named: (a) cross-host last-write-wins between concurrent unguarded
 writes follows the writers' clocks; (b) a peer whose clock runs far
 behind writes claims that are born stale, which the Reclaim idiom then
-treats as sanctioned — **board horizons MUST exceed expected inter-host
-skew** (skill line), the trial stages a skewed-clock host, and
-born-stale anomaly flagging is v2.
+treats as sanctioned; (c) the mirror case (rev 5, probed): a peer
+whose clock runs AHEAD writes claims the slower replica renders as
+age-clamped `0s` — indistinguishable from fresh — so that replica
+cannot see them go stale, and cannot reclaim, until its own clock
+passes the claim's timestamp; the clamp keeps the number honest but
+makes this anomaly silent. **Board horizons MUST exceed expected
+inter-host skew, in both directions** (skill line), the trial stages a
+skewed-clock host, and born-stale/born-future anomaly flagging is v2.
 
 ## Addition 2 — Cursors under merges
 
@@ -86,20 +99,35 @@ Revision 2 had this exactly backwards; the probes settle it:
 - Implementation scope (the largest single item, previously unnamed):
   convert `since`/`watch` from positional slice arithmetic
   (`indexOf` + `Events[idx+1:]`, silently lossy under merges) to range
-  semantics — ancestry validity, `rev-list cursor..tip` delivery — and
-  make every emitted cursor the tip-at-drain.
-- **Paged delivery re-delivers, never loses** (spike finding, rev 4):
-  a `--limit`-truncated drain must emit the LAST DELIVERED event as its
-  cursor, not the tip — the tip would silently drop the remainder. On
-  merged history that event's concurrent siblings are not its
-  ancestors, so the next page may re-deliver them. Pinned as documented
-  behavior: duplicates possible under paging on merged chains, loss
-  never; consumers are idempotent by event id, which is already
-  doctrine.
-- **Batch order pinned** (rev 4): a range's events are ordered by the
-  GLOBAL fold order restricted to the range, not by folding the range
-  in isolation — rev 3 permitted either; the global-restricted form is
-  simpler and makes `since` agree with `tail`.
+  semantics — ancestry validity, `rev-list cursor..tip` delivery.
+- **The cursor-emission law, one rule** (rev 5, replacing rev 4's
+  contradictory pair): an UNPAGED drain emits the tip it drained
+  against — always, sentinel included. A `--limit`-truncated drain
+  emits the last delivered event, WHICH IS ONLY SOUND ON LINEAR
+  HISTORY (there the delivered prefix is exactly the cursor's
+  ancestry). **On a chain containing any merge, `--limit` is refused
+  with `bad_usage`** ("paging is unsupported on merged history — drain
+  without --limit"), using Addition 5's existing load-time merge
+  check. Probed rationale (rev 4's "last delivered, duplicates
+  possible, loss never" rule is falsified, not merely imprecise): on a
+  merged chain the emitted cursor is a DAG node, the next range
+  re-admits every delivered non-ancestor, and the cursor moves
+  BACKWARD — the pager oscillates between two cursors forever and the
+  chain's tail is never delivered. Loss never was false; the truth was
+  livelock. Frontier-shaped cursors that page merged history are v2.
+  `watch` has no `--limit` in v1 and always emits the tip; the parent
+  spec's watch batch-bound sentence is v2 scope with it.
+- **Batch order is the parent's law, restated** (rev 5, retracting rev
+  4's pin): the range's events are ordered within the batch
+  topologically, timestamp-tiebroken, SHA-tiebroken last — computed on
+  the range, exactly as the parent states. Rev 4 pinned
+  global-fold-restricted order instead; probed, that silently amends
+  the parent (the global heap lets an out-of-range ancestor's
+  timestamp reorder in-range concurrent events) and contradicted the
+  retained rev 3 bullet above. The spike implements the retracted
+  form; the production build implements the parent's — a named delta,
+  and the "since agrees with tail on ranges" property is explicitly
+  NOT promised (the divergence consequence stated above stands).
 
 ## Addition 3 — `contested`: the partition race, fold-derived
 
@@ -155,14 +183,33 @@ exists to flag (rev-2 rule cut, probed rationale).
   is REWORDED in the production build: name all three signal sources
   and point the settled/claim cases at the revise-a-settled-outcome
   idiom rather than at walking away.
-- **Two-root key collisions render honestly** (trial finding): when
-  contested heads descend from different seed events, the key may hold
-  two genuinely different tasks (the trial's colliding `task-signup`
-  seeds). The entry's `title` is pinned as the fold-winner head's
-  title, and the skill's contested-recovery line carries the doctrine:
-  before collapsing, read both heads — a seed collision can hide two
-  distinct tasks under one key, and collapsing adjudicates only the
-  field value, not the identity; renaming/splitting is a human call.
+- **Two-root key collisions** (trial finding; rev 5 retracts rev 4's
+  title pin): when contested heads descend from different seed events,
+  the key may hold two genuinely different tasks (the trial's
+  colliding `task-signup` seeds). The entry's `title` is the KEY's
+  title under the issues spec's unamended law — the first status
+  event's message in fold order, immutable, identical in every
+  projection (rev 4 pinned "the fold-winner head's title"; probed,
+  heads are status writes carrying no title, so the pin either
+  demanded seed-walking machinery no spec defines or made one key
+  render two titles across an envelope — both wrong; what the trial
+  observed was the immutable-title law working as designed). The
+  hazard is covered by doctrine plus one mechanism: the skill's
+  contested-recovery line says read both heads before collapsing — a
+  seed collision can hide two distinct tasks under one key, and
+  collapsing adjudicates only the field value, never the identity;
+  renaming/splitting is a human call — and the work order adds
+  **`show --id <sha>`** (render one event with provenance), because
+  the contested and break tickets hand agents bare ids and v1
+  otherwise has no read path for an id (rev 5, probed gap).
+- **Contested machinery is conditioned on merges** (rev 5): `|heads| >
+  1` requires two writes neither an ancestor of the other, which a
+  linear chain cannot contain — so boards whose chain has no merge
+  (Addition 5's load-time check) skip ancestor bitsets entirely.
+  Probed cost of not conditioning: bitsets are n²/8 bytes — 3MB at
+  the parent's 5k scale but ~50MB at 20k and ~312MB at the parent's
+  named heavy-year 50k, paid on every `ready` of every linear board
+  for contests that cannot exist there.
 - **Scope, honest**: ready-capable boards only — a plain board's
   `--guard` buys CAS, and its cross-replica races resolve by fold
   order, last write wins, unflagged (it has no envelope to carry the
@@ -172,11 +219,15 @@ exists to flag (rev-2 rule cut, probed rationale).
   other) — accepted, stated, v2 if the field shows the need.
   Idempotency dedupe is also local-view: the same idempotency key
   landed on two replicas survives sync as two events — accepted,
-  stated. Freshness is the first defense for all of it: the parent's
-  read-time freshness warning ("N unmerged remote events — run
-  `ledger sync`") EXTENDS TO `ready` (stderr + a `--json` field outside
-  the envelope), since `ready` is the read the picking loop actually
-  uses.
+  stated. The first defense for all of it is the SYNC HABIT (skill
+  line), stated honestly (rev 5): the freshness warning compares the
+  local ref against the last-FETCHED tracking ref, which moves only
+  when sync or push contacts the remote — reads never touch the
+  network, by design, so a partitioned replica renders a clean board
+  with no warning (probed). The warning is the second net — it
+  catches fetched-but-unmerged state — and it EXTENDS TO `ready`
+  (stderr + a `--json` field outside the envelope), since `ready` is
+  the read the picking loop actually uses.
 - **Machinery, honestly priced**: contested needs pairwise ancestry.
   Parents flow through `Events()`; the fold accumulates ancestor
   bitsets during the Kahn pass (≈3MB at the parent's 5k scale);
@@ -214,10 +265,13 @@ excluded — their output is a function of the cursor argument and, for
   `bad_usage`), spike-validated; a pointed "the write clock cannot be
   moved" hint is optional polish, not required machinery.
 - **Age clamping is a GENERAL rule, not an `--at` rule** (spike
-  finding, reachable with no `--at` at all): a peer host whose clock
-  runs AHEAD syncs in events with future timestamps, and unclamped
-  rendering produced `age: "-58099h1m24s"`. Every age/staleness render
-  clamps at zero, everywhere, under both clocks.
+  finding): future-timestamped events reach a reader two ways — `--at`
+  fixed in the past (the spike's `-58099h1m24s` came from this case;
+  rev 4 misattributed the number, rev 5 corrects the record) and a
+  peer host whose clock runs ahead, which needs no `--at` at all and
+  yields skew-sized negatives. Every age/staleness render clamps at
+  zero, everywhere, under both clocks — and the clamp's silence on
+  the clock-ahead reclaim case is stated in Addition 1(c).
 - **The standing determinism test**: hand-built replicas of one event
   set differing in merge structure and merge parent order (the tool's
   own sync mostly precludes divergent merges — probed — so the test
@@ -236,27 +290,58 @@ uses whole-chain precondition reads, permanently.** Detection is one
 `rev-list --merges --max-count=1` at ledger load — a permanent fact of
 immutable history, safe to check pre-loop (a merge can only arrive via
 sync's CAS'd ref move; a mid-write sync loses the CAS race and the
-retry re-loads). Cost, stated with the tree's own numbers: a guarded
-write on a merged 5k-event board pays the full-fold read (~3.9MB
-measured) instead of ~35KB windowed; the issues rule-8 bound is
-re-pinned for merged boards at the full-fold class. A fold-order-aware
+retry re-loads). Cost, restated honestly (rev 5 — rev 4's framing was
+probed and found misattributed): guarded-write wall time on a 5k
+board measured IDENTICAL linear vs merged (~0.4s), because rule 5's
+key-scoped label check already walks to the root for never-labeled
+keys — the common case — even on linear boards; the ~35KB windowed
+figure applies only to keys whose fields all resolve inside the
+64-event window. What the merge fallback actually changes is the
+GUARANTEE CLASS, and that amends the issues spec explicitly (rev 5,
+flagged as an amendment): rule 8's "cost scales with the target key's
+touched-history depth, never the whole board's event count" holds for
+linear boards only; a merged board's guarded writes and `ready` are
+full-fold class, with the acceptance number **merged 5k-event `ready`
+with contested entries present ≤ 350ms median-of-3** (same
+methodology as the issues spec's 140ms bound; the spike measured
+~270ms, so this is a bound, not an aspiration). A fold-order-aware
 suffix predicate that restores windowing on merged boards is a named
 v2 optimization, not v1 scope.
 
 ## Pins from the spike (rev 4 — decisions the spike had to make)
 
 - **Remote resolution order**: `--remote` > the breadcrumb's remote
-  name > `origin` > the sole configured remote > clean no-op. The
-  parent names the breadcrumb's optional remote but never ordered the
-  fallbacks.
-- **Push exit code**: exit 3 covers all-failed as well as partial —
-  one code means "read the per-slug outcomes", and the outcomes
-  payload is always written before exit.
-- **First-adoption root trust, stated gap**: adoption has no local
-  chain to check the remote's root against; a hand-crafted
-  multi-rooted remote chain is caught by the same-root rule on every
-  SUBSEQUENT sync, never the first adoption. Stating this is cheaper
-  than machinery; v2 if the field shows the need.
+  name > `origin` > the sole configured remote. The parent names the
+  breadcrumb's optional remote but never ordered the fallbacks. Rev 5
+  splits the terminal case (probed — the spike's literal chain made a
+  two-remote/no-origin repo an exit-0 "no git remote configured"
+  no-op at the checkpoint push, asserting the opposite of the truth):
+  ZERO remotes ⇒ the parent's clean no-op with message; two or more
+  remotes and nothing selects one ⇒ `bad_usage` naming the candidates,
+  same shape as `--remote <unknown>`.
+- **Push exit code and envelope**: exit 3 covers all-failed as well as
+  partial — one code means "read the per-slug outcomes", and the
+  outcomes payload is always written before exit. Rev 5 pins the
+  envelope's discriminator (probed gap: the spike emitted `ok: true`
+  with exit 3): `ok` is true iff every slug pushed; any failure ⇒
+  `ok: false` with the per-slug outcomes — a consumer keying on `ok`
+  must never read a failed push as success.
+- **Multi-root chains are refused at the sync gate** (rev 5, replacing
+  rev 4's factually-wrong pin): rev 4 claimed a hand-crafted
+  multi-rooted remote chain "is caught by the same-root rule on every
+  subsequent sync" — probed FALSE. The same-root check is an
+  intersection test, so a grafted chain that retains the legitimate
+  root passes every sync forever, folding in foreign events under a
+  foreign creator and letting the foreign `meta.json` capture the
+  ledger's identity (probed end to end: `commit-tree` graft on the
+  bare remote, clean `merged` result, foreign scope rendered). The
+  fix is one cheap check with the data already in hand: the fold's
+  log parse knows the root set; **sync and adoption refuse to move or
+  create the local ref when the candidate chain has more than one
+  root**, naming both roots and their creators. Push access already
+  grants event-writing; the refusal keeps it from granting identity
+  capture. The runbook exit is the same-root rule's existing
+  export/import path.
 - **Production-build notes, named so they're decisions**: push is
   batched (the spike's per-slug subprocess is dozens of round trips at
   fleet scale); `ready` folds ONCE with ancestor bitsets threaded
@@ -282,12 +367,21 @@ with sentinel contraction; `since`/`watch` range-semantics conversion;
 read-verb `--at` with write-verb rejection; the perturbed determinism
 test; merged-history precondition fallback + re-pinned bounds; skill
 lines (sync habit, selective push, skew-vs-horizon, contested
-recovery incl. the read-both-heads seed-collision doctrine); the
-quickstart `needs_override` rewording. The spike branch
-`spike/sync-rev3` implements all of this except the rev 4 pins
-(array-shaped `contested_resolved` + its response echo and TTY marker,
-batched push, single-fold `ready`, no clock env var) and is reference
-material for the production build, not a base to merge.
+recovery incl. the read-both-heads seed-collision doctrine);
+`show --id`; the quickstart `needs_override` rewording. The spike
+branch `spike/sync-rev3` is reference material for the production
+build, not a base to merge, and the delta list is longer than rev 4
+claimed (rev 5, probed): beyond the rev 4 pins (array-shaped
+`contested_resolved` + response echo and TTY marker, batched push,
+single-fold `ready`, no clock env var), the spike also lacks every
+skill line (`skills/using-ledger/SKILL.md` untouched — its quickstart
+even points contested recovery at a skill section that doesn't
+exist), the quickstart `needs_override` rewording, `show --id`, the
+merged-history `--limit` refusal (it implements the livelocking rev 4
+rule), the parent's range-local batch order (it implements the
+retracted global-restricted order), the multi-root sync refusal, the
+ambiguous-remote `bad_usage`, the `ok:false` push envelope, and the
+merge-conditioned bitsets.
 
 ## Test plan (delta to the parent's)
 
@@ -297,11 +391,17 @@ material for the production build, not a base to merge.
    affect real-event order (contraction test: same events, sentinel ts
    varied wildly, fold unchanged).
 2. Cursors: post-merge cold-start watch delivers nothing until a new
-   event; drain-emitted cursors are tips; merged-in events below a
-   consumed cursor deliver exactly once; a fold-head cursor is VALID
-   (it is an ancestor) and re-delivers the other branch — pinned as
-   documented behavior so nobody mistakes it for loss;
-   `reset_required` on non-ancestors.
+   event; UNPAGED drain-emitted cursors are tips; merged-in events
+   below a consumed cursor deliver exactly once; a fold-head cursor
+   is VALID (it is an ancestor) and re-delivers the other branch —
+   pinned as documented behavior so nobody mistakes it for loss;
+   `reset_required` on non-ancestors; `--limit` pages a LINEAR chain
+   to completion (union of pages = unpaged drain, last-delivered
+   cursors) and is refused `bad_usage` on a merged chain — the
+   refusal test's fixture is the probed livelock DAG, so removing the
+   refusal fails loudly; batch order within a range is the parent's
+   (topological, ts, SHA computed on the range — fixture where
+   global-restricted order differs, asserting the parent's order).
 3. `contested`: write-heads definition — two concurrent claims flag;
    claim-then-close per side flags ONCE per field with a valid
    `expect` (the fold-last head); same-value concurrent claims STILL
@@ -318,7 +418,9 @@ material for the production build, not a base to merge.
    is refused with the defect named.
 6. Merged-history fallback: first merge flips the board to whole-chain
    precondition reads (instrumented bytes); linear boards keep the
-   window; the load-time merge check adds no per-attempt subprocess.
+   window; the load-time merge check adds no per-attempt subprocess;
+   linear boards build NO ancestor bitsets (instrumented allocation);
+   merged 5k `ready` with contested entries ≤ 350ms median-of-3.
 7. `--at`: read verbs honor it (pinned `0s` future-age); write verbs
    reject `bad_usage`; `watch` timeout unaffected.
 8. Determinism: the perturbed both-sinks byte-diff over the covered
@@ -327,9 +429,24 @@ material for the production build, not a base to merge.
 9. `ready` freshness: a stale replica's `ready` warns on stderr and in
    the `--json` side-channel; the envelope bytes are unchanged by the
    warning.
-10. Skew: a host 3h behind writes a claim on a 2h-horizon board —
-    born stale, reclaimable (documented hazard demonstrated, horizon
-    doctrine line verified present in skill).
+10. Skew, both directions: a host 3h behind writes a claim on a
+    2h-horizon board — born stale, reclaimable; a host 3h AHEAD
+    writes a claim the true-clock replica renders clamped `0s` and
+    cannot reclaim until real time passes the claim ts (documented
+    hazards demonstrated, both-directions horizon doctrine line
+    verified present in skill).
+11. Multi-root refusal: a `commit-tree`-grafted remote chain
+    retaining the legitimate root is refused by sync AND by first
+    adoption, naming both roots and creators; the legitimate
+    single-root chain still syncs.
+12. Remote ambiguity: zero remotes ⇒ clean no-op with message; two
+    remotes, no origin/breadcrumb/flag ⇒ `bad_usage` naming both;
+    breadcrumb and `--remote` each resolve it.
+13. Push envelope: all-failed and partial pushes carry `ok: false`
+    with per-slug outcomes and exit 3; all-ok carries `ok: true`,
+    exit 0.
+14. `show --id`: renders exactly the named event with provenance for
+    a contested ticket's loser id; unknown id errors cleanly.
 
 ## Trial plan
 
@@ -388,7 +505,35 @@ stable throughout.
   races resolved by CAS with clean `claim_lost` handling, both
   cycle-breakers followed the break ticket literally, and the
   recovery agent collapsed all six contests using the tickets'
-  `expect` values. Rev 4's changes all trace to spike/trial findings:
-  paged-cursor re-delivery, general age clamp, `contested_resolved`
-  shape/echo/render, the settled-gate resolution path and quickstart
-  rewording, seed-collision title doctrine, and the pins section.
+  `expect` values — including task-signup's field collapse, while
+  explicitly declining the rename/split identity call and flagging it
+  for a human. Rev 4's changes all traced to spike/trial findings.
+- Rev 4 adversarial round (two opus reviewers probing the spike
+  binary, hand-built DAGs, and multi-replica worlds; 14 vs 8
+  legitimate findings, zero disqualified). Four rev 4 pins
+  falsified: the paged-cursor rule LIVELOCKS on merged chains (the
+  cursor moves backward and the tail is never delivered — "loss
+  never" was false; one reviewer probed it while the other blessed
+  the rule as sound, the round's cautionary datum); the batch-order
+  pin silently amended the parent's delivery law and contradicted
+  the retained rev 3 bullet; the title pin contradicted the issues
+  spec's immutable-title law and named a value status-write heads
+  don't carry; the first-adoption root-trust sentence was backwards
+  — the same-root intersection test passes a grafted multi-root
+  chain on EVERY sync, foreign-meta identity capture included. Also
+  probed: ambiguous multi-remote repos silently no-op'd at exit 0;
+  the freshness warning cannot fire on a partitioned replica (it
+  reads last-fetched tracking state); the merged-history cost story
+  misattributed a cost the common guarded write already pays;
+  issues rule 8 was voided for merged boards with no replacement
+  number; the clamp hides the clock-ahead reclaim failure; the
+  `-58099h` figure came from `--at`, not peer skew; the spike-delta
+  list was understated; `ok: true` rode exit-3 pushes; bitsets were
+  unconditioned (quadratic on linear boards); no read path existed
+  for the ids the tickets hand out. Rev 5 is the corrective: the
+  one-rule cursor law with linear-only paging, the parent's batch
+  order restored, the key-title law restored + `show --id`, the
+  multi-root sync/adoption refusal, split remote fallback terminal,
+  `ok:false` push envelope, merge-conditioned bitsets, honest
+  freshness/cost/skew wording, and the rule-8 amendment with a
+  named 350ms bound.

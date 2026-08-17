@@ -49,11 +49,14 @@ as fold-last in all six.
 
 ## Recovery
 
-One sonnet agent (rae) on A collapsed all six using the tickets' `expect`
-values: the four terminal re-assertions correctly required
-`--expect … --override` (settled gate), the `blocked-by` collapse did not;
-she refused to adjudicate the task-signup key collision (two tasks under
-one key) and flagged it for a human — the right call. Post-recovery audit:
+One sonnet agent (rae) on A collapsed all six field contests using the
+tickets' `expect` values: the five terminal re-assertions (the four
+same-value closes plus task-signup's status) correctly required
+`--expect … --override` (settled gate), the `blocked-by` collapse did not.
+On task-signup she collapsed the STATUS contest but explicitly declined
+the identity call — the key held two different tasks from two seeds, and
+whether to rename/split is a human judgment — logging the anomaly in her
+`-m` message and flagging it for a human. The right call on both halves. Post-recovery audit:
 attention empty, `contested_resolved` durable in the chain for all six
 keys with the correct losing ids, B converged by fast-forward, byte-diff
 still clean, ten idle syncs zero growth (smoke).
