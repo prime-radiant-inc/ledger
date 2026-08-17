@@ -163,6 +163,49 @@ func parseDoctrineCommands(t *testing.T) []doctrineCmd {
 	return cmds
 }
 
+// TestSkillFrontmatterIncludesBoardTriggers is spec test 17's second
+// clause: the skill's frontmatter "description" (its trigger text — what a
+// reader scans to decide whether this skill applies) must name the board
+// scenarios this section teaches, not just the ledger's original
+// investigation-log use cases. Without this, an agent picking a coordinating
+// unblocked-work task would never be pointed at the Issue board section at
+// all.
+func TestSkillFrontmatterIncludesBoardTriggers(t *testing.T) {
+	data, err := os.ReadFile(skillMDPath(t))
+	if err != nil {
+		t.Fatalf("reading SKILL.md: %v", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	if len(lines) < 2 || lines[0] != "---" {
+		t.Fatalf("SKILL.md must open with a --- frontmatter fence")
+	}
+	end := -1
+	for i := 1; i < len(lines); i++ {
+		if lines[i] == "---" {
+			end = i
+			break
+		}
+	}
+	if end == -1 {
+		t.Fatal("SKILL.md frontmatter has no closing ---")
+	}
+	var description string
+	for _, l := range lines[1:end] {
+		if strings.HasPrefix(l, "description:") {
+			description = strings.TrimPrefix(l, "description:")
+			break
+		}
+	}
+	if description == "" {
+		t.Fatal("SKILL.md frontmatter has no description field")
+	}
+	for _, want := range []string{"issue board", "picking unblocked work"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("frontmatter description must name the board scenarios (missing %q): %q", want, description)
+		}
+	}
+}
+
 // ---- id resolution across the walkthrough ----
 
 // setField returns the field name a `set <key> <field=value> ...` command

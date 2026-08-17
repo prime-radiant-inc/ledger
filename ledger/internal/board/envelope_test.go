@@ -195,6 +195,46 @@ func TestEnvelopeHeldHumanClaimedComposite(t *testing.T) {
 	}
 }
 
+// TestEnvelopeHeldHumanClaimedStale: the stale half of
+// TestEnvelopeHeldHumanClaimedComposite — a human-labeled key that is ALSO
+// actively claimed, past its stale horizon, still renders kind "human"
+// (label dominates placement, same as the live case) but with Stale
+// pointing at true and the claim's age computed against the real horizon.
+func TestEnvelopeHeldHumanClaimedStale(t *testing.T) {
+	meta := envelopeMeta()
+	meta.StaleAfter = "1h"
+	evs := []model.Event{
+		setEv("h1", "sign-off", "status", "open", func(e *model.Event) {
+			e.Text = "needs sign-off"
+			e.Author = "alice"
+			e.TS = "2026-08-16T08:00:00.000"
+		}),
+		setEv("h2", "sign-off", "labels", "human", nil),
+		setEv("h3", "sign-off", "status", "in-progress", func(e *model.Event) {
+			e.Text = "taking it"
+			e.Author = "bob"
+			e.TS = "2026-08-16T09:00:00.000" // 3h before envNow, past the 1h horizon
+		}),
+	}
+	b := Build(meta, evs)
+	env := b.Envelope(envNow, 50, allowAll)
+	if len(env.Held) != 1 {
+		t.Fatalf("expected 1 held entry, got %+v", env.Held)
+	}
+	stale := true
+	want := HeldEntry{Key: "sign-off", Title: "needs sign-off", Kind: "human",
+		Status: "in-progress", By: "bob", TS: "2026-08-16T09:00:00.000", ID: "h3",
+		Age: "3h0m0s", Stale: &stale}
+	got := env.Held[0]
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("held human+claimed stale composite:\n got  %+v (stale=%v)\n want %+v (stale=%v)",
+			got, derefBool(got.Stale), want, derefBool(want.Stale))
+	}
+	if got.Kind != "human" {
+		t.Fatal("label must dominate placement: kind must stay human even though claimed and stale")
+	}
+}
+
 // TestEnvelopeBlockedEntryShape: the full blocked entry shape. Mirrors the
 // spec's own pinned "deploy"/"sign-off" example.
 func TestEnvelopeBlockedEntryShape(t *testing.T) {
@@ -625,6 +665,9 @@ func TestEnvelopeFrontierTrueTwoCycleAttentionNeeded(t *testing.T) {
 	}
 	if len(cycles[0].Keys) != 2 || !contains(cycles[0].Keys, "a") || !contains(cycles[0].Keys, "b") {
 		t.Fatalf("cycle entry must name both a and b, got %+v", cycles[0].Keys)
+	}
+	if cycles[0].Title != "" {
+		t.Fatalf("a cycle entry names several keys, so it structurally carries no single title, got %q", cycles[0].Title)
 	}
 }
 

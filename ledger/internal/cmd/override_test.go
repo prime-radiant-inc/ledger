@@ -125,6 +125,75 @@ func TestOwnCloseOnHumanKeyBlockedUntilOverride(t *testing.T) {
 	}
 }
 
+// TestBlockedByWriteNeverGatedByClaimOrSettledButHumanStillGates: spec rule
+// 5's scope clause end-to-end (previously only proven at board.Signals unit
+// level) — an edge edit against a claimed or settled key needs no
+// --override (claim and settled gate status writes only), but the same edge
+// edit against a human-labeled key does, and only --override lands it.
+func TestBlockedByWriteNeverGatedByClaimOrSettledButHumanStillGates(t *testing.T) {
+	dir := setupReady(t)
+	run(t, dir, "set", "dep", "status=open", "--expect", "none", "-m", "dep", "--as", "a")
+
+	// Claimed key: a cross-author blocked-by edit needs no --override.
+	so, _, code := run(t, dir, "set", "claimed", "status=open", "--expect", "none", "-m", "claimed key", "--as", "a")
+	if code != 0 {
+		t.Fatal(so)
+	}
+	seedID := mustJSON(t, so)["id"].(string)
+	so2, _, code := run(t, dir, "set", "claimed", "status=in-progress", "--expect", seedID, "-m", "claiming", "--as", "alice")
+	if code != 0 {
+		t.Fatal(so2)
+	}
+	so3, se3, code := run(t, dir, "set", "claimed", "blocked-by=dep", "--expect", "none", "--as", "bob")
+	if code != 0 {
+		t.Fatalf("a claim must never gate a blocked-by write: %d %s", code, se3)
+	}
+	if mustJSON(t, so3)["id"] == nil {
+		t.Fatal(so3)
+	}
+
+	// Settled key: a blocked-by edit needs no --override either.
+	so4, _, code := run(t, dir, "set", "settled", "status=open", "--expect", "none", "-m", "settled key", "--as", "a")
+	if code != 0 {
+		t.Fatal(so4)
+	}
+	settledSeedID := mustJSON(t, so4)["id"].(string)
+	_, _, code = run(t, dir, "set", "settled", "status=closed", "--evidence", "commit:x", "--expect", settledSeedID, "-m", "done", "--as", "a")
+	if code != 0 {
+		t.Fatal("close must succeed")
+	}
+	so5, se5, code := run(t, dir, "set", "settled", "blocked-by=dep", "--expect", "none", "--as", "bob")
+	if code != 0 {
+		t.Fatalf("settled must never gate a blocked-by write: %d %s", code, se5)
+	}
+	if mustJSON(t, so5)["id"] == nil {
+		t.Fatal(so5)
+	}
+
+	// Human-labeled key: the same shape of write DOES need --override.
+	so6, _, code := run(t, dir, "set", "reserved", "labels=human", "--expect", "none", "--as", "a")
+	if code != 0 {
+		t.Fatal(so6)
+	}
+	_, se7, code := run(t, dir, "set", "reserved", "blocked-by=dep", "--expect", "none", "--as", "bob")
+	if code != 4 {
+		t.Fatalf("human must gate a blocked-by write: %d %s", code, se7)
+	}
+	doc := mustJSON(t, se7)
+	want := "'reserved' has standing signal(s) that guard this write: human (labeled 'human')"
+	if doc["message"] != want {
+		t.Fatalf("exact message: got %q want %q", doc["message"], want)
+	}
+
+	so8, se8, code := run(t, dir, "set", "reserved", "blocked-by=dep", "--expect", "none", "--override", "-m", "reserved but linking a dep anyway", "--as", "bob")
+	if code != 0 {
+		t.Fatalf("override must land: %d %s", code, se8)
+	}
+	if mustJSON(t, so8)["id"] == nil {
+		t.Fatal(so8)
+	}
+}
+
 // TestSettledBlocksReResolutionAndChainShowsOverride: a terminal status
 // signals for everyone, including the close's own author; re-resolving it
 // lands only with --override, and the chain records override: settled.
