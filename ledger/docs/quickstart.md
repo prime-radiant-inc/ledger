@@ -4,7 +4,7 @@ Durable working-state for coding agents, stored in git phantom refs. Full
 per-verb mechanics live in `ledger <verb> --help` (add `--orchestrator` for
 fleet-dispatch) — this is the doctrine `--help` doesn't teach.
 
-**All 16 verbs** (top two rows: slug positional or none; bottom four take
+**All 17 verbs** (top two rows: slug positional or none; bottom four take
 `--ledger <slug>`, ambient when one ledger's open — except `ls`, which takes none):
 
 | | | |
@@ -14,7 +14,7 @@ fleet-dispatch) — this is the doctrine `--help` doesn't teach.
 | set | note | status |
 | show | notes | tail |
 | since | watch | rollup |
-| ls | | |
+| ls | ready | |
 
 ## Doctrine
 
@@ -66,6 +66,17 @@ fleet-dispatch) — this is the doctrine `--help` doesn't teach.
     shipped|abandoned|superseded`. Otherwise `ls`'s idle mark catches it.
 14. **Never alias the invocation into a shell variable** — `cmd="ledger set
     ..."; $cmd` re-splits on every space. Always call `ledger` directly.
+
+## Issue boards
+
+`ledger ready` is the board envelope: what to pick, what respects a
+claim, what needs a person (`frontier`, then `ready`/`held`/`blocked`/
+`attention`). Claim: `set <key> status=in-progress --expect <id> -m
+"claiming"`. Close: `set <key> status=closed --evidence <ref> --expect
+<own claim id> -m "done"`. Two rules to know cold: guarded fields always
+take `--expect`; `needs_override` is a stop sign, not a form to fill —
+it means a human labeled this, walk away. Full doctrine: the
+`using-ledger` skill's Issue board section.
 
 ## Walkthrough — a disposable scratch ledger, start to finish
 

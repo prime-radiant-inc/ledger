@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"ledger/internal/gitx"
 )
@@ -61,7 +62,32 @@ func TestCaptureOriginBranchAndDetached(t *testing.T) {
 
 func TestNewEventShape(t *testing.T) {
 	ev := NewEvent("set", "alice", gitx.Repo{})
-	if ev.Type != "set" || ev.Author != "alice" || len(ev.TS) != 19 { // 2026-08-13T21:00:00
+	if ev.Type != "set" || ev.Author != "alice" || len(ev.TS) != 23 { // 2026-08-13T21:00:00.000
 		t.Fatalf("event: %+v", ev)
+	}
+}
+
+func TestTimestampLayoutMilliseconds(t *testing.T) {
+	ev := NewEvent("set", "a", gitx.Repo{})
+	if _, err := time.Parse(TSLayout, ev.TS); err != nil {
+		t.Fatalf("new events must use %s: got %q (%v)", TSLayout, ev.TS, err)
+	}
+	if strings.HasSuffix(ev.TS, "Z") || strings.Contains(ev.TS, "+") {
+		t.Fatalf("no zone suffix allowed: %q", ev.TS)
+	}
+}
+
+func TestParseTSBothLayouts(t *testing.T) {
+	for _, s := range []string{"2026-08-16T18:23:31.013", "2026-08-15T11:02:09"} {
+		ts, err := ParseTS(s)
+		if err != nil {
+			t.Fatalf("ParseTS(%q): %v", s, err)
+		}
+		if ts.Location() != time.UTC {
+			t.Fatalf("must parse as UTC")
+		}
+	}
+	if _, err := ParseTS("not-a-time"); err == nil {
+		t.Fatal("garbage must error")
 	}
 }

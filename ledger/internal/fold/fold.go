@@ -47,7 +47,7 @@ func Fold(slug string, evs []model.Event, meta model.Meta) *Ledger {
 			// sync events are skipped entirely (invisible to schema/spine/state)
 			continue
 		case "vocab":
-			if cur, ok := l.Schema[ev.Field]; ok && cur != nil && !contains(cur, ev.Value) {
+			if cur, ok := l.Schema[ev.Field]; ok && cur != nil && !model.Contains(cur, ev.Value) {
 				l.Schema[ev.Field] = append(cur, ev.Value)
 			}
 		case "set":
@@ -167,13 +167,4 @@ func (l *Ledger) Due() int {
 		}
 	}
 	return n
-}
-
-func contains(xs []string, x string) bool {
-	for _, v := range xs {
-		if v == x {
-			return true
-		}
-	}
-	return false
 }

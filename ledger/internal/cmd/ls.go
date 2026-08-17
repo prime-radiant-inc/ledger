@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"ledger/internal/fold"
+	"ledger/internal/model"
 	"ledger/internal/out"
 )
 
@@ -95,11 +96,11 @@ func lastEventTime(led *fold.Ledger) time.Time {
 		return time.Time{}
 	}
 	ts := led.Events[len(led.Events)-1].TS
-	t, err := time.Parse("2006-01-02T15:04:05", ts)
+	t, err := model.ParseTS(ts)
 	if err != nil {
 		return time.Time{}
 	}
-	return t.UTC()
+	return t
 }
 
 // lsLine renders one TTY row: slug, scope (truncated so a long scope can't

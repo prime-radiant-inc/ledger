@@ -153,6 +153,9 @@ func runImport(c *Ctx, path, newSlug string) error {
 
 	meta := header.Meta
 	meta.Slug = newSlug
+	if declErr := model.ValidateDeclarations(meta); declErr != nil {
+		return out.Errf(declErr.Ident, declErr.Hint, 4, "%s", declErr.Msg)
+	}
 	metaJSON, _ := json.MarshalIndent(meta, "", " ")
 
 	if _, err := c.Store.AppendChain(newSlug, evs, map[string]string{"meta.json": string(metaJSON)},

@@ -479,7 +479,7 @@ func TestConcurrentRollupDuelAllOrNothing(t *testing.T) {
 	if led.Parent[a] != winner.ID {
 		t.Fatalf("child a owned by %s, want %s", led.Parent[a], winner.ID)
 	}
-	if _, taken := led.Parent[b]; taken && led.Losers[loser.ID] && contains2(loser.Children, b) {
+	if _, taken := led.Parent[b]; taken && led.Losers[loser.ID] && model.Contains(loser.Children, b) {
 		t.Fatalf("all-or-nothing: loser must not keep b")
 	}
 
@@ -512,13 +512,4 @@ func TestConcurrentRollupDuelAllOrNothing(t *testing.T) {
 			t.Fatalf("loser must not be a root: %s", so)
 		}
 	}
-}
-
-func contains2(xs []string, x string) bool {
-	for _, v := range xs {
-		if v == x {
-			return true
-		}
-	}
-	return false
 }

@@ -8,13 +8,17 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"ledger/internal/board"
 	"ledger/internal/fold"
 	"ledger/internal/model"
 	"ledger/internal/out"
 )
 
 // row is one spine cell: the latest value recorded for (key, field), with
-// its provenance. Shared by status (spine + by-branch) and show.
+// its provenance. Shared by status (spine + by-branch) and show. Title is
+// populated only by show on a ready-capable board (spec "Titles"); omitempty
+// makes it structurally absent everywhere else (plain boards, and statusless
+// keys on a ready-capable board) rather than an empty string.
 type row struct {
 	Key      string   `json:"key"`
 	Field    string   `json:"field"`
@@ -25,6 +29,7 @@ type row struct {
 	TS       string   `json:"ts"`
 	ID       string   `json:"id"`
 	Evidence []string `json:"evidence"`
+	Title    string   `json:"title,omitempty"`
 }
 
 func rowOf(key, f string, ev model.Event) row {
@@ -352,19 +357,49 @@ func init() { register(newShowCmd) }
 
 func newShowCmd(c *Ctx) *cobra.Command {
 	var ledgerFlag string
+	var whereRaw []string
 	cmd := &cobra.Command{Use: "show", Short: "full render: schema, spine, notes", Args: noPositionals("show"),
-		RunE: func(_ *cobra.Command, _ []string) error { return runShow(c, ledgerFlag) }}
+		RunE: func(_ *cobra.Command, _ []string) error { return runShow(c, ledgerFlag, whereRaw) }}
 	cmd.Flags().StringVar(&ledgerFlag, "ledger", "", "target ledger")
+	cmd.Flags().StringArrayVar(&whereRaw, "where", nil, "FIELD=VALUE (exact) or FIELD~=TOKEN (membership); repeatable, AND'd")
 	return cmd
 }
 
-func runShow(c *Ctx, ledgerFlag string) error {
+func runShow(c *Ctx, ledgerFlag string, whereRaw []string) error {
 	led, err := c.PickLedger(ledgerFlag)
+	if err != nil {
+		return err
+	}
+	clauses, err := parseWhere(whereRaw, led.Meta)
 	if err != nil {
 		return err
 	}
 
 	rows := spineRows(led, "")
+	ready := model.ReadyCapable(led.Meta)
+	// board.Build is only ever consulted below when ready (Title lookup) or
+	// clauses is non-empty (matchWhere) — build it exactly then, never
+	// unconditionally.
+	var b *board.Board
+	if ready || len(clauses) > 0 {
+		b = board.Build(led.Meta, led.Events)
+	}
+	if ready {
+		for i := range rows {
+			if k, exists := b.Keys[rows[i].Key]; exists {
+				rows[i].Title = k.Title
+			}
+		}
+	}
+	if len(clauses) > 0 {
+		kept := []row{}
+		for _, r := range rows {
+			if matchWhere(b.Keys[r.Key], clauses) {
+				kept = append(kept, r)
+			}
+		}
+		rows = kept
+	}
 	committers, _ := c.Store.Committers(led.Slug)
 
 	allNotes := led.Notes()

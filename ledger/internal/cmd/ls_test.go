@@ -3,7 +3,41 @@ package cmd
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"ledger/internal/fold"
+	"ledger/internal/model"
 )
+
+// TestLastEventTimeParsesMillisecondLayout: new events are written with
+// model.TSLayout (millisecond precision). lastEventTime must age them
+// correctly, not fall back to the zero time.
+func TestLastEventTimeParsesMillisecondLayout(t *testing.T) {
+	want := time.Now().UTC().Add(-90 * time.Minute)
+	led := &fold.Ledger{Events: []model.Event{
+		{TS: want.Format(model.TSLayout)},
+	}}
+	got := lastEventTime(led)
+	if got.IsZero() {
+		t.Fatal("lastEventTime must parse millisecond-layout timestamps, got zero time")
+	}
+	if diff := got.Sub(want); diff < -time.Second || diff > time.Second {
+		t.Fatalf("lastEventTime: got %v, want ~%v (diff %v)", got, want, diff)
+	}
+}
+
+// TestLastEventTimeParsesLegacyLayout: old events (no fractional seconds)
+// must still parse.
+func TestLastEventTimeParsesLegacyLayout(t *testing.T) {
+	want := time.Now().UTC().Add(-90 * time.Minute).Truncate(time.Second)
+	led := &fold.Ledger{Events: []model.Event{
+		{TS: want.Format(model.TSLayoutLegacy)},
+	}}
+	got := lastEventTime(led)
+	if !got.Equal(want) {
+		t.Fatalf("lastEventTime (legacy): got %v, want %v", got, want)
+	}
+}
 
 func TestLsEmptyAnnounces(t *testing.T) {
 	dir := initRepo(t)

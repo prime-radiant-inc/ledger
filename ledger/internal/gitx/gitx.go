@@ -8,9 +8,21 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
-type Repo struct{ Dir string }
+// Repo optionally carries test-only instrumentation counters: Calls counts
+// git subprocess invocations, Bytes counts total stdin+stdout+stderr bytes
+// moved through GitRaw. Both are nil (zero cost) outside tests; scale tests
+// use them to assert on the scaling SHAPE of a read (spec rule 8) — e.g.
+// that a windowed precondition read stopped after a small backward window
+// instead of a whole-chain fold, something a subprocess *count* alone can't
+// show (Events already reads any chain size in exactly two subprocesses).
+type Repo struct {
+	Dir   string
+	Calls *int64
+	Bytes *int64
+}
 
 func (r Repo) Git(stdin string, args ...string) (stdout, stderr string, code int) {
 	so, se, code := r.GitRaw(stdin, args...)
@@ -39,6 +51,12 @@ func (r Repo) GitRaw(stdin string, args ...string) (stdout, stderr string, code 
 		if ee, ok := err.(*exec.ExitError); ok {
 			code = ee.ExitCode()
 		}
+	}
+	if r.Calls != nil {
+		atomic.AddInt64(r.Calls, 1)
+	}
+	if r.Bytes != nil {
+		atomic.AddInt64(r.Bytes, int64(len(stdin)+so.Len()+se.Len()))
 	}
 	return so.String(), se.String(), code
 }

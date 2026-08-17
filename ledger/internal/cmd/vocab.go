@@ -44,6 +44,10 @@ func runVocabAdd(c *Ctx, slug, field, value, asFlag, mFlag string) error {
 		return out.Errf("unknown_field", "this field takes any value — there's nothing to add", 4,
 			"'%s' is free-text and needs no vocabulary", field)
 	}
+	if field == "status" && model.ReadyCapable(led.Meta) {
+		return out.Errf("bad_value", "declared status vocab: "+strings.Join(led.Meta.Fields["status"], ", "), 4,
+			"a ready-capable board's status vocab is part of its immutable declaration — 'vocab add' cannot extend it")
+	}
 	author := model.ResolveAuthor(asFlag)
 	ev := model.NewEvent("vocab", author, c.Store.Repo)
 	ev.Field, ev.Value, ev.Text = field, value, mFlag

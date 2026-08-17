@@ -48,6 +48,30 @@ func TestSetRejections(t *testing.T) {
 	_ = se // cobra arg error; just must not panic or write
 }
 
+// TestSetVocabUnknownHintOnReadyCapableStatusNamesDeclaredVocabNeverVocabAdd:
+// a ready-capable board's status vocab is fixed at create (board.Build's
+// classification switch is folded from the declaration, not from live
+// `vocab add` events — see vocab.go's rejection) so the vocab_unknown hint
+// here must never paste-ready hand out the command that would silently
+// break the frontier; it must instead name the declared vocab directly.
+func TestSetVocabUnknownHintOnReadyCapableStatusNamesDeclaredVocabNeverVocabAdd(t *testing.T) {
+	dir := setupReady(t)
+	_, se, code := run(t, dir, "set", "k1", "status=blocked", "--expect", "none", "-m", "title", "--as", "a", "--ledger", "issues")
+	if code != 4 {
+		t.Fatalf("%d %s", code, se)
+	}
+	doc := mustJSON(t, se)
+	if doc["error"] != "vocab_unknown" {
+		t.Fatalf("want vocab_unknown: %s", se)
+	}
+	if strings.Contains(se, "vocab add") {
+		t.Fatalf("must never hand out the vocab-add command on a ready-capable board's status: %s", se)
+	}
+	if !strings.Contains(se, "open, in-progress, closed, wontfix") {
+		t.Fatalf("hint must name the declared vocab: %s", se)
+	}
+}
+
 func TestIdempotencyAuthorScoped(t *testing.T) {
 	dir := setup(t)
 	so1, _, _ := run(t, dir, "set", "t1", "open", "--as", "a", "--idempotency-key", "t1-open")

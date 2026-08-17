@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -260,6 +261,87 @@ func TestTransactionAtomicity(t *testing.T) {
 		{Ref: "refs/ledger/a", New: c1, Old: full},
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestAppendCheckedPreconditionRunsFreshPerAttempt is the spec rule 7
+// atomicity contract, minimal repro: pre must never work off a pre-loop
+// snapshot. Attempt 1's pre invocation triggers a competing write (via
+// sync.Once, so it fires exactly once) that lands after pre's own fresh
+// read but before the CAS commit — the ref moves out from under attempt 1,
+// forcing a retry. Attempt 2's pre invocation must see that competing
+// write in its own fresh read.
+func TestAppendCheckedPreconditionRunsFreshPerAttempt(t *testing.T) {
+	s := testStore(t)
+	s.Append("demo", model.Event{Type: "create", Author: "a"},
+		map[string]string{"meta.json": "{}"}, ExpectAbsent)
+	s.Append("demo", mkEvent("a"), nil, ExpectPresent) // event A
+
+	var (
+		mu              sync.Mutex
+		calls           int
+		lastSawSentinel bool
+		once            sync.Once
+	)
+	pre := func(events []model.Event, reachedRoot bool) error {
+		saw := false
+		for _, ev := range events {
+			if ev.Key == "sentinel" {
+				saw = true
+			}
+		}
+		mu.Lock()
+		calls++
+		lastSawSentinel = saw
+		mu.Unlock()
+
+		once.Do(func() {
+			sentinel := model.Event{Type: "set", Key: "sentinel",
+				Fields: map[string]string{"status": "done"}, Author: "competitor"}
+			if _, err := s.Append("demo", sentinel, nil, ExpectPresent); err != nil {
+				t.Fatalf("competing append: %v", err)
+			}
+		})
+		return nil
+	}
+
+	evC := mkEvent("c")
+	if _, err := s.AppendChecked("demo", &evC, pre, ExpectPresent); err != nil {
+		t.Fatalf("AppendChecked: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if calls < 2 {
+		t.Fatalf("pre ran %d time(s), want >=2 (a competing write mid-attempt must force a retry)", calls)
+	}
+	if !lastSawSentinel {
+		t.Fatal("the last pre invocation must observe the sentinel written mid-retry — fresh read, not a pre-loop snapshot")
+	}
+}
+
+// TestAppendCheckedPreconditionErrorAbortsNothingWritten covers the other
+// half of the contract: a pre error aborts the append with that error, and
+// nothing lands on the chain.
+func TestAppendCheckedPreconditionErrorAbortsNothingWritten(t *testing.T) {
+	s := testStore(t)
+	s.Append("demo", model.Event{Type: "create", Author: "a"},
+		map[string]string{"meta.json": "{}"}, ExpectAbsent)
+	s.Append("demo", mkEvent("a"), nil, ExpectPresent)
+
+	evsBefore, _, _ := s.Events("demo")
+
+	wantErr := errors.New("precondition not met")
+	pre := func(events []model.Event, reachedRoot bool) error { return wantErr }
+
+	evC := mkEvent("c")
+	if _, err := s.AppendChecked("demo", &evC, pre, ExpectPresent); !errors.Is(err, wantErr) {
+		t.Fatalf("AppendChecked error = %v, want %v", err, wantErr)
+	}
+
+	evsAfter, _, _ := s.Events("demo")
+	if len(evsAfter) != len(evsBefore) {
+		t.Fatalf("pre error must write nothing: before=%d after=%d", len(evsBefore), len(evsAfter))
 	}
 }
 

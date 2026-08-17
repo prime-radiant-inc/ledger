@@ -12,7 +12,30 @@ import (
 
 var slugRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 
+const (
+	TSLayout       = "2006-01-02T15:04:05.000"
+	TSLayoutLegacy = "2006-01-02T15:04:05"
+)
+
 func ValidSlug(s string) bool { return slugRE.MatchString(s) }
+
+func ParseTS(s string) (time.Time, error) {
+	if t, err := time.Parse(TSLayout, s); err == nil {
+		return t.UTC(), nil
+	}
+	t, err := time.Parse(TSLayoutLegacy, s)
+	return t.UTC(), err
+}
+
+// Contains reports whether x is present in xs.
+func Contains(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
 
 type Origin struct {
 	Host          string `json:"host"`
@@ -41,6 +64,7 @@ type Event struct {
 	Author            string            `json:"author"`
 	Origin            Origin            `json:"origin"`
 	IdempotencyKey    string            `json:"idempotency_key,omitempty"`
+	Override          string            `json:"override,omitempty"`
 	ImportedFrom      string            `json:"imported_from,omitempty"`
 	ID                string            `json:"-"`
 	CommitterOverride string            `json:"-"`
@@ -57,6 +81,10 @@ type Meta struct {
 	Fields          map[string][]string `json:"fields"`
 	RequireEvidence map[string][]string `json:"require_evidence,omitempty"`
 	FieldOrder      []string            `json:"field_order"`
+	MultiFields     []string            `json:"multi_fields,omitempty"`
+	Terminal        map[string][]string `json:"terminal,omitempty"`
+	Guard           []string            `json:"guard,omitempty"`
+	StaleAfter      string              `json:"stale_after,omitempty"` // Go time.ParseDuration input, verbatim
 }
 
 func HarnessMarker() string {
@@ -104,7 +132,7 @@ func CaptureOrigin(r gitx.Repo) Origin {
 }
 
 func NewEvent(typ, author string, r gitx.Repo) Event {
-	return Event{TS: time.Now().UTC().Format("2006-01-02T15:04:05"), Type: typ,
+	return Event{TS: time.Now().UTC().Format(TSLayout), Type: typ,
 		Author: author, Origin: CaptureOrigin(r)}
 }
 

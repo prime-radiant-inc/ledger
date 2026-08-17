@@ -1,7 +1,11 @@
 # Ledger as issue tracker (design)
 
-2026-08-16, revision 16 — the rethink (rev 12) hardened by four blind
-adversarial rounds (the seventh through tenth). Eleven revisions, three spikes,
+2026-08-16, revision 17 — the rethink (rev 12) hardened by four blind
+adversarial rounds (the seventh through tenth), plus the trial-5
+cycle redesign: cycles are detected regardless of who holds their
+members, and every cycle entry carries its own paste-ready fix, so any
+agent or person who sees a deadlock can break it immediately.
+Eleven revisions, three spikes,
 three chain-audited field trials, and six adversarial rounds (twelve
 reviewers) validated the core mechanics and repeatedly punished the same
 three composition mistakes: protection built by enumerating cases instead
@@ -212,7 +216,8 @@ the single interference gate that replaced three enumerated ones.
    backward windowed walk that meets this bound is rev-14
    implementation work validated by the measured test, not an inherited
    primitive. An edge write's `blocked-by` existence checks resolve
-   from the same single walk (a key exists once any event names it) —
+   from the same single walk (a key exists once any set event names it —
+   note-only keys are not blockers) —
    with the honest asymmetry that proving a token NONEXISTENT requires
    reaching the chain root, so the `unknown_key` rejection path is the
    walk's degenerate case, stated and measured with the rest.
@@ -258,7 +263,9 @@ now ordinary tested tool code):
  "attention": [{"reason": "stale-claim", "key": "orphaned-task",
                 "by": "dead-worker", "age": "3h", "id": "…"},
                {"reason": "statusless", "key": "half-seeded"},
-               {"reason": "cycle", "keys": ["a", "b"]}],
+               {"reason": "cycle", "keys": ["a", "b"],
+                "break": {"key": "b", "drop": "a", "keep": "",
+                          "expect": "973b94fa05", "human": false}}],
  "totals": {"ready": 1, "held": 2, "blocked": 1, "attention": 3}}
 ```
 
@@ -274,6 +281,14 @@ now ordinary tested tool code):
   terminal status resolves an edge regardless of label), verified
   internally with a correct DFS (path-stack cycle detection, shared-
   dependency memo — diamonds are legal and never false-flagged).
+  **Cycle detection is holder-blind**: it runs over ALL non-terminal
+  keys regardless of status value or labels (only terminal keys are
+  excluded — their edges are moot), so a deadlock through a live claim
+  or a human-reserved key is detected, lands in `attention`, and drives
+  `attention-needed`; a genuinely deadlocked board can never read
+  `all-handled`. (Trial 5: the earlier open-keys-only walk let exactly
+  that happen — the claim was a story, the circle of arrows a fact, and
+  the design let the story overrule the fact.)
 - **ready**: pickable now — `status=open`, not human-labeled, every edge
   terminal. Oldest first, timestamp ties by chain position. `id` is the
   claim ticket (the status field's latest event). The
@@ -308,9 +323,21 @@ now ordinary tested tool code):
   status field's latest `id`, so "blocked is not locked" (below) is
   exercisable straight from the envelope.
 - **attention**: the triage queue, tool-computed — stale claims,
-  statusless keys (half-seeds and orphans), cycles (with the cycle's
-  keys). Entries may also appear in their home lists; this list is the
-  view triage sweeps.
+  statusless keys (half-seeds and orphans), and cycles. **A cycle entry
+  carries its own fix**: `keys` (the detected cycle's members) plus
+  `break` — `{key, drop, keep, expect, human}` — the suggested repair as
+  a paste-ready guarded write: rewrite `key`'s `blocked-by` to `keep`
+  (dropping `drop`, all occurrences), `--expect` the given id (the edge
+  field's latest event, the CAS ticket), `human: true` when `key`
+  carries the `human` label (the write then needs `--override`). The
+  suggested edge is the YOUNGEST in the cycle — the write that closed
+  the loop is the likeliest mistake — but the suggestion is structural,
+  not semantic: at least one edge in any cycle is a false dependency,
+  and an agent who can see from titles or history that a DIFFERENT edge
+  is the lie breaks that one instead, saying why in `-m` (trial-proven:
+  a worker correctly overrode a staged wrong suggestion). Identical
+  cycle entries (same member set) are deduplicated. Entries may also
+  appear in their home lists; this list is the view triage sweeps.
 
 Lists are bounded by `--limit` (default 50, per list) with true counts in
 `totals`; `frontier` never lies from truncation. The verdict prioritizes
@@ -395,6 +422,18 @@ included, not just the idioms that spell it out — carries
   `set <key> blocked-by=<full,new,set> --expect <the edge field's latest
   id>`. Never combined with a status write (rule 2); a human-labeled
   key needs `--override` here like everywhere.
+- **Break a cycle** — any agent or person does this IMMEDIATELY,
+  whenever a cycle appears in `attention`, verdict regardless; no
+  permission, no triage escalation. The entry's `break` object is the
+  whole fix: `set <break.key> blocked-by=<break.keep> --expect
+  <break.expect> -m "breaking cycle [<keys>]: dropping <break.drop>"`
+  (clear with `blocked-by=` when `keep` is empty; add `--override` when
+  `break.human` — sanctioned, the message names the cycle). Apply the
+  suggestion OR a better break: the suggestion is structural (youngest
+  edge); when titles or history show a different edge is the false
+  dependency, break that one and say why. `claim_lost` on a break means
+  a peer already fixed it — re-run `ready`. After ANY break, re-run
+  `ready`: overlapping cycles surface one at a time.
 - **Label edit**: the same read-union-write pattern, with the optional
   CAS rule 2 already grants: `set <key> labels=<full,new,set> --expect
   <the labels field's latest id>` (`--expect none` on a key's first
@@ -426,10 +465,24 @@ frontmatter `description` gains the triggers "running an issue board" and
   a picker, not a form to fill; work; close; repeat — re-running `ready`
   after your own close is the loop, not polling. A non-zero
   `totals.attention` alongside available work is a cue to flag triage,
-  not to wait for the verdict to flip. When `frontier` is `all-handled`: leave; the tool has
-  verified every chain ends at a live worker or a human. When
-  `attention-needed`: reclaim what's stale if you can; report the rest
-  (statusless keys, cycles) rather than guessing — they're triage items.
+  not to wait for the verdict to flip — and a cycle in `attention` is
+  broken on sight (the Break-a-cycle idiom), never merely flagged. When
+  `frontier` is `all-handled`: leave; the tool has verified every chain
+  ends at a recent claim or a human-labeled key, and — cycle detection
+  being holder-blind — that no dependency loop hides behind either.
+  When `attention-needed`: break cycles and reclaim non-human stale
+  claims yourself; report only what you genuinely cannot act on
+  (statusless keys, human-labeled stale claims).
+- **A missing, empty, or broken-looking store is REPORTED, never
+  repaired**: a worker never runs `init`, `create`, seed scripts, or any
+  filesystem operation against the store, no matter how wrong the board
+  looks — the most likely cause is the worker's own working directory,
+  and the second most likely needs a person (trial 5: a worker hitting
+  its own cwd mistake re-ran a setup script it found on disk and
+  destroyed the live board). Every skill command line therefore carries
+  its `cd <board dir> &&` prefix along with the absolute binary path —
+  working directory travels with the command, like the binary path
+  before it.
 - Waiting for others (only when told to wait): `watch` with the full
   status vocab as `--value` terms — watch matches any field's value,
   unscoped, so a label token colliding with a status word causes a rare
@@ -443,10 +496,15 @@ frontmatter `description` gains the triggers "running an issue board" and
   abandon, cycles to break by edge edit); walk `show --where status=open`
   for staleness of content (close with evidence / wontfix with the why
   in `-m` / re-label via the Label-edit idiom — protected, since triage
-  is exactly where label edits run concurrently / edge edits); grep the chain for `override:` events
-  and review each — every override is somebody deciding a standing
-  signal didn't apply, and reviewing them is the entire point of making
-  them greppable. Evidence on wontfix is NOT required (evidence of a
+  is exactly where label edits run concurrently / edge edits); sweep the
+  chain for override events with `tail --raw -n 0 --ledger <board> | grep
+  '"override"'` — unbounded (`-n 0`; `tail`'s own `--limit` default of 20
+  would silently cover only the most recent events) and matching the
+  JSON `override` field `tail --raw` actually emits, not prose's
+  `override: <value>` shorthand for it — and review each: every override
+  is somebody deciding a standing signal didn't apply, and reviewing
+  them is the entire point of making them greppable. Evidence on wontfix
+  is NOT required (evidence of a
   non-decision is pasted-string theater); the honest signal is the
   annotation.
 - Dup defense: search titles before seeding (`ready`/`show` carry titles
@@ -471,7 +529,11 @@ Economics, stated: a completed issue is ≥3 events (seed, claim, close; ≥4
 with dependencies), plus touch-bases scaling with wall-clock duration.
 The chain records every write that LANDED; rejected writes (`claim_lost`,
 `needs_override`, `bad_usage`) append nothing, so contention history is
-not preserved — a deliberate, stated trade.
+not preserved — a deliberate, stated trade. One more honest limit: the
+store's append-only guarantees are git-level — filesystem-level
+destruction of the store directory is outside the tool's trust model
+entirely, which is why doctrine forbids workers from ever "repairing" a
+store and why conductor tooling never lives in a worker's reach.
 
 ## Deferred, with reasons
 
@@ -549,7 +611,10 @@ semantics) is historical evidence, never merged.
    live claim or non-terminal human key — a closed human-labeled blocker
    resolves its dependents' edges (verified against hand-built graphs: linear
    chains, diamonds — no false cycle; true cycles → `attention-needed`;
-   statusless references → `attention-needed`; open targets recursed);
+   statusless references → `attention-needed`; open targets recursed;
+   HOLDER-BLIND: a cycle through a live claim, and one through a
+   human-labeled key, are each detected — a mutually-blocked
+   open/claimed pair reads `attention-needed`, never `all-handled`);
    verdict computed over the full board when lists are `--limit`
    truncated.
 10. Envelope: five members and totals match the pinned example's shape;
@@ -560,7 +625,13 @@ semantics) is historical evidence, never merged.
     `held` (claimed and unclaimed variants) and never appears in
     `blocked`; blocked entries carry the status field's latest `id`;
     attention entries for
-    stale-claim / statusless / cycle; ordering (ready oldest-first with
+    stale-claim / statusless / cycle; cycle entries carry a well-formed
+    `break` object (member key, dropped token, keep value, a
+    currently-valid `expect` id, `human` flag matching the break
+    target's labels) whose paste-ready write actually breaks the cycle;
+    identical-member cycle entries (doubled edges) deduplicate; a
+    residual overlapping cycle surfaces on the next `ready` after one
+    break; ordering (ready oldest-first with
     chain-position ties; others key-ascending).
 11. `show --where`: `unknown_field`, `~=` on enum → `bad_usage`,
     same-field double `=` → `bad_usage`, AND composition, uniform
@@ -604,6 +675,16 @@ semantics) is historical evidence, never merged.
   work, contested stale-reclaim serialized by `--expect`, annotation flow
   proven; produced the human quarantine and the settled-outcome
   protection.
+  `trial5.md` — three workers (two Sonnet, one Haiku) on a bedlam board
+  of six cycles; validated the self-service cycle design end to end: all
+  cycles broken in ~90s, a staged WRONG tool suggestion correctly
+  overridden with reasons, the human-cycle override executed by the
+  Haiku, residual overlapping cycles resolved through the re-run loop,
+  zero double-closes; produced holder-blind detection, the break
+  object, entry dedup, the break-on-sight doctrine, and the
+  store-recovery prohibition (a worker destroyed the store re-running a
+  setup script it found next to the doctrine — mechanism beats
+  doctrine, fifth occurrence).
 - **Harnesses**: `research/scripts/expect-race-harness.sh` (status races,
   20/20 — a round-10 reviewer caught its `create` line predating the
   ready-capable shape, so the citation validated an older ruleset; the
