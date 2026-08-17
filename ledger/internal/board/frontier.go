@@ -8,9 +8,10 @@ import (
 	"ledger/internal/model"
 )
 
-// alwaysTrue is the always-true filter frontierVerdict uses to walk the
-// FULL board regardless of the caller's --where filter — see Envelope's own
-// doc comment.
+// alwaysTrue is a filter matching every key — the equivalent of matchWhere
+// with no --where clauses. Production (cmd/ready.go) always builds a real
+// matchWhere-backed closure instead; this is a test double standing in for
+// "no filtering applies".
 func alwaysTrue(*Key) bool { return true }
 
 // ReadyEntry is one pickable key (spec "ready: the board, answered"):
@@ -148,61 +149,114 @@ type Envelope struct {
 }
 
 // Envelope builds the ready/held/blocked/attention lists and the frontier
-// verdict. filter is applied to every real key (board.Build's board.Keys)
-// exactly as show --where does — pass matchWhere-backed closure from
-// cmd/ready.go, or a constant-true filter when no filtering applies, to
-// keep this package free of a cmd import. filter(nil) is also consulted
-// once to decide whether orphan blocker references (a name no set event
-// ever touched) surface as statusless attention: matchWhere's own nil-key
-// rule already gives the right answer (true when there are no clauses,
-// false whenever there are, since an orphan carries no field values to
-// test) so no separate rule is needed here.
+// verdict. Classification walks the board exactly ONCE, unfiltered
+// (buildLists never takes a filter) — filter (a matchWhere-backed closure
+// from cmd/ready.go, or a constant-true filter when no filtering applies,
+// keeping this package free of a cmd import) is applied afterward, per
+// entry, to derive the four displayed lists from that single classified
+// result. This reproduces filtering's previous semantics exactly: a
+// ready/held/blocked/stale-claim/statusless entry is gated on filter
+// applied to its OWN key (filterEntries below looks it up in b.Keys by the
+// entry's Key field) — for a statusless entry whose Key names an orphan (no
+// set event ever touched it directly, so it's absent from b.Keys),
+// b.Keys[name] is the nil *Key, and filter(nil) is exactly matchWhere's
+// own nil-key rule (true when there are no clauses, false whenever there
+// are, since an orphan carries no field values to test) — no separate rule
+// is needed. Cycle entries are the one exception: cycleSurvivesFilter's
+// any-member rule (a cycle is relevant to any view containing one of its
+// members, not just one where every member does) applies instead, since a
+// cycle entry carries no single Key.
 //
 // Frontier is computed over the FULL, unfiltered board (spec: "computed
 // over the FULL board regardless of --limit", read together with "Extra
 // --where clauses apply uniformly to all lists" — that sentence names the
 // four *lists*, not the verdict — as full in both dimensions: the verdict
 // is the board's own truth, not the view asking for it). frontierVerdict
-// re-walks the board under an always-true filter to get there; the four
-// returned lists still honor the caller's real filter.
+// takes the very same unfiltered ready/attention/workAvailable buildLists
+// already computed; the four returned lists are the filtered derivation.
+//
+// Totals report the filtered, pre-truncation counts (spec: totals are
+// honest about what --where left standing, even though --limit still caps
+// the returned slice).
 func (b *Board) Envelope(now time.Time, limit int, filter func(*Key) bool) Envelope {
-	ready, held, blocked, attention, _ := b.buildLists(now, filter)
+	ready, held, blocked, attention, workAvailable := b.buildLists(now)
 
-	sort.Slice(ready, func(i, j int) bool {
-		ti, _ := model.ParseTS(ready[i].TS)
-		tj, _ := model.ParseTS(ready[j].TS)
+	frontier := frontierVerdict(ready, attention, workAvailable)
+
+	fReady := filterEntries(b, ready, filter, func(e ReadyEntry) string { return e.Key })
+	fHeld := filterEntries(b, held, filter, func(e HeldEntry) string { return e.Key })
+	fBlocked := filterEntries(b, blocked, filter, func(e BlockedEntry) string { return e.Key })
+	fAttention := filterAttention(b, attention, filter)
+
+	sort.Slice(fReady, func(i, j int) bool {
+		ti, _ := model.ParseTS(fReady[i].TS)
+		tj, _ := model.ParseTS(fReady[j].TS)
 		if !ti.Equal(tj) {
 			return ti.Before(tj)
 		}
-		return b.Keys[ready[i].Key].statusSeq < b.Keys[ready[j].Key].statusSeq
+		return b.Keys[fReady[i].Key].statusSeq < b.Keys[fReady[j].Key].statusSeq
 	})
-	sort.Slice(held, func(i, j int) bool { return held[i].Key < held[j].Key })
-	sort.Slice(blocked, func(i, j int) bool { return blocked[i].Key < blocked[j].Key })
+	sort.Slice(fHeld, func(i, j int) bool { return fHeld[i].Key < fHeld[j].Key })
+	sort.Slice(fBlocked, func(i, j int) bool { return fBlocked[i].Key < fBlocked[j].Key })
 	// SliceStable: cycle entries all share Key "" (they're keyed by Keys, not
 	// Key), so a plain sort.Slice would let their relative order flap between
 	// runs.
-	sort.SliceStable(attention, func(i, j int) bool { return attention[i].Key < attention[j].Key })
+	sort.SliceStable(fAttention, func(i, j int) bool { return fAttention[i].Key < fAttention[j].Key })
 
-	totals := Totals{Ready: len(ready), Held: len(held), Blocked: len(blocked), Attention: len(attention)}
+	totals := Totals{Ready: len(fReady), Held: len(fHeld), Blocked: len(fBlocked), Attention: len(fAttention)}
 
 	return Envelope{
-		Frontier:  b.frontierVerdict(now),
-		Ready:     truncate(ready, limit),
-		Held:      truncate(held, limit),
-		Blocked:   truncate(blocked, limit),
-		Attention: truncate(attention, limit),
+		Frontier:  frontier,
+		Ready:     truncate(fReady, limit),
+		Held:      truncate(fHeld, limit),
+		Blocked:   truncate(fBlocked, limit),
+		Attention: truncate(fAttention, limit),
 		Totals:    totals,
 	}
 }
 
-// buildLists walks the board once under filter, classifying every matching
-// key into ready/held/blocked and appending stale-claim/statusless/cycle
-// attention entries (unsorted — Envelope sorts after this returns).
-// workAvailable reports whether a reclaimable (non-human-labeled) stale
-// claim was found. Envelope calls this under the caller's real filter for
-// the four displayed lists; frontierVerdict calls it again under alwaysTrue
-// for the verdict's full-board truth.
-func (b *Board) buildLists(now time.Time, filter func(*Key) bool) (ready []ReadyEntry, held []HeldEntry, blocked []BlockedEntry, attention []AttentionEntry, workAvailable bool) {
+// filterEntries derives the filtered display slice for one entry list: an
+// entry survives iff filter(b.Keys[key(entry)]) — its own key exactly as
+// matchWhere would evaluate it, nil and all (see Envelope's doc comment).
+// Always non-nil, matching buildLists' own empty-slice-not-nil convention.
+func filterEntries[T any](b *Board, entries []T, filter func(*Key) bool, key func(T) string) []T {
+	out := make([]T, 0, len(entries))
+	for _, e := range entries {
+		if filter(b.Keys[key(e)]) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// filterAttention is filterEntries' attention-specific counterpart: every
+// reason but "cycle" filters on its own Key like any other entry; "cycle"
+// entries carry no single Key (they name several via Keys) and instead keep
+// cycleSurvivesFilter's any-member rule.
+func filterAttention(b *Board, entries []AttentionEntry, filter func(*Key) bool) []AttentionEntry {
+	out := make([]AttentionEntry, 0, len(entries))
+	for _, a := range entries {
+		var survives bool
+		if a.Reason == "cycle" {
+			survives = cycleSurvivesFilter(b, a, filter)
+		} else {
+			survives = filter(b.Keys[a.Key])
+		}
+		if survives {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// buildLists walks the board once, unfiltered, classifying every key into
+// ready/held/blocked and appending stale-claim/statusless/cycle attention
+// entries (unsorted — Envelope sorts after filtering). workAvailable
+// reports whether a reclaimable (non-human-labeled) stale claim was found.
+// This is the FULL board's classification: Envelope derives both the
+// filtered display lists and the frontier verdict from this single result,
+// never walking the board a second time.
+func (b *Board) buildLists(now time.Time) (ready []ReadyEntry, held []HeldEntry, blocked []BlockedEntry, attention []AttentionEntry, workAvailable bool) {
 	ready = []ReadyEntry{}
 	held = []HeldEntry{}
 	blocked = []BlockedEntry{}
@@ -212,9 +266,6 @@ func (b *Board) buildLists(now time.Time, filter func(*Key) bool) (ready []Ready
 	names := sortedKeyNames(b.Keys)
 	for _, name := range names {
 		k := b.Keys[name]
-		if !filter(k) {
-			continue
-		}
 		human := k.HasHuman()
 		switch {
 		case k.Status != nil && k.Status.Value == "open" && !human:
@@ -261,42 +312,27 @@ func (b *Board) buildLists(now time.Time, filter func(*Key) bool) (ready []Ready
 	}
 
 	// Orphans: blocker names no key's own status/labels/blocked-by write
-	// ever touched directly, so they carry no *Key at all. filter(nil) is
-	// loop-invariant (matchWhere ignores the key's identity when it's nil,
-	// only the presence of clauses matters), so compute it once.
-	if filter(nil) {
-		for _, name := range names {
-			k := b.Keys[name]
-			if !filter(k) {
+	// ever touched directly, so they carry no *Key at all.
+	for _, name := range names {
+		k := b.Keys[name]
+		for _, blockerName := range k.BlockedBy() {
+			if _, exists := b.Keys[blockerName]; exists || attSeen[blockerName] {
 				continue
 			}
-			for _, blockerName := range k.BlockedBy {
-				if _, exists := b.Keys[blockerName]; exists || attSeen[blockerName] {
-					continue
-				}
-				attention = append(attention, AttentionEntry{Reason: "statusless", Key: blockerName})
-				attSeen[blockerName] = true
-			}
+			attention = append(attention, AttentionEntry{Reason: "statusless", Key: blockerName})
+			attSeen[blockerName] = true
 		}
 	}
-	// Cycle entries compose with filter differently from every other
-	// attention reason: a stale-claim or statusless entry is gated on its
-	// own single key matching, but a cycle names several keys at once, and
-	// the controller's ruling is that the entry survives iff ANY member
-	// matches — the cycle is relevant to any view containing one of its
-	// members, not just one where every member does.
 	for _, cycle := range b.detectCycles() {
-		if cycleSurvivesFilter(b, cycle, filter) {
-			attention = append(attention, cycle)
-		}
+		attention = append(attention, cycle)
 	}
 
 	return ready, held, blocked, attention, workAvailable
 }
 
 // cycleSurvivesFilter reports whether any of a cycle attention entry's
-// member keys matches filter — the composition rule buildLists applies to
-// "cycle" entries (see the call site).
+// member keys matches filter — the composition rule filterAttention applies
+// to "cycle" entries (see the call site).
 func cycleSurvivesFilter(b *Board, entry AttentionEntry, filter func(*Key) bool) bool {
 	for _, name := range entry.Keys {
 		if filter(b.Keys[name]) {
@@ -306,16 +342,14 @@ func cycleSurvivesFilter(b *Board, entry AttentionEntry, filter func(*Key) bool)
 	return false
 }
 
-// frontierVerdict computes the frontier verdict over the FULL, unfiltered
-// board — buildLists under alwaysTrue gives the same ready/attention/
-// workAvailable classification the displayed lists use, just untouched by
-// the caller's --where filter or --limit (buildLists never truncates).
-// work-available: anything pickable now (non-empty ready) or reclaimable (a
-// stale claim on a non-human-labeled key); else attention-needed: the
-// attention list (stale claims, statusless references, cycles,
-// unknown-status keys) is non-empty; else all-handled.
-func (b *Board) frontierVerdict(now time.Time) string {
-	ready, _, _, attention, workAvailable := b.buildLists(now, alwaysTrue)
+// frontierVerdict computes the frontier verdict from buildLists' FULL,
+// unfiltered ready/attention/workAvailable — the same values Envelope
+// itself derives the (filtered) displayed lists from, so the board is only
+// ever walked once. work-available: anything pickable now (non-empty ready)
+// or reclaimable (a stale claim on a non-human-labeled key); else
+// attention-needed: the attention list (stale claims, statusless
+// references, cycles, unknown-status keys) is non-empty; else all-handled.
+func frontierVerdict(ready []ReadyEntry, attention []AttentionEntry, workAvailable bool) string {
 	switch {
 	case len(ready) > 0 || workAvailable:
 		return "work-available"
@@ -377,7 +411,7 @@ func (b *Board) detectCycles() []AttentionEntry {
 		}
 		onPath[name] = true
 		path = append(path, name)
-		for _, blocker := range k.BlockedBy {
+		for _, blocker := range k.BlockedBy() {
 			if onPath[blocker] {
 				start := 0
 				for i, p := range path {
@@ -431,8 +465,8 @@ func (b *Board) cycleEntry(cycle []string) AttentionEntry {
 
 	member := b.Keys[cycle[youngest]]
 	next := cycle[(youngest+1)%len(cycle)]
-	remaining := make([]string, 0, len(member.BlockedBy))
-	for _, tok := range member.BlockedBy {
+	remaining := make([]string, 0, len(member.BlockedBy()))
+	for _, tok := range member.BlockedBy() {
 		if tok != next {
 			remaining = append(remaining, tok)
 		}
@@ -473,7 +507,7 @@ func (b *Board) youngerEdge(a, c string) bool {
 // Vacuously true when k has no edges — ready's and blocked's membership
 // split on exactly this.
 func (b *Board) allEdgesTerminal(k *Key) bool {
-	for _, name := range k.BlockedBy {
+	for _, name := range k.BlockedBy() {
 		blocker, exists := b.Keys[name]
 		if !exists || blocker.Status == nil || !b.IsTerminal(blocker.Status.Value) {
 			return false
@@ -512,8 +546,8 @@ func (b *Board) blockerState(name string, now time.Time) string {
 // waitingOnList classifies every one of k's declared blockers, in
 // blocked-by's own order.
 func (b *Board) waitingOnList(k *Key, now time.Time) []WaitingOn {
-	wo := make([]WaitingOn, 0, len(k.BlockedBy))
-	for _, name := range k.BlockedBy {
+	wo := make([]WaitingOn, 0, len(k.BlockedBy()))
+	for _, name := range k.BlockedBy() {
 		wo = append(wo, WaitingOn{Key: name, State: b.blockerState(name, now)})
 	}
 	return wo
@@ -528,7 +562,7 @@ func (b *Board) waitingOnList(k *Key, now time.Time) []WaitingOn {
 // against fabrication.
 func (b *Board) readyEntry(k *Key) ReadyEntry {
 	e := ReadyEntry{Key: k.Name, Title: k.Title, Note: k.Status.Note, TS: k.Status.TS, By: k.Status.Author, ID: k.Status.ID}
-	for _, name := range k.BlockedBy {
+	for _, name := range k.BlockedBy() {
 		blocker := b.Keys[name] // exists and terminal — allEdgesTerminal already verified this
 		if len(blocker.Status.Evidence) == 0 {
 			e.UnblockedWithoutEvidence = append(e.UnblockedWithoutEvidence, name)

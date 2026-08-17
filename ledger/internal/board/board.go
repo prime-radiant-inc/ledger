@@ -23,9 +23,7 @@ type FieldState struct {
 type Key struct {
 	Name, Title string
 	Status      *FieldState // nil = statusless (no status event yet)
-	Labels      []string    // parsed tokens, empty ok
 	LabelsID    string      // latest labels event id ("" if none)
-	BlockedBy   []string
 	BlockedByID string
 	// BlockedByTS is the latest blocked-by event's own timestamp — cycle
 	// detection's break suggestion needs it to find the youngest edge in a
@@ -42,14 +40,14 @@ type Key struct {
 	// within a single Build() call.
 	blockedBySeq int
 	// Multi carries every declared multi-field's tokens by name, including
-	// "labels" and "blocked-by" (kept in sync with the dedicated Labels/
-	// BlockedBy slices above, which stay the source Tasks 6-8 already
-	// consume unchanged) — the generic surface a ready-capable board's
-	// third-or-later multi-field (e.g. "reviewers"; the shape requires
-	// labels, guards blocked-by when declared, but caps nothing) needs so
-	// show --where's membership clauses can filter on it too. Latest write
-	// wins, wholesale replace per set; nil when a key has no multi-field
-	// write at all.
+	// "labels" and "blocked-by" — the generic surface a ready-capable
+	// board's third-or-later multi-field (e.g. "reviewers"; the shape
+	// requires labels, guards blocked-by when declared, but caps nothing)
+	// needs so show --where's membership clauses can filter on it too.
+	// Labels() and BlockedBy() below read "labels" and "blocked-by" out of
+	// here directly, so the fact is stored once, by construction, rather
+	// than mirrored into dedicated fields. Latest write wins, wholesale
+	// replace per set; nil when a key has no multi-field write at all.
 	Multi map[string][]string
 	// Fields is the generic complement to Status: the latest write per
 	// declared enum field OTHER than "status" (e.g. a board-declared
@@ -103,18 +101,16 @@ func Build(meta model.Meta, events []model.Event) *Board {
 				}
 				k.statusSeq = i
 			case "labels":
-				k.Labels = splitTokens(value)
 				k.LabelsID = ev.ID
-				k.setMulti(field, value)
+				k.setMulti(field, SplitTokens(value))
 			case "blocked-by":
-				k.BlockedBy = splitTokens(value)
 				k.BlockedByID = ev.ID
 				k.BlockedByTS = ev.TS
 				k.blockedBySeq = i
-				k.setMulti(field, value)
+				k.setMulti(field, SplitTokens(value))
 			default:
-				if containsStr(meta.MultiFields, field) {
-					k.setMulti(field, value)
+				if model.Contains(meta.MultiFields, field) {
+					k.setMulti(field, SplitTokens(value))
 					continue
 				}
 				if k.Fields == nil {
@@ -132,26 +128,22 @@ func Build(meta model.Meta, events []model.Event) *Board {
 
 // setMulti records field's latest tokens in k.Multi — wholesale replace,
 // matching Labels'/BlockedBy's own clear-on-empty semantics.
-func (k *Key) setMulti(field, value string) {
+func (k *Key) setMulti(field string, tokens []string) {
 	if k.Multi == nil {
 		k.Multi = map[string][]string{}
 	}
-	k.Multi[field] = splitTokens(value)
+	k.Multi[field] = tokens
 }
 
-// containsStr reports whether x is present in xs.
-func containsStr(xs []string, x string) bool {
-	for _, v := range xs {
-		if v == x {
-			return true
-		}
-	}
-	return false
-}
+// Labels is k's latest "labels" multi-field tokens, empty ok.
+func (k *Key) Labels() []string { return k.Multi["labels"] }
 
-// splitTokens parses a comma-joined multi-field value; an empty value
+// BlockedBy is k's latest "blocked-by" multi-field tokens, empty ok.
+func (k *Key) BlockedBy() []string { return k.Multi["blocked-by"] }
+
+// SplitTokens parses a comma-joined multi-field value; an empty value
 // (the clear case) yields no tokens.
-func splitTokens(v string) []string {
+func SplitTokens(v string) []string {
 	if v == "" {
 		return nil
 	}
@@ -172,7 +164,7 @@ func (b *Board) IsTerminal(value string) bool {
 // HasHuman reports whether the key carries the reserved "human" label
 // token, among however many other tokens it has.
 func (k *Key) HasHuman() bool {
-	for _, l := range k.Labels {
+	for _, l := range k.Labels() {
 		if l == "human" {
 			return true
 		}

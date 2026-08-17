@@ -14,14 +14,7 @@ import (
 // shape) with a --stale-after horizon, for tests that need a claim to age
 // past staleness.
 func setupReadyStale(t *testing.T, staleAfter string) string {
-	dir := initRepo(t)
-	run(t, dir, "create", "issues", "--scope", "test",
-		"--field", "status=open,in-progress,closed,wontfix",
-		"--terminal", "status=closed,wontfix",
-		"--multi-field", "labels", "--multi-field", "blocked-by",
-		"--guard", "status", "--guard", "blocked-by",
-		"--stale-after", staleAfter)
-	return dir
+	return setupReady(t, "--stale-after", staleAfter)
 }
 
 // TestCrossAuthorLiveClaimNeedsOverrideNamingClaimantAndAge: a live claim

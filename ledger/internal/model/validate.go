@@ -76,7 +76,7 @@ func validateGuard(m Meta) *DeclErr {
 		if _, declared := m.Fields[g]; declared {
 			continue
 		}
-		if containsStr(m.MultiFields, g) {
+		if Contains(m.MultiFields, g) {
 			continue
 		}
 		return &DeclErr{Ident: "bad_value",
@@ -123,14 +123,14 @@ func validateReadyCapableShape(m Meta) *DeclErr {
 	if len(terminal) == 0 {
 		return nil // not opted in; nothing more to check
 	}
-	if !containsStr(m.Guard, "status") {
+	if !Contains(m.Guard, "status") {
 		return &DeclErr{Ident: "bad_value",
 			Hint: "add --guard status",
 			Msg:  "ready-capable boards (--terminal on status) require --guard status"}
 	}
 	nonTerminal := subtract(m.Fields["status"], terminal)
 	for _, want := range []string{"open", "in-progress"} {
-		if !containsStr(nonTerminal, want) {
+		if !Contains(nonTerminal, want) {
 			return &DeclErr{Ident: "bad_value",
 				Hint: fmt.Sprintf("declare status with a non-terminal value '%s'", want),
 				Msg:  fmt.Sprintf("ready-capable boards' non-terminal status vocab must include '%s' (have: %s)", want, strings.Join(nonTerminal, ", "))}
@@ -141,12 +141,12 @@ func validateReadyCapableShape(m Meta) *DeclErr {
 			Hint: "non-terminal status vocab must be exactly open, in-progress — move any third value to --terminal, or name this field something else",
 			Msg:  fmt.Sprintf("ready-capable boards' non-terminal status vocab must be exactly {open, in-progress} (have: %s)", strings.Join(nonTerminal, ", "))}
 	}
-	if !containsStr(m.MultiFields, "labels") {
+	if !Contains(m.MultiFields, "labels") {
 		return &DeclErr{Ident: "bad_value",
 			Hint: "add --multi-field labels",
 			Msg:  "ready-capable boards require a 'labels' multi-field declared (keeps the human quarantine signal possible)"}
 	}
-	if containsStr(m.MultiFields, "blocked-by") && !containsStr(m.Guard, "blocked-by") {
+	if Contains(m.MultiFields, "blocked-by") && !Contains(m.Guard, "blocked-by") {
 		return &DeclErr{Ident: "bad_value",
 			Hint: "add --guard blocked-by",
 			Msg:  "a declared 'blocked-by' multi-field on a ready-capable board requires --guard blocked-by"}
@@ -156,7 +156,7 @@ func validateReadyCapableShape(m Meta) *DeclErr {
 
 func subsetOf(vals, vocab []string) bool {
 	for _, v := range vals {
-		if !containsStr(vocab, v) {
+		if !Contains(vocab, v) {
 			return false
 		}
 	}
@@ -166,14 +166,15 @@ func subsetOf(vals, vocab []string) bool {
 func subtract(all, minus []string) []string {
 	var out []string
 	for _, v := range all {
-		if !containsStr(minus, v) {
+		if !Contains(minus, v) {
 			out = append(out, v)
 		}
 	}
 	return out
 }
 
-func containsStr(xs []string, x string) bool {
+// Contains reports whether x is present in xs.
+func Contains(xs []string, x string) bool {
 	for _, v := range xs {
 		if v == x {
 			return true

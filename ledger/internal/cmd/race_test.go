@@ -109,15 +109,17 @@ func exitCode(err error) int {
 
 // raceSetupReady creates a ready-capable board (setupReady's canonical
 // shape, mirrored from expect_test.go) via the built binary — round
-// families that need no staleness horizon share this.
-func raceSetupReady(t *testing.T) string {
+// families that need no staleness horizon share this. extra appends further
+// create flags (raceSetupReadyStale's --stale-after).
+func raceSetupReady(t *testing.T, extra ...string) string {
 	t.Helper()
 	dir := initRepo(t)
-	_, se, code := execLedger(t, dir, "create", "race", "--scope", "concurrency harness rounds",
+	args := append([]string{"create", "race", "--scope", "concurrency harness rounds",
 		"--field", "status=open,in-progress,closed",
 		"--terminal", "status=closed",
 		"--multi-field", "labels", "--multi-field", "blocked-by",
-		"--guard", "status", "--guard", "blocked-by")
+		"--guard", "status", "--guard", "blocked-by"}, extra...)
+	_, se, code := execLedger(t, dir, args...)
 	if code != 0 {
 		t.Fatalf("create: %s", se)
 	}
@@ -127,18 +129,7 @@ func raceSetupReady(t *testing.T) string {
 // raceSetupReadyStale is raceSetupReady with a --stale-after horizon, for
 // the reclaim family.
 func raceSetupReadyStale(t *testing.T, staleAfter string) string {
-	t.Helper()
-	dir := initRepo(t)
-	_, se, code := execLedger(t, dir, "create", "race", "--scope", "concurrency harness rounds",
-		"--field", "status=open,in-progress,closed",
-		"--terminal", "status=closed",
-		"--multi-field", "labels", "--multi-field", "blocked-by",
-		"--guard", "status", "--guard", "blocked-by",
-		"--stale-after", staleAfter)
-	if code != 0 {
-		t.Fatalf("create: %s", se)
-	}
-	return dir
+	return raceSetupReady(t, "--stale-after", staleAfter)
 }
 
 // TestRaceStatusClaimSameExpect is the shell harness's core round, ported:

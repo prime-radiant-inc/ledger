@@ -27,7 +27,7 @@ type WhereClause struct {
 // the same field are bad_usage — unsatisfiable, since a key can carry only
 // one value for an enum field at a time.
 func parseWhere(raw []string, meta model.Meta) ([]WhereClause, error) {
-	declared := strings.Join(append(append([]string{}, meta.FieldOrder...), meta.MultiFields...), ", ")
+	declared := declaredFieldNames(meta)
 	var clauses []WhereClause
 	exactSeen := map[string]bool{}
 	for _, r := range raw {

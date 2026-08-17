@@ -20,11 +20,6 @@ func envelopeMeta() model.Meta {
 	}
 }
 
-// allowAll is the "no --where clause" filter: every key matches, and (per
-// matchWhere's own nil-key rule, which this constant mirrors) so does the
-// filter(nil) orphan check.
-func allowAll(*Key) bool { return true }
-
 // envNow is the fixed "now" every envelope test measures ages against.
 var envNow = mustParseTS("2026-08-16T12:00:00.000")
 
@@ -52,7 +47,7 @@ func TestEnvelopeReadyEntryShape(t *testing.T) {
 		setEv("r2", "fix-retry", "blocked-by", "spike-probe", nil),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if len(env.Ready) != 1 {
 		t.Fatalf("expected 1 ready entry, got %+v", env.Ready)
 	}
@@ -73,7 +68,7 @@ func TestEnvelopeReadyUnblockedWithoutEvidenceFiresOnEvidenceFreeWontfix(t *test
 		setEv("r2", "fix-retry", "blocked-by", "spike-probe", nil),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if len(env.Ready) != 1 {
 		t.Fatalf("expected 1 ready entry: %+v", env.Ready)
 	}
@@ -95,7 +90,7 @@ func TestEnvelopeReadyUnblockedWithoutEvidenceNotOnEvidencedClose(t *testing.T) 
 		setEv("r2", "fix-retry", "blocked-by", "spike-probe", nil),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if len(env.Ready) != 1 {
 		t.Fatalf("expected 1 ready entry: %+v", env.Ready)
 	}
@@ -121,7 +116,7 @@ func TestEnvelopeHeldClaimEntryClaimedButBlocked(t *testing.T) {
 		setEv("c2", "big-task", "blocked-by", "dep-x", nil),
 	}
 	b := Build(meta, evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if len(env.Held) != 1 {
 		t.Fatalf("expected 1 held entry, got %+v", env.Held)
 	}
@@ -147,7 +142,7 @@ func TestEnvelopeHeldHumanUnclaimedEntry(t *testing.T) {
 		setEv("h2", "sign-off", "labels", "human", nil),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if len(env.Held) != 1 {
 		t.Fatalf("expected 1 held entry, got %+v", env.Held)
 	}
@@ -178,7 +173,7 @@ func TestEnvelopeHeldHumanClaimedComposite(t *testing.T) {
 		}),
 	}
 	b := Build(meta, evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if len(env.Held) != 1 {
 		t.Fatalf("expected 1 held entry, got %+v", env.Held)
 	}
@@ -217,7 +212,7 @@ func TestEnvelopeHeldHumanClaimedStale(t *testing.T) {
 		}),
 	}
 	b := Build(meta, evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if len(env.Held) != 1 {
 		t.Fatalf("expected 1 held entry, got %+v", env.Held)
 	}
@@ -249,7 +244,7 @@ func TestEnvelopeBlockedEntryShape(t *testing.T) {
 		setEv("d2", "deploy", "blocked-by", "sign-off", nil),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if len(env.Blocked) != 1 {
 		t.Fatalf("expected 1 blocked entry, got %+v", env.Blocked)
 	}
@@ -283,7 +278,7 @@ func TestEnvelopeHeldHumanWithUnresolvedEdgesNeverBlocked(t *testing.T) {
 		setEv("h3", "sign-off2", "blocked-by", "dep-y", nil),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if len(env.Held) != 1 {
 		t.Fatalf("expected 1 held entry, got %+v", env.Held)
 	}
@@ -325,7 +320,7 @@ func TestEnvelopeBlockedWaitingOnAllStates(t *testing.T) {
 			"done-dep,open-dep,live-dep,stale-dep,human-dep,human-claimed-dep,orphan-dep", nil),
 	}
 	b := Build(meta, evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if len(env.Blocked) != 1 {
 		t.Fatalf("expected 1 blocked entry, got %+v", env.Blocked)
 	}
@@ -365,7 +360,7 @@ func TestEnvelopeBlockedWaitingOnTerminalBeatsHumanPrecedence(t *testing.T) {
 		setEv("k2", "deploy", "blocked-by", "closed-human-dep,open-human-dep", nil),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if len(env.Blocked) != 1 {
 		t.Fatalf("expected 1 blocked entry, got %+v", env.Blocked)
 	}
@@ -392,7 +387,7 @@ func TestEnvelopeBlockedSortKeyAscending(t *testing.T) {
 		setEv("m2", "mid-blocked", "blocked-by", "some-dep", nil),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	got := make([]string, 0, len(env.Blocked))
 	for _, e := range env.Blocked {
 		got = append(got, e.Key)
@@ -425,7 +420,7 @@ func TestEnvelopeAttentionStaleClaimIncludesHumanLabeled(t *testing.T) {
 		}),
 	}
 	b := Build(meta, evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	var got []string
 	for _, a := range env.Attention {
 		if a.Reason == "stale-claim" {
@@ -463,7 +458,7 @@ func TestEnvelopeAttentionStatuslessHalfSeedAndOrphan(t *testing.T) {
 		setEv("k4", "consumer-b", "blocked-by", "ghost-dep", nil), // same orphan — must dedupe
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	var got []string
 	for _, a := range env.Attention {
 		if a.Reason == "statusless" {
@@ -502,7 +497,7 @@ func TestEnvelopeUnknownStatusIsAttentionNeverInvisible(t *testing.T) {
 		}),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if len(env.Ready) != 0 || len(env.Held) != 0 || len(env.Blocked) != 0 {
 		t.Fatalf("an unknown status value must never appear in ready/held/blocked: %+v", env)
 	}
@@ -534,7 +529,7 @@ func TestEnvelopeLimitTruncatesButTotalsHonest(t *testing.T) {
 		}))
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 2, allowAll)
+	env := b.Envelope(envNow, 2, alwaysTrue)
 	if len(env.Ready) != 2 {
 		t.Fatalf("expected list truncated to 2, got %d", len(env.Ready))
 	}
@@ -566,7 +561,7 @@ func TestEnvelopeFrontierWorkAvailableFromReady(t *testing.T) {
 		setEv("r1", "fix-retry", "status", "open", func(e *model.Event) { e.Text = "fix it" }),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if env.Frontier != "work-available" {
 		t.Fatalf("non-empty ready must drive work-available, got %q", env.Frontier)
 	}
@@ -585,7 +580,7 @@ func TestEnvelopeFrontierWorkAvailableFromStaleNonHumanClaim(t *testing.T) {
 		}),
 	}
 	b := Build(meta, evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if env.Frontier != "work-available" {
 		t.Fatalf("a stale claim on a non-human key must drive work-available (reclaimable), got %q", env.Frontier)
 	}
@@ -607,7 +602,7 @@ func TestEnvelopeFrontierAttentionNeededOnStaleHumanClaimOnly(t *testing.T) {
 		}),
 	}
 	b := Build(meta, evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if env.Frontier != "attention-needed" {
 		t.Fatalf("a stale claim ONLY on a human-labeled key must be attention-needed, never work-available, got %q", env.Frontier)
 	}
@@ -623,7 +618,7 @@ func TestEnvelopeReadySortOldestFirstChainPositionTie(t *testing.T) {
 		setEv("r3", "oldest-ts", "status", "open", func(e *model.Event) { e.TS = "2026-08-16T07:00:00.000" }),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	var got []string
 	for _, e := range env.Ready {
 		got = append(got, e.Key)
@@ -647,7 +642,7 @@ func TestEnvelopeHeldSortKeyAscending(t *testing.T) {
 		setEv("c3", "mid-task", "status", "in-progress", nil),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	var got []string
 	for _, e := range env.Held {
 		got = append(got, e.Key)
@@ -681,7 +676,7 @@ func TestEnvelopeFrontierLinearChainAllLiveAllHandled(t *testing.T) {
 		setEv("c2", "c", "blocked-by", "b", nil),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if env.Frontier != "all-handled" {
 		t.Fatalf("linear chain terminating in a live claim must be all-handled, got %q (attention=%+v)", env.Frontier, env.Attention)
 	}
@@ -702,7 +697,7 @@ func TestEnvelopeFrontierDiamondBehindOneOpenKeyWorkAvailable(t *testing.T) {
 		setEv("a2", "a", "blocked-by", "b,c", nil),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if env.Frontier != "work-available" {
 		t.Fatalf("d ready via the diamond must drive work-available, got %q", env.Frontier)
 	}
@@ -724,7 +719,7 @@ func TestEnvelopeFrontierTrueTwoCycleAttentionNeeded(t *testing.T) {
 		setEv("b2", "b", "blocked-by", "a", nil),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if env.Frontier != "attention-needed" {
 		t.Fatalf("a true cycle must drive attention-needed, got %q", env.Frontier)
 	}
@@ -737,7 +732,7 @@ func TestEnvelopeFrontierTrueTwoCycleAttentionNeeded(t *testing.T) {
 	if len(cycles) != 1 {
 		t.Fatalf("expected exactly 1 cycle entry, got %+v", cycles)
 	}
-	if len(cycles[0].Keys) != 2 || !contains(cycles[0].Keys, "a") || !contains(cycles[0].Keys, "b") {
+	if len(cycles[0].Keys) != 2 || !model.Contains(cycles[0].Keys, "a") || !model.Contains(cycles[0].Keys, "b") {
 		t.Fatalf("cycle entry must name both a and b, got %+v", cycles[0].Keys)
 	}
 	if cycles[0].Title != "" {
@@ -754,7 +749,7 @@ func TestEnvelopeFrontierStatuslessReferenceAttentionNeeded(t *testing.T) {
 		setEv("c2", "c", "blocked-by", "ghost", nil),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if env.Frontier != "attention-needed" {
 		t.Fatalf("a statusless (orphan) reference must drive attention-needed, got %q", env.Frontier)
 	}
@@ -772,7 +767,7 @@ func TestEnvelopeFrontierClosedHumanBlockerResolvesDependentsWorkAvailable(t *te
 		setEv("y2", "y", "blocked-by", "x", nil),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if env.Frontier != "work-available" {
 		t.Fatalf("a closed human-labeled blocker must resolve its dependent's edge, got %q", env.Frontier)
 	}
@@ -790,7 +785,7 @@ func TestEnvelopeFrontierFullBoardIgnoresLimitTruncation(t *testing.T) {
 		setEv("r3", "r3", "status", "open", func(e *model.Event) { e.Text = "r3" }),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 1, allowAll)
+	env := b.Envelope(envNow, 1, alwaysTrue)
 	if len(env.Ready) != 1 {
 		t.Fatalf("--limit 1 must truncate the returned list, got %d entries", len(env.Ready))
 	}
@@ -871,15 +866,6 @@ func TestEnvelopeFrontierCycleExcludedWhenNoMemberMatches(t *testing.T) {
 			t.Fatalf("a cycle with no matching member must be excluded by the filter: %+v", env.Attention)
 		}
 	}
-}
-
-func contains(xs []string, x string) bool {
-	for _, v := range xs {
-		if v == x {
-			return true
-		}
-	}
-	return false
 }
 
 func derefBool(p *bool) any {

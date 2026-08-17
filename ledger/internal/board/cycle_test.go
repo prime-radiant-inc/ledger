@@ -42,12 +42,12 @@ func TestDetectCyclesHolderBlindThroughLiveClaim(t *testing.T) {
 		setEv("b2", "b", "blocked-by", "a", nil),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if env.Frontier != "attention-needed" {
 		t.Fatalf("a cycle through a live claim must drive attention-needed, never all-handled, got %q", env.Frontier)
 	}
 	cycles := cycleEntries(env)
-	if len(cycles) != 1 || len(cycles[0].Keys) != 2 || !contains(cycles[0].Keys, "a") || !contains(cycles[0].Keys, "b") {
+	if len(cycles) != 1 || len(cycles[0].Keys) != 2 || !model.Contains(cycles[0].Keys, "a") || !model.Contains(cycles[0].Keys, "b") {
 		t.Fatalf("expected exactly one cycle entry naming a and b, got %+v", cycles)
 	}
 }
@@ -67,7 +67,7 @@ func TestDetectCyclesHolderBlindThroughHumanLabel(t *testing.T) {
 		setEv("b2", "b", "blocked-by", "a", func(e *model.Event) { e.TS = "2026-08-16T00:00:01.000" }),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if env.Frontier != "attention-needed" {
 		t.Fatalf("a cycle through a human-labeled key must drive attention-needed, got %q", env.Frontier)
 	}
@@ -101,7 +101,7 @@ func TestCycleBreakHumanFalseWhenYoungestMemberIsThePlainOne(t *testing.T) {
 		setEv("a2", "a", "blocked-by", "b", func(e *model.Event) { e.TS = "2026-08-16T00:00:01.000" }),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	cycles := cycleEntries(env)
 	if len(cycles) != 1 {
 		t.Fatalf("expected exactly one cycle entry, got %+v", cycles)
@@ -128,7 +128,7 @@ func TestDetectCyclesTerminalKeyBreaksChain(t *testing.T) {
 		setEv("b2", "b", "blocked-by", "a", nil),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if len(cycleEntries(env)) != 0 {
 		t.Fatalf("a terminal key's edges are moot — must never be walked into as a cycle member: %+v", env.Attention)
 	}
@@ -153,7 +153,7 @@ func TestDetectCyclesDiamondThroughClaimedSinkNeverFalseFlagged(t *testing.T) {
 		setEv("a2", "a", "blocked-by", "b,c", nil),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	if len(cycleEntries(env)) != 0 {
 		t.Fatalf("a diamond behind a claimed sink must never be flagged a cycle: %+v", env.Attention)
 	}
@@ -176,7 +176,7 @@ func TestCycleBreakSuggestsYoungestEdgeAndKeepsOtherTokens(t *testing.T) {
 		setEv("b2", "b", "blocked-by", "a,extra", func(e *model.Event) { e.TS = "2026-08-16T00:00:01.000" }),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	cycles := cycleEntries(env)
 	if len(cycles) != 1 {
 		t.Fatalf("expected exactly one cycle entry, got %+v", cycles)
@@ -216,7 +216,7 @@ func TestCycleBreakKeepDropsAllOccurrencesOfDroppedToken(t *testing.T) {
 		setEv("b2", "b", "blocked-by", "other1,a,a,other2", func(e *model.Event) { e.TS = "2026-08-16T00:00:01.000" }),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	cycles := cycleEntries(env)
 	if len(cycles) != 1 {
 		t.Fatalf("expected exactly one cycle entry, got %+v", cycles)
@@ -237,7 +237,7 @@ func TestCycleEntryDedupOnDoubledEdge(t *testing.T) {
 		setEv("b2", "b", "blocked-by", "a,a", nil),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	cycles := cycleEntries(env)
 	if len(cycles) != 1 {
 		t.Fatalf("a doubled edge must dedupe to exactly one cycle entry, got %d: %+v", len(cycles), cycles)
@@ -252,7 +252,7 @@ func TestCycleBreakSelfEdge(t *testing.T) {
 		setEv("k2", "k", "blocked-by", "k", nil),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	cycles := cycleEntries(env)
 	if len(cycles) != 1 || len(cycles[0].Keys) != 1 || cycles[0].Keys[0] != "k" {
 		t.Fatalf("expected a single-member self-edge cycle entry, got %+v", cycles)
@@ -281,7 +281,7 @@ func TestCycleBreakTieBreakFallsBackToChainOrderWhenTimestampUnparseable(t *test
 		setEv("b2", "b", "blocked-by", "a", func(e *model.Event) { e.TS = "also-not-a-timestamp" }),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	cycles := cycleEntries(env)
 	if len(cycles) != 1 {
 		t.Fatalf("expected exactly one cycle entry, got %+v", cycles)
@@ -305,7 +305,7 @@ func TestCycleBreakTieBreakFallsBackToChainOrderOnEqualTimestamps(t *testing.T) 
 		setEv("b2", "b", "blocked-by", "a", func(e *model.Event) { e.TS = "2026-08-16T00:00:00.000" }),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	cycles := cycleEntries(env)
 	if len(cycles) != 1 {
 		t.Fatalf("expected exactly one cycle entry, got %+v", cycles)
@@ -364,7 +364,7 @@ func TestEnvelopeCycleResidualAfterBreakingRing(t *testing.T) {
 		setEv("b2", "b", "blocked-by", "c,d", func(e *model.Event) { e.TS = "2026-08-16T00:00:02.000" }),
 	}
 	b := Build(envelopeMeta(), evs)
-	env := b.Envelope(envNow, 50, allowAll)
+	env := b.Envelope(envNow, 50, alwaysTrue)
 	cycles := cycleEntries(env)
 	if len(cycles) != 2 {
 		t.Fatalf("expected both the ring and the chord cycle, got %d: %+v", len(cycles), cycles)
@@ -372,7 +372,7 @@ func TestEnvelopeCycleResidualAfterBreakingRing(t *testing.T) {
 
 	var ring *AttentionEntry
 	for i := range cycles {
-		if len(cycles[i].Keys) == 3 && contains(cycles[i].Keys, "c") {
+		if len(cycles[i].Keys) == 3 && model.Contains(cycles[i].Keys, "c") {
 			ring = &cycles[i]
 		}
 	}
@@ -387,15 +387,15 @@ func TestEnvelopeCycleResidualAfterBreakingRing(t *testing.T) {
 	evs2 := append(append([]model.Event(nil), evs...),
 		setEv("b3", "b", "blocked-by", ring.Break.Keep, func(e *model.Event) { e.TS = "2026-08-16T00:00:03.000" }))
 	b2 := Build(envelopeMeta(), evs2)
-	env2 := b2.Envelope(envNow, 50, allowAll)
+	env2 := b2.Envelope(envNow, 50, alwaysTrue)
 	cycles2 := cycleEntries(env2)
 	if len(cycles2) != 1 {
 		t.Fatalf("expected only the residual chord cycle after breaking the ring, got %d: %+v", len(cycles2), cycles2)
 	}
-	if contains(cycles2[0].Keys, "c") {
+	if model.Contains(cycles2[0].Keys, "c") {
 		t.Fatalf("the ring cycle must be gone after the break: %+v", cycles2[0])
 	}
-	if !contains(cycles2[0].Keys, "d") {
+	if !model.Contains(cycles2[0].Keys, "d") {
 		t.Fatalf("the residual chord cycle must still name d: %+v", cycles2[0])
 	}
 }

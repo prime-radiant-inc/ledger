@@ -66,7 +66,7 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts, expect string
 	if len(led.Meta.FieldOrder) > 0 {
 		first = led.Meta.FieldOrder[0]
 	}
-	declaredList := strings.Join(append(append([]string{}, led.Meta.FieldOrder...), led.Meta.MultiFields...), ", ")
+	declaredList := declaredFieldNames(led.Meta)
 	fields := map[string]string{}
 	for _, spec := range assignments {
 		f, v, cut := strings.Cut(spec, "=")
@@ -83,7 +83,7 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts, expect string
 				"'%s' is not a declared field on '%s'", f, led.Slug)
 		}
 		if isMulti {
-			for _, tok := range splitTokens(v) {
+			for _, tok := range board.SplitTokens(v) {
 				if !tokenRE.MatchString(tok) {
 					return out.Errf("bad_value", "multi-field tokens match ^[a-z0-9][a-z0-9-]*$, comma-separated", 4,
 						"'%s' is not a valid token for multi-field '%s'", tok, f)
@@ -236,7 +236,7 @@ func setPrecondition(key string, fields map[string]string, target, expect string
 	blockedByValue, touchesBlockedBy := fields["blocked-by"]
 	var blockedByTokens []string
 	if touchesBlockedBy {
-		blockedByTokens = splitTokens(blockedByValue)
+		blockedByTokens = board.SplitTokens(blockedByValue)
 	}
 	// needKeyExists and needLabels mirror the decision logic's own gates
 	// below exactly (grammar fallback only fires when key doesn't already
@@ -257,7 +257,15 @@ func setPrecondition(key string, fields map[string]string, target, expect string
 		// existed on the state that actually landed.
 		*overrideOut = ""
 
-		if !reachedRoot && !windowResolved(events, key, target, touchesStatus, needKeyExists, needLabels, blockedByTokens) {
+		// latestTarget is the one fact both windowResolved and checkCAS need
+		// on the target field — computed once per attempt and shared, rather
+		// than each scanning events for it separately.
+		var latestTarget *model.Event
+		if target != "" {
+			latestTarget = latestFieldEvent(events, key, target)
+		}
+
+		if !reachedRoot && !windowResolved(events, key, target, latestTarget, touchesStatus, needKeyExists, needLabels, blockedByTokens) {
 			// The window handed to this attempt hasn't reached far enough
 			// back to provably answer every check below yet, and it isn't
 			// the chain root either — a fact we need might exist further
@@ -270,7 +278,7 @@ func setPrecondition(key string, fields map[string]string, target, expect string
 		// reachedRoot — so the decision logic is exactly as correct here as
 		// it is against a whole-chain read.
 		if target != "" {
-			if err := checkCAS(events, key, target, expect, fields[target], ready, meta); err != nil {
+			if err := checkCAS(latestTarget, key, target, expect, fields[target], ready, meta); err != nil {
 				return err
 			}
 		}
@@ -322,8 +330,8 @@ func setPrecondition(key string, fields map[string]string, target, expect string
 // ambiguous (older than this window, or never written) until reachedRoot
 // settles it, which is exactly why this function is never consulted when
 // reachedRoot is true.
-func windowResolved(events []model.Event, key, target string, touchesStatus, needKeyExists, needLabels bool, blockedByTokens []string) bool {
-	if target != "" && latestFieldEvent(events, key, target) == nil {
+func windowResolved(events []model.Event, key, target string, latestTarget *model.Event, touchesStatus, needKeyExists, needLabels bool, blockedByTokens []string) bool {
+	if target != "" && latestTarget == nil {
 		return false
 	}
 	if needKeyExists && !keyTouched(events, key) {
@@ -357,11 +365,11 @@ func keyTouched(events []model.Event, name string) bool {
 	return false
 }
 
-// checkCAS is spec rules 3-4, field-scoped: it looks only at the latest
-// event that wrote `field` on `key` — other fields' events and notes carry
-// no Fields[field] entry, so they never appear here.
-func checkCAS(events []model.Event, key, field, expect, attemptedValue string, ready bool, meta model.Meta) error {
-	latest := latestFieldEvent(events, key, field)
+// checkCAS is spec rules 3-4, field-scoped: latest is the latest event that
+// wrote `field` on `key` (the caller's single scan, shared with
+// windowResolved) — other fields' events and notes carry no Fields[field]
+// entry, so they never appear here.
+func checkCAS(latest *model.Event, key, field, expect, attemptedValue string, ready bool, meta model.Meta) error {
 	if expect == "none" {
 		if latest == nil {
 			return nil
@@ -431,13 +439,11 @@ func latestFieldEvent(events []model.Event, key, field string) *model.Event {
 	return latest
 }
 
-// splitTokens parses a comma-joined multi-field value; an empty value (the
-// clear case) yields no tokens. Mirrors board.splitTokens (unexported there).
-func splitTokens(v string) []string {
-	if v == "" {
-		return nil
-	}
-	return strings.Split(v, ",")
+// declaredFieldNames comma-joins meta's declared enum fields (in field
+// order) and multi-fields, for an unknown_field error's "declared: ..."
+// hint.
+func declaredFieldNames(meta model.Meta) string {
+	return strings.Join(append(append([]string{}, meta.FieldOrder...), meta.MultiFields...), ", ")
 }
 
 func fieldNames(fields map[string]string) []string {
@@ -479,11 +485,7 @@ func signalNames(signals []board.Signal) string {
 }
 
 func renderFields(fields map[string]string) string {
-	names := make([]string, 0, len(fields))
-	for f := range fields {
-		names = append(names, f)
-	}
-	sort.Strings(names)
+	names := fieldNames(fields)
 	parts := make([]string, 0, len(names))
 	for _, f := range names {
 		parts = append(parts, f+"="+fields[f])

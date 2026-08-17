@@ -54,8 +54,8 @@ func TestLabelClearViaEmptyValue(t *testing.T) {
 	}
 	b := Build(readyMeta(), evs)
 	k := b.Keys["k1"]
-	if len(k.Labels) != 0 {
-		t.Fatalf("labels should be cleared, got %v", k.Labels)
+	if len(k.Labels()) != 0 {
+		t.Fatalf("labels should be cleared, got %v", k.Labels())
 	}
 	if k.LabelsID != "2a" {
 		t.Fatalf("LabelsID should track latest labels event, got %q", k.LabelsID)
@@ -174,8 +174,8 @@ func TestStatuslessKeyHasNilStatus(t *testing.T) {
 	if k.Title != "" {
 		t.Fatalf("statusless key must have empty title, got %q", k.Title)
 	}
-	if len(k.BlockedBy) != 1 || k.BlockedBy[0] != "other-key" {
-		t.Fatalf("blocked-by not parsed: %v", k.BlockedBy)
+	if len(k.BlockedBy()) != 1 || k.BlockedBy()[0] != "other-key" {
+		t.Fatalf("blocked-by not parsed: %v", k.BlockedBy())
 	}
 	if k.BlockedByID != "1a" {
 		t.Fatalf("BlockedByID: got %q", k.BlockedByID)

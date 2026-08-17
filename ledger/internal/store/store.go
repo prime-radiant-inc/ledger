@@ -213,9 +213,9 @@ func (s Store) Events(slug string) ([]model.Event, model.Meta, error) {
 	return evs, meta, nil
 }
 
-// windowSizes is the sanctioned chunked backward-read shape (spec rule 8):
-// runPrecondition tries these in order, each one bounded `git log -n <n>`
-// plus one `cat-file --batch` — never a per-event subprocess — before
+// windowProbeSize is the sanctioned chunked backward-read shape (spec rule
+// 8): runPrecondition tries one window of this size, bounded `git log -n
+// <n>` plus one `cat-file --batch` — never a per-event subprocess — before
 // falling back to Events' whole-chain fold.
 //
 // A single 64-event probe, not a 64/256/1024 staircase: review caught an
@@ -236,7 +236,7 @@ func (s Store) Events(slug string) ([]model.Event, model.Meta, error) {
 // actually-common case (a recently-touched key whose every needed fact —
 // including labels — resolves in the newest 64 events) while paying for
 // the inherent absence-proof cost exactly once, not three times over.
-var windowSizes = []int{64}
+const windowProbeSize = 64
 
 // EventsWindow reads the most recent n commits (oldest-first within the
 // window), with the same two-subprocess shape as Events: one bounded `git
@@ -480,11 +480,10 @@ func (s Store) casLoop(slug string, mode ExpectMode, pre Precondition, build fun
 	return "", fmt.Errorf("%w: %s", ErrCASExhausted, slug)
 }
 
-// runPrecondition drives pre against progressively larger backward windows
-// (windowSizes) of a fresh read, stopping as soon as pre stops returning
-// ErrNeedsMoreHistory or the window reaches the chain root — whichever
-// comes first (spec rule 8). Exhausting windowSizes without reaching the
-// root falls back to Events' whole-chain read, which is always decisive.
+// runPrecondition drives pre against a fresh backward-windowed read
+// (windowProbeSize), then falls back to Events' whole-chain read if pre
+// still returns ErrNeedsMoreHistory and the window hasn't already reached
+// the chain root (spec rule 8) — the whole-chain read is always decisive.
 // ok reports whether the ledger has any commits at all; pre still runs once
 // against an empty, root-reached read when it doesn't (a first-ever
 // write's --expect none case).
@@ -492,17 +491,14 @@ func (s Store) runPrecondition(slug string, ok bool, pre Precondition) error {
 	if !ok {
 		return pre(nil, true)
 	}
-	for _, n := range windowSizes {
-		events, reachedRoot, err := s.EventsWindow(slug, n)
-		if err != nil {
-			return err
-		}
-		result := pre(events, reachedRoot)
-		if reachedRoot || result != ErrNeedsMoreHistory {
-			return result
-		}
+	events, reachedRoot, err := s.EventsWindow(slug, windowProbeSize)
+	if err != nil {
+		return err
 	}
-	events, _, err := s.Events(slug)
+	if result := pre(events, reachedRoot); reachedRoot || result != ErrNeedsMoreHistory {
+		return result
+	}
+	events, _, err = s.Events(slug)
 	if err != nil {
 		return err
 	}

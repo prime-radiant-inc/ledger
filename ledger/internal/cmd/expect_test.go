@@ -8,13 +8,15 @@ import (
 
 // setupReady makes a ready-capable board (the spec's canonical shape:
 // --guard status --guard blocked-by, status opted into terminal semantics).
-func setupReady(t *testing.T) string {
+// extra appends further create flags (e.g. setupReadyStale's --stale-after).
+func setupReady(t *testing.T, extra ...string) string {
 	dir := initRepo(t)
-	run(t, dir, "create", "issues", "--scope", "test",
+	args := append([]string{"create", "issues", "--scope", "test",
 		"--field", "status=open,in-progress,closed,wontfix",
 		"--terminal", "status=closed,wontfix",
 		"--multi-field", "labels", "--multi-field", "blocked-by",
-		"--guard", "status", "--guard", "blocked-by")
+		"--guard", "status", "--guard", "blocked-by"}, extra...)
+	run(t, dir, args...)
 	return dir
 }
 
