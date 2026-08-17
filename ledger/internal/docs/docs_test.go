@@ -18,8 +18,8 @@ func TestQuickstartLengthBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := bytes.Count(data, []byte("\n")); n > 95 {
-		t.Fatalf("quickstart is %d lines; budget is 95 (spec: kata-sized)", n)
+	if n := bytes.Count(data, []byte("\n")); n > 110 {
+		t.Fatalf("quickstart is %d lines; budget is 110 (spec: kata-sized)", n)
 	}
 	for _, must := range []string{"--as", "verify", "testimony", "secrets", "scratch", "cursor", "vocab add", "--from-file"} {
 		if !bytes.Contains(bytes.ToLower(data), []byte(must)) {
@@ -61,6 +61,74 @@ func TestQuickstartExamplesExecute(t *testing.T) {
 			}
 		}
 	}
+}
+
+// curatedOutOfQuickstart are verbs deliberately absent from the quickstart's
+// doctrine: render/version/update/quickstart act on the binary or a file
+// path rather than board/coordination doctrine, and completion/help are
+// cobra machinery, not ledger verbs.
+var curatedOutOfQuickstart = map[string]bool{
+	"render": true, "version": true, "update": true, "quickstart": true,
+	"completion": true, "help": true,
+}
+
+// TestQuickstartMentionsEveryVerb guards against the doctrine silently
+// falling behind the verb set (the deferred-disclosure finding: `ready`
+// shipped with the issue board and quickstart never learned it). It derives
+// the live verb list from the cobra root itself — via `ledger --help`,
+// the same surface an agent actually reads — rather than hand-maintaining
+// a second list that can drift the same way the doc did.
+func TestQuickstartMentionsEveryVerb(t *testing.T) {
+	dir := t.TempDir()
+	for _, args := range [][]string{{"init", "-b", "main"}, {"commit", "--allow-empty", "-m", "init"}} {
+		c := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+	}
+	var so, se bytes.Buffer
+	if code := cmd.ExecuteArgs([]string{"--store", dir, "--help"}, &so, &se); code != 0 {
+		t.Fatalf("ledger --help: exit %d\n%s", code, se.String())
+	}
+	verbs := verbsFromHelp(so.String())
+	if len(verbs) == 0 {
+		t.Fatal("parsed zero verbs out of `ledger --help` output — parser or cobra output format changed")
+	}
+	quickstart, err := os.ReadFile(filepath.Join("..", "..", "docs", "quickstart.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range verbs {
+		if curatedOutOfQuickstart[v] {
+			continue
+		}
+		if !bytes.Contains(quickstart, []byte(v)) {
+			t.Errorf("quickstart.md never mentions verb %q (registered in cmd, not in curatedOutOfQuickstart)", v)
+		}
+	}
+}
+
+// verbsFromHelp pulls the first word of every line in cobra's "Available
+// Commands:" block — the verb list a cold agent actually reads.
+func verbsFromHelp(help string) []string {
+	var verbs []string
+	inSection := false
+	for _, line := range strings.Split(help, "\n") {
+		if strings.HasPrefix(line, "Available Commands:") {
+			inSection = true
+			continue
+		}
+		if !inSection {
+			continue
+		}
+		if strings.TrimSpace(line) == "" {
+			break
+		}
+		if fields := strings.Fields(line); len(fields) > 0 {
+			verbs = append(verbs, fields[0])
+		}
+	}
+	return verbs
 }
 
 // example is one executable line pulled from a fenced ```-block: the
