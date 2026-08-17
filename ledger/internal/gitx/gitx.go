@@ -15,9 +15,10 @@ import (
 // git subprocess invocations, Bytes counts total stdin+stdout+stderr bytes
 // moved through GitRaw. Both are nil (zero cost) outside tests; scale tests
 // use them to assert on the scaling SHAPE of a read (spec rule 8) — e.g.
-// that a windowed precondition read stopped after a small backward window
-// instead of a whole-chain fold, something a subprocess *count* alone can't
-// show (Events already reads any chain size in exactly two subprocesses).
+// that a guarded write's precondition read stayed at Events' whole-chain-
+// fold cost rather than degrading into a per-event subprocess pattern,
+// something a subprocess *count* alone can't show (Events already reads
+// any chain size in exactly two subprocesses).
 type Repo struct {
 	Dir   string
 	Calls *int64

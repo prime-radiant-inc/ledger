@@ -1,7 +1,7 @@
 // Package scaletest builds large synthetic event chains for scale tests in
-// both internal/store (the windowed-read primitive itself) and internal/cmd
-// (the real setPrecondition closure that drives it) — kept in one place so
-// both suites measure against literally the same fixture shape instead of
+// both internal/store (whole-chain read cost) and internal/cmd (the real
+// setPrecondition closure that drives it) — kept in one place so both
+// suites measure against literally the same fixture shape instead of
 // independently drifting copies. Not used by any production code path;
 // exists purely as shared test support, which is why it takes testing.TB
 // rather than living under a _test.go file (which Go forbids importing
@@ -73,8 +73,8 @@ func Churn(n int) []model.Event {
 // round trip per event; measured ~2m34s for 5,000 events on typical
 // hardware). fast-import builds the identical commit/tree/blob shape in
 // ~80ms. Only the fixture LOADER differs — every event read back
-// afterward through store.Events/EventsWindow is indistinguishable from
-// one store.Append would have produced. firstExtra attaches extra files
+// afterward through store.Events is indistinguishable from one
+// store.Append would have produced. firstExtra attaches extra files
 // (e.g. meta.json) to the first commit, matching store.AppendChain's own
 // firstExtra convention.
 func Seed(t testing.TB, repo gitx.Repo, slug string, evs []model.Event, firstExtra map[string]string) {

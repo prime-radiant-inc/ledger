@@ -39,10 +39,16 @@ func TestScaleSmoke(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------
-// Rev-14 windowed-read scale tests (spec rule 8; test plan item 16).
+// Scale tests (spec rule 8; issues test plan item 16's `ready` half).
 // Fixtures come from internal/scaletest, shared with the real-
 // setPrecondition scale tests in internal/cmd/scale_test.go — the two
-// suites measure against literally the same event-chain shape.
+// suites measure against literally the same event-chain shape. The
+// windowed-read primitive this section used to cover (EventsWindow,
+// runPrecondition's window-then-fallback loop) was deleted by sync spec
+// rev 7 Addition 5: guarded writes now always read the whole chain, so
+// there is no window primitive left to measure here — see
+// internal/cmd/scale_test.go for the precondition-read scale coverage
+// that replaces it.
 // ---------------------------------------------------------------------
 
 // TestScaleReadyEnvelopeBound is spec test 16's `ready` half: the full
@@ -102,24 +108,17 @@ func medianDuration(d []time.Duration) time.Duration {
 	return sorted[len(sorted)/2]
 }
 
-// TestRunPreconditionStopsAtFirstResolvedWindow is a STORE-LEVEL mechanism
-// test: it drives runPrecondition/EventsWindow directly with a synthetic,
-// single-field precondition (only target-key's latest status write, which
-// this fixture plants as the very last event) to isolate the windowing
-// PRIMITIVE from any particular Precondition's own field requirements.
-//
-// This is deliberately narrower than the real production claim: the real
-// setPrecondition closure needs more than one field resolved per guarded
-// write (see internal/cmd/scale_test.go's TestSetPreconditionScalingShape,
-// which drives the actual closure and is the test that caught windowSizes'
-// 64/256/1024 staircase regressing on a never-labeled key — fixed by
-// collapsing windowSizes to a single 64-probe, see its doc comment). This
-// test's job is narrower and stays valid regardless of that: does
-// runPrecondition actually stop growing once a Precondition stops asking
-// for more? Instrumented via BYTES moved through gitx, not subprocess
-// COUNT: Events() is already exactly two subprocesses at any chain size,
-// so only data volume reveals whether a read actually stayed narrow.
-func TestRunPreconditionStopsAtFirstResolvedWindow(t *testing.T) {
+// TestAppendCheckedPreconditionAlwaysWholeChain is the store-level half of
+// the retracted issues-spec test 16 clause ("not a full re-fold per
+// retry" — amendment inventory item 1): a guarded write's precondition read
+// IS the full read, per attempt, unconditionally — there is no window
+// primitive left to stay narrow. Drives a synthetic single-field
+// precondition (only target-key's latest status write, which this fixture
+// plants as the very last event, so a windowed read would have resolved it
+// from a tiny recent slice) and asserts the read still moved close to the
+// whole 5,000-event chain's bytes, not a narrow slice — proving the read
+// is whole-chain even on the case a window would have made cheap.
+func TestAppendCheckedPreconditionAlwaysWholeChain(t *testing.T) {
 	if testing.Short() {
 		t.Skip("scale")
 	}
@@ -136,7 +135,7 @@ func TestRunPreconditionStopsAtFirstResolvedWindow(t *testing.T) {
 	s.Repo = gitx.Repo{Dir: dir, Calls: &calls, Bytes: &byteCount}
 
 	resolved := false
-	pre := func(events []model.Event, reachedRoot bool) error {
+	pre := func(events []model.Event) error {
 		for i := len(events) - 1; i >= 0; i-- {
 			if events[i].Key == "target-key" {
 				if _, ok := events[i].Fields["status"]; ok {
@@ -145,11 +144,8 @@ func TestRunPreconditionStopsAtFirstResolvedWindow(t *testing.T) {
 				}
 			}
 		}
-		if reachedRoot {
-			resolved = true
-			return nil
-		}
-		return ErrNeedsMoreHistory
+		t.Fatal("whole-chain read must resolve target-key's status in one call — nothing left to ask for more")
+		return nil
 	}
 	ev := scaletest.Event(99999, "target-key", "status", "closed", "bob")
 	if _, err := s.AppendChecked("board", &ev, pre, ExpectPresent); err != nil {
@@ -160,18 +156,16 @@ func TestRunPreconditionStopsAtFirstResolvedWindow(t *testing.T) {
 	}
 
 	t.Logf("synthetic single-field precondition on a recently-touched key among 5000 events: %d subprocess calls, %d bytes moved", calls, byteCount)
-	// The 64-event probe fully resolves target-key's latest status write
-	// (it's the newest event in the whole chain): one chunk (one `git log -n
-	// 64` plus one `cat-file --batch` for 64 event.json blobs, ~26KB
-	// measured on this hardware) plus the CAS loop's own small,
-	// constant-size calls (head read, hash-object/mktree/commit-tree/
-	// update-ref/gc). 50KB gives headroom above that while staying two
-	// orders of magnitude below a whole-chain fold of 5000 events (~2.8MB,
-	// measured in TestScaleDegenerateWindowCases) — the assertion is on
-	// SHAPE, not a tight byte count.
-	const maxBytes = 50_000
-	if byteCount > maxBytes {
-		t.Fatalf("conditional set on a recently-touched key moved %d bytes — want < %d (a narrow window must stay small; the whole chain is ~2.8MB)", byteCount, maxBytes)
+	// Events() is exactly two subprocesses at any chain size (one `git log`,
+	// one `cat-file --batch`), so a single-attempt guarded write's byte cost
+	// is dominated by that whole-chain fold (~2.8MB at 5000 events, measured
+	// below) plus the CAS loop's own small, constant-size calls
+	// (hash-object/mktree/commit-tree/update-ref/gc). minBytes rules out a
+	// regression back to a narrow window — a recently-touched key resolving
+	// from a small slice would move only tens of KB, far under this floor.
+	const minBytes = 500_000
+	if byteCount < minBytes {
+		t.Fatalf("conditional set on a recently-touched key moved only %d bytes — want >= %d (the precondition read must be the whole chain, not a narrow window)", byteCount, minBytes)
 	}
 }
 
@@ -179,13 +173,9 @@ func TestRunPreconditionStopsAtFirstResolvedWindow(t *testing.T) {
 // cases stated in the test report") the two honest worst-case precondition
 // reads rule 8 calls out: proving a long-untouched key's current state
 // (its last write sits near the chain root) and proving a blocked-by token
-// does NOT exist anywhere in history. Both can only be settled by walking
-// the window all the way back — the windowed read degrades toward Events'
-// own whole-chain fold, exactly as the spec states. Uses the same
-// synthetic single-field precondition shape as
-// TestRunPreconditionStopsAtFirstResolvedWindow, for the same reason: this
-// measures the store-level windowing PRIMITIVE's degenerate cost, not any
-// particular Precondition's field requirements.
+// does NOT exist anywhere in history. Both are now the SAME cost as every
+// other guarded write, since Addition 5 deleted the window: the whole-chain
+// read pays this cost unconditionally, not just on these degenerate cases.
 func TestScaleDegenerateWindowCases(t *testing.T) {
 	if testing.Short() {
 		t.Skip("scale")
@@ -204,16 +194,13 @@ func TestScaleDegenerateWindowCases(t *testing.T) {
 	s.Repo = gitx.Repo{Dir: dir, Calls: &calls, Bytes: &byteCount}
 
 	start := time.Now()
-	pre := func(events []model.Event, reachedRoot bool) error {
+	pre := func(events []model.Event) error {
 		for i := len(events) - 1; i >= 0; i-- {
 			if events[i].Key == "ancient-key" {
 				return nil
 			}
 		}
-		if reachedRoot {
-			return nil
-		}
-		return ErrNeedsMoreHistory
+		return nil // absence would be proven; never true in this fixture
 	}
 	ev := scaletest.Event(99998, "ancient-key", "status", "closed", "bob")
 	if _, err := s.AppendChecked("board", &ev, pre, ExpectPresent); err != nil {
@@ -224,16 +211,13 @@ func TestScaleDegenerateWindowCases(t *testing.T) {
 
 	calls, byteCount = 0, 0
 	start = time.Now()
-	pre2 := func(events []model.Event, reachedRoot bool) error {
+	pre2 := func(events []model.Event) error {
 		for _, e := range events {
 			if e.Key == "does-not-exist" {
 				return nil // would prove existence; never true in this fixture
 			}
 		}
-		if reachedRoot {
-			return nil // absence proven — the unknown_key degenerate case
-		}
-		return ErrNeedsMoreHistory
+		return nil // absence proven — the unknown_key degenerate case
 	}
 	ev2 := scaletest.Event(99997, "target-key", "blocked-by", "does-not-exist", "carol")
 	if _, err := s.AppendChecked("board", &ev2, pre2, ExpectPresent); err != nil {

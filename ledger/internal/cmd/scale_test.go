@@ -12,44 +12,39 @@ import (
 )
 
 // ---------------------------------------------------------------------
-// setPrecondition's windowed-read gate (windowResolved/keyTouched, set.go),
-// exercised against the REAL closure — not a synthetic stand-in. Two
-// concerns, per review:
+// setPrecondition's whole-chain read (set.go), exercised against the REAL
+// closure — not a synthetic stand-in. Sync spec rev 7 Addition 5 deleted
+// the windowed-read gate (windowResolved/keyTouched) that used to live
+// here: every guarded write now reads the whole chain, unconditionally, on
+// every CAS attempt. Two concerns survive that deletion, per review:
 //
-//  1. Decision correctness: does the gate actually change what a write
-//     decides, on a chain deep enough that a single 64-event probe misses
-//     the fact that matters? TestSetPreconditionCorrectDecisions below
-//     builds a >256-event chain with one "ancient" fact buried past the
-//     probe window and asserts the CORRECT decision on each of the four
-//     checks windowResolved gates. Each assertion is a genuine regression
-//     trap: with windowResolved weakened to `return true` unconditionally
-//     (skip the gate, decide from whatever partial window the first probe
-//     happened to return), all four decisions flip to the WRONG answer —
-//     confirmed by re-running this file against a temporarily weakened
-//     windowResolved (unconditional `return true`): a claim on a human key
-//     is wrongly accepted, --expect none is wrongly accepted over an
-//     existing value, a real blocked-by edge is wrongly rejected as
-//     unknown_key, and a claim against a deep-history key is wrongly
-//     rejected (claim_lost, "nothing matches --expect") because the target
-//     field's own CAS resolution and the first-status-write check share the
-//     identical underlying fact — a truncated window that can't see the
-//     key's one-and-only status write breaks both at once, not just the
-//     title check in isolation.
+//  1. Decision correctness: does a guarded write still reach the CORRECT
+//     decision when the fact it needs sits deep in history — far past
+//     where the old 64-event window would have looked? TestSetPrecondition
+//     CorrectDecisions below builds a >256-event chain with one "ancient"
+//     fact buried at the root and asserts the CORRECT decision on each of
+//     four checks: a claim on a human-labeled key still requires
+//     --override, a duplicate --expect none seed still loses to an ancient
+//     status write, a blocked-by token that only exists at the chain root
+//     is still accepted, and a second status write on an ancient key is
+//     never misread as the first (which would wrongly demand a title).
+//     Whole-chain reads make all four trivially correct by construction
+//     (nothing is ever out of view) — this test is the regression trap
+//     against a narrowed read ever creeping back in.
 //
-//  2. Scaling shape: does the real closure's OWN field requirements (not
-//     just the field a synthetic test happens to check) actually stay
-//     narrow on the common case? TestSetPreconditionScalingShape below
-//     drives the real closure through AppendChecked with a counting
-//     gitx.Repo, covering both directions: a key whose every needed fact
-//     (status AND labels) resolves in the first 64-event probe, and a key
-//     that resolves status quickly but was NEVER labeled — rule 5's human
-//     signal is key-scoped and gates every guarded write, so proving "never
-//     labeled" is an absence proof that can only be settled at the chain
-//     root (spec rule 8's own stated asymmetry). This second case is what
-//     caught the windowSizes 64/256/1024 staircase actively losing to a
-//     plain whole-chain read (a never-labeled key paid for three wasted
-//     probes before falling back anyway) — fixed by collapsing windowSizes
-//     to a single 64-probe (see its doc comment in store.go).
+//  2. Scaling shape: does the real closure's whole-chain read cost the SAME
+//     regardless of whether the facts it needs are recent or ancient?
+//     TestSetPreconditionWholeChainCost below drives the real closure
+//     through AppendChecked with a counting gitx.Repo, covering both
+//     directions: a key whose every needed fact (status AND labels)
+//     resolves from the newest few events, and a key that resolves status
+//     quickly but was NEVER labeled (rule 5's human signal is key-scoped
+//     and gates every guarded write, so proving "never labeled" is an
+//     absence proof that can only be settled at the chain root). Amendment
+//     inventory item 1 retracts the issues spec's test 16 "not a full
+//     re-fold per retry" clause: both directions must now cost about the
+//     same — the whole chain — replacing the old windowed test's
+//     small-vs-large split.
 // ---------------------------------------------------------------------
 
 // seedReadyBoard writes a ready-capable board's meta.json plus evs as one
@@ -114,11 +109,10 @@ func deepFixture(ancient model.Event, padding int) []model.Event {
 }
 
 // TestSetPreconditionCorrectDecisions is finding 1's regression trap: four
-// writes, each requiring windowResolved to walk past a single 64-event
-// probe to reach an ancient fact, each asserting the DECISION a whole-chain
-// read would also reach. Weakening windowResolved to `return true`
-// unconditionally flips every one of these to the wrong answer (verified
-// by hand during review).
+// writes, each requiring the precondition read to see an ancient fact 300
+// events back in a chain the old 64-event window would have missed, each
+// asserting the CORRECT decision. A narrowed read that missed the ancient
+// fact would flip every one of these to the wrong answer.
 func TestSetPreconditionCorrectDecisions(t *testing.T) {
 	if testing.Short() {
 		t.Skip("scale")
@@ -191,16 +185,42 @@ func TestSetPreconditionCorrectDecisions(t *testing.T) {
 	})
 }
 
-// TestSetPreconditionScalingShape is finding 2's real-closure regression
-// test: drives the ACTUAL setPrecondition closure (not a synthetic
-// stand-in) through AppendChecked with a counting gitx.Repo, at the parent
-// spec's 5,000-event scale, in both directions the review called out.
-func TestSetPreconditionScalingShape(t *testing.T) {
+// TestSetPreconditionWholeChainCost is finding 2's real-closure regression
+// test, and the direct replacement for the retracted issues-spec test 16
+// clause ("not a full re-fold per retry" — amendment inventory item 1):
+// drives the ACTUAL setPrecondition closure (not a synthetic stand-in)
+// through AppendChecked with a counting gitx.Repo, at the parent spec's
+// 5,000-event scale, in both directions the old windowed test used to tell
+// apart — a key whose every needed fact is recent, and a key that was
+// NEVER labeled (an absence proof that can only be settled at the chain
+// root). Both subtests assert the SAME byte-count range: with the window
+// gone, there is no cheap case left — every guarded write pays the
+// whole-chain read, unconditionally, regardless of how recent its facts
+// are. wholeChainBytes brackets that one shared cost.
+func TestSetPreconditionWholeChainCost(t *testing.T) {
 	if testing.Short() {
 		t.Skip("scale")
 	}
 
-	t.Run("status and labels both resolve in the first probe", func(t *testing.T) {
+	// wholeChainBytes brackets a single whole-chain fold (one `git log` plus
+	// one `cat-file --batch`) of ~5000 events plus the CAS loop's own small,
+	// constant-size calls. The floor rules out a regression back to a
+	// narrow window (which would move only tens of KB); the ceiling is
+	// generous headroom above the whole chain's measured size on this
+	// hardware (hardware-specific, per the task report's note on this
+	// sandbox's git/subprocess overhead) — the assertion is on SHAPE (both
+	// cases cost the same), not a tight byte count.
+	const minBytes = 500_000
+	const maxBytes = 4_500_000
+	assertWholeChainCost := func(t *testing.T, label string, byteCount int64) {
+		t.Helper()
+		if byteCount < minBytes || byteCount > maxBytes {
+			t.Fatalf("%s moved %d bytes — want [%d, %d] (every guarded write now reads the whole chain, unconditionally)",
+				label, byteCount, minBytes, maxBytes)
+		}
+	}
+
+	t.Run("status and labels both resolve from recent history", func(t *testing.T) {
 		dir := initRepo(t)
 		evs := scaletest.Churn(4997)
 		n := len(evs)
@@ -228,13 +248,10 @@ func TestSetPreconditionScalingShape(t *testing.T) {
 			t.Fatalf("AppendChecked: %v", err)
 		}
 		t.Logf("real setPrecondition, status+labels both recent, among 5000 events: %d subprocess calls, %d bytes moved", calls, byteCount)
-		const maxBytes = 60_000 // one 64-event probe resolves both fields; measured ~35KB
-		if byteCount > maxBytes {
-			t.Fatalf("a guarded write whose every needed fact is recent moved %d bytes — want < %d", byteCount, maxBytes)
-		}
+		assertWholeChainCost(t, "a guarded write whose every needed fact is recent", byteCount)
 	})
 
-	t.Run("never-labeled key falls back to the whole chain", func(t *testing.T) {
+	t.Run("never-labeled key pays the same whole-chain cost", func(t *testing.T) {
 		dir := initRepo(t)
 		evs := scaletest.Churn(4998)
 		n := len(evs)
@@ -261,22 +278,6 @@ func TestSetPreconditionScalingShape(t *testing.T) {
 			t.Fatalf("AppendChecked: %v", err)
 		}
 		t.Logf("real setPrecondition, status recent but NEVER labeled, among 5000 events: %d subprocess calls, %d bytes moved", calls, byteCount)
-		// This is the honest absence-proof cost spec rule 8 states outright:
-		// proving "never labeled" requires reaching the chain root, so this
-		// pays close to a whole-chain read either way. On THIS hardware, at
-		// this fixture's scale, that's ~3.89MB (one wasted 64-probe, ~26KB,
-		// plus one whole-chain read) — measured directly against a
-		// temporarily restored windowSizes = {64, 256, 1024} staircase for
-		// comparison: ~4.40MB (the same whole-chain read, plus THREE wasted
-		// probes instead of one). The absolute numbers are hardware-specific
-		// (see the task report's note on this sandbox's git/subprocess
-		// overhead running well above cited reference figures), but the
-		// SHAPE claim — one wasted probe, not a multi-tier staircase — is
-		// exactly what this bound catches: comfortably above the fixed
-		// behavior, comfortably below a reintroduced staircase.
-		const maxBytes = 4_100_000
-		if byteCount > maxBytes {
-			t.Fatalf("a never-labeled key's absence proof moved %d bytes — want < %d (one wasted 64-probe plus one whole-chain read, not a multi-tier staircase)", byteCount, maxBytes)
-		}
+		assertWholeChainCost(t, "a never-labeled key's absence proof", byteCount)
 	})
 }

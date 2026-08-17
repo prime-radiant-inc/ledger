@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -24,20 +23,15 @@ const (
 	ExpectAbsent
 )
 
-// Precondition runs against a fresh, backward-windowed read of a ledger's
-// event chain inside every CAS retry attempt of AppendChecked — never a
+// Precondition runs against a fresh, whole-chain read of a ledger's event
+// history inside every CAS retry attempt of AppendChecked — never a
 // pre-loop snapshot (spec rule 7's atomicity contract). events is
-// oldest-first; reachedRoot reports whether events already reaches the
-// ledger's very first commit, i.e. whether this read holds the ledger's
-// FULL history rather than a partial backward window. A Precondition that
-// cannot yet decide from a partial window (some check's inputs haven't
-// shown up in events, and their absence hasn't been proven either) returns
-// ErrNeedsMoreHistory to ask runPrecondition for a bigger window — but MUST
-// decide definitively once reachedRoot is true, since there is no more
-// history to give. Returning any other error aborts the append with that
-// error; nothing is written.
+// oldest-first and always holds the ledger's FULL history (sync spec rev 7
+// Addition 5: guarded writes on merged history use whole-chain precondition
+// reads, unconditionally — there is no windowed mode to fall back from).
+// Returning an error aborts the append with that error; nothing is written.
 //
-// SCOPE, stated plainly: this narrowing covers only the fresh read taken
+// SCOPE, stated plainly: this re-read covers only the fresh read taken
 // inside each CAS retry attempt (runPrecondition, below) — it is a property
 // of AppendChecked's retry loop, not of the command that calls it. A
 // command like `set` still resolves the ledger (and folds its full event
@@ -46,14 +40,7 @@ const (
 // loaded history) runs before AppendChecked or this Precondition are ever
 // invoked. Nothing about that up-front read scales with this contract; only
 // the per-attempt precondition read does.
-type Precondition func(events []model.Event, reachedRoot bool) error
-
-// ErrNeedsMoreHistory is the sentinel a Precondition returns to request a
-// larger backward window (spec rule 8's chunked-read contract): this is
-// never a real failure and never reaches AppendChecked's caller —
-// runPrecondition always retries with a bigger window, or the full chain,
-// before giving up.
-var ErrNeedsMoreHistory = errors.New("needs_more_history")
+type Precondition func(events []model.Event) error
 
 var (
 	ErrUnknownLedger = errors.New("unknown_ledger")
@@ -256,79 +243,6 @@ func (s Store) EventsDAG(slug string) ([]model.Event, model.Meta, dag.Result, er
 	return evs, meta, result, nil
 }
 
-// windowProbeSize is the sanctioned chunked backward-read shape (spec rule
-// 8): runPrecondition tries one window of this size, bounded `git log -n
-// <n>` plus one `cat-file --batch` — never a per-event subprocess — before
-// falling back to Events' whole-chain fold.
-//
-// A single 64-event probe, not a 64/256/1024 staircase: review caught an
-// intermediate-tier staircase actively losing to a plain whole-chain read
-// on the canonical guarded write. Rule 5's human signal is key-scoped and
-// gates every guarded write regardless of which field it touches, so a
-// Precondition needs the target key's labels resolved on essentially every
-// guarded write — and most keys are never labeled at all, which (per rule
-// 8's own stated asymmetry) can only be PROVEN by walking to the chain
-// root. On that walk, 256 and 1024 are never big enough either — a
-// never-labeled key's absence proof only resolves at the root, however far
-// that is — so a 64/256/1024 staircase paid for three wasted reads before
-// falling back to Events' own whole-chain fold anyway: worse than just
-// reading the whole chain once (internal/cmd/scale_test.go's
-// TestSetPreconditionScalingShape measures both shapes side by side at the
-// parent spec's 5,000-event scale — see its doc comment for this
-// sandbox's numbers). One 64-event probe keeps the win for the
-// actually-common case (a recently-touched key whose every needed fact —
-// including labels — resolves in the newest 64 events) while paying for
-// the inherent absence-proof cost exactly once, not three times over.
-const windowProbeSize = 64
-
-// EventsWindow reads the most recent n commits (oldest-first within the
-// window), with the same two-subprocess shape as Events: one bounded `git
-// log -n <n>` for the commit list (also carrying each commit's parent hash,
-// to detect the chain root) plus one `cat-file --batch` for their
-// event.json blobs. meta.json is never requested here — a Precondition
-// never needs it (callers already hold Meta from the ledger's own load), so
-// skipping it halves EventsWindow's cat-file traffic versus Events.
-// reachedRoot reports whether the window's OLDEST commit is the ledger's
-// true root (no parent) — the fact a Precondition needs to tell "not found
-// in this window" apart from "provably absent" (spec rule 8's degenerate
-// absence-proof case). This is the rev-14 windowed-read primitive: the
-// parent spec's only batched read is Events' whole-chain fold: a
-// Precondition whose inputs resolve from a key's recent history never pays
-// for it.
-func (s Store) EventsWindow(slug string, n int) (events []model.Event, reachedRoot bool, err error) {
-	out, _, code := s.Repo.Git("", "log", "--reverse", "-n", strconv.Itoa(n), "--format=%H%x09%P", ref(slug))
-	if code != 0 || out == "" {
-		return nil, false, fmt.Errorf("%w: %s", ErrUnknownLedger, slug)
-	}
-	lines := strings.Split(out, "\n")
-	commits := make([]string, len(lines))
-	for i, line := range lines {
-		c, _, _ := strings.Cut(line, "\t")
-		commits[i] = c
-	}
-	_, parents, _ := strings.Cut(lines[0], "\t") // lines[0] is the window's oldest commit (--reverse)
-	reachedRoot = strings.TrimSpace(parents) == ""
-
-	reqs := make([]string, len(commits))
-	for i, c := range commits {
-		reqs[i] = c + ":event.json"
-	}
-	contents, present := s.catBatch(reqs)
-	events = make([]model.Event, 0, len(commits))
-	for i, c := range commits {
-		if !present[i] {
-			continue // torn/foreign commit: skip, never crash a read
-		}
-		var ev model.Event
-		if err := json.Unmarshal([]byte(contents[i]), &ev); err != nil {
-			continue
-		}
-		ev.ID = c[:10]
-		events = append(events, ev)
-	}
-	return events, reachedRoot, nil
-}
-
 // Committers reads every commit's committer name in one `git log` pass and
 // keys the result by 10-char event id, matching Events' id truncation — the
 // committer name holds the harness marker (terminal/claude-code/codex/etc.),
@@ -400,7 +314,7 @@ func (s Store) Append(slug string, ev model.Event, extra map[string]string, mode
 }
 
 // AppendChecked is Append plus a per-attempt precondition: pre runs against
-// a fresh, backward-windowed read (runPrecondition) inside every CAS retry
+// a fresh, whole-chain read (runPrecondition) inside every CAS retry
 // attempt, after the attempt's fresh head read and before the commit is
 // built — never against a snapshot taken before the loop started, and never
 // reused across attempts (spec rule 7). A pre error aborts the append with
@@ -489,7 +403,7 @@ func (s Store) AppendChain(slug string, evs []model.Event, firstExtra map[string
 
 // casLoop is the shared CAS-retry skeleton behind Append, AppendChain, and
 // AppendChecked: re-read the current head, run pre (if any) against a fresh,
-// windowed read (runPrecondition), let build construct the new tip
+// whole-chain read (runPrecondition), let build construct the new tip
 // commit(s) parented on it, then try to move the ref. build (and pre) may
 // run more than once — once per attempt — if another writer wins the race.
 func (s Store) casLoop(slug string, mode ExpectMode, pre Precondition, build func(parent string) (tip string, err error)) (string, error) {
@@ -523,29 +437,20 @@ func (s Store) casLoop(slug string, mode ExpectMode, pre Precondition, build fun
 	return "", fmt.Errorf("%w: %s", ErrCASExhausted, slug)
 }
 
-// runPrecondition drives pre against a fresh backward-windowed read
-// (windowProbeSize), then falls back to Events' whole-chain read if pre
-// still returns ErrNeedsMoreHistory and the window hasn't already reached
-// the chain root (spec rule 8) — the whole-chain read is always decisive.
-// ok reports whether the ledger has any commits at all; pre still runs once
-// against an empty, root-reached read when it doesn't (a first-ever
-// write's --expect none case).
+// runPrecondition drives pre against a fresh whole-chain read (spec rev 7
+// Addition 5: every guarded write uses whole-chain precondition reads,
+// unconditionally — no window, no merge detector, one mode). ok reports
+// whether the ledger has any commits at all; pre still runs once against an
+// empty read when it doesn't (a first-ever write's --expect none case).
 func (s Store) runPrecondition(slug string, ok bool, pre Precondition) error {
 	if !ok {
-		return pre(nil, true)
+		return pre(nil)
 	}
-	events, reachedRoot, err := s.EventsWindow(slug, windowProbeSize)
+	events, _, err := s.Events(slug)
 	if err != nil {
 		return err
 	}
-	if result := pre(events, reachedRoot); reachedRoot || result != ErrNeedsMoreHistory {
-		return result
-	}
-	events, _, err = s.Events(slug)
-	if err != nil {
-		return err
-	}
-	return pre(events, true)
+	return pre(events)
 }
 
 // BuildCommit writes one event's blobs/tree/commit-tree without touching any
