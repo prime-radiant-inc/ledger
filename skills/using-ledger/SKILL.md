@@ -1,11 +1,11 @@
 ---
 name: using-ledger
-description: Use when work spans sessions or agents and needs durable, verifiable state — starting multi-session or multi-agent work, dispatching subagent fleets, resuming after context death, handing off, tracking an investigation, or deciding "should this be a ledger?". Teaches when and how to use the `ledger` CLI's patterns; command mechanics live in `ledger quickstart`.
+description: Use when work spans sessions or agents and needs durable, verifiable state — starting multi-session or multi-agent work, dispatching subagent fleets, resuming after context death, handing off, tracking an investigation, running an issue board, picking unblocked work, or deciding "should this be a ledger?". Teaches when and how to use the `ledger` CLI's patterns; command mechanics live in `ledger quickstart`.
 ---
 
 # Using ledger
 
-Seven patterns for when and how to reach for a ledger. This is judgment,
+Eight patterns for when and how to reach for a ledger. This is judgment,
 not mechanics — every command shape here is spelled out in full in `ledger
 quickstart`; read that before your first real write.
 
@@ -147,3 +147,227 @@ ledger close scratch-slug --as-state abandoned  # or shipped, or superseded
 ```
 
 Run `ledger quickstart` for mechanics.
+
+## Issue board
+
+For coordinating unblocked work on a shared board: create it with guarded
+`status`/`blocked-by` fields and a `labels` reservation (`ledger create
+--help` has the declaration flags; this pattern is everything downstream
+of that). First read is always `ready` — its envelope answers what to
+pick, what to respect, and whether anything needs a person, including a
+computed `frontier` verdict, so no agent re-derives graph logic by hand.
+
+**Picking loop**: while `frontier` is `work-available`, claim the oldest
+entry in `ready`, or reclaim a stale entry from `attention` — skip any
+that's human-labeled; its `needs_override` is a stop sign for a picker,
+not a form to fill in. Work it, close it, re-run `ready` — that re-run
+*is* the loop, never polling. A non-zero `totals.attention` alongside
+available work is a cue to flag triage, not a reason to wait for the
+verdict to flip. When `frontier` is `all-handled`, leave — the tool has
+verified every dependency chain ends at a live worker or a human. When
+it's `attention-needed`, reclaim what's stale if you can and report the
+rest (statusless keys, cycles) rather than guessing; they're triage items.
+
+```
+~/path-to/ledger ready --ledger issues
+```
+
+On a human-labeled key, every guarded write below — touch-base and close
+included, not just the idioms that spell it out — carries `--override -m
+"<why>"` per the standing-signal rule; that variant isn't repeated per
+idiom below.
+
+- **Seed**: `set <key> status=open --expect none -m "<title>"`. With a
+  dependency, edges first — a statusless key is unpickable and doesn't
+  exist in the dependency window yet:
+
+  ```
+  ~/path-to/ledger set spike-probe status=open --expect none -m "spike probe: investigate retry storm" --as ash --ledger issues
+  ~/path-to/ledger set fix-retry blocked-by=spike-probe --expect none --as ash --ledger issues
+  ~/path-to/ledger set fix-retry status=open --expect none -m "fix the retry storm bug" --as ash --ledger issues
+  ```
+
+  Seed collision: the corrupting write is the one that SUCCEEDS — your
+  edge write landing on a stranger's edge-free key. Your own `--expect
+  none` success proves the key had no prior edges, so recovery is
+  deterministic: clear what you wrote and re-seed under a new name (add
+  `--override` if the stranger's key turns out to be human-labeled — the
+  message names the collision):
+
+  ```
+  ~/path-to/ledger set cache-warm status=open --expect none -m "warm the cache on boot" --as ash --ledger issues
+  ~/path-to/ledger set cache-warm blocked-by=spike-probe --expect none -m "dependency edge" --as kit --ledger issues
+  ~/path-to/ledger set cache-warm blocked-by= --expect <your own edge event id> -m "reverting: seed collision" --as kit --ledger issues
+  ~/path-to/ledger set cache-warm-2 blocked-by=spike-probe --expect none -m "dependency edge" --as kit --ledger issues
+  ~/path-to/ledger set cache-warm-2 status=open --expect none -m "kit's actual issue, re-seeded after the cache-warm collision" --as kit --ledger issues
+  ```
+
+  Seeding a pre-`human`-labeled key is a legitimate way to reserve
+  planned work — label first, then seed with `--override`; the one `-m`
+  is both the title and the override justification:
+
+  ```
+  ~/path-to/ledger set design-review labels=human --expect none -m "reserving for jesse" --as ash --ledger issues
+  ~/path-to/ledger set design-review status=open --expect none -m "pick the retry API shape" --as ash --ledger issues  # expect: exit 4 error needs_override
+  ~/path-to/ledger set design-review status=open --expect none --override -m "pick the retry API shape -- reserved for jesse: needs a human call on the retry contract" --as ash --ledger issues
+  ```
+
+- **Claim**: `set <key> status=in-progress --expect <ready id> -m
+  "claiming"`. `claim_lost` means someone beat you to it — re-run `ready`
+  and pick again. Your `--as` IS the assignee; provenance names who,
+  when, from where.
+
+  ```
+  ~/path-to/ledger set spike-probe status=in-progress --expect <the seed id> -m "claiming" --as ash --ledger issues
+  ```
+
+- **Touch-base**: re-set `status=in-progress --expect <own claim id> -m
+  "still on it"` at roughly half the staleness horizon, only while
+  actively working. Touch-bases are events; boards pick horizons
+  matching their tasks, not the reverse.
+
+  ```
+  ~/path-to/ledger set spike-probe status=in-progress --expect <own claim id> -m "still on it" --as ash --ledger issues
+  ```
+
+- **Close**: `set <key> status=closed --evidence <ref> --expect <own
+  claim id> -m "done"`.
+
+  ```
+  ~/path-to/ledger set spike-probe status=closed --evidence run:demo-1 --expect <own claim id> -m "done" --as ash --ledger issues
+  ```
+
+  A `claim_lost` here means you were reclaimed while working: leave a
+  `handoff` note with your result and let the current claimant decide —
+  never re-close blind. The winning claimant's duty: whenever the chain
+  shows a key was ever reclaimed, check `notes --key <key>` for a
+  `handoff` note before closing:
+
+  ```
+  ~/path-to/ledger set retry-config status=open --expect none -m "tune retry backoff config" --as ash --ledger issues
+  ~/path-to/ledger set retry-config status=in-progress --expect <the seed id> -m "claiming" --as ash --ledger issues
+  ~/path-to/ledger set retry-config status=in-progress --expect <ash's claim id> -m "reclaiming from ash: stale 350ms" --as moss --ledger issues
+  ~/path-to/ledger set retry-config status=closed --evidence run:demo-2 --expect <ash's claim id> -m "done" --as ash --ledger issues  # expect: exit 4 error claim_lost
+  ~/path-to/ledger note -k handoff --key retry-config -m "finished the backoff tuning before losing the claim: new config is exponential base 200ms cap 5s, verified against a local repro; evidence run:demo-2" --as ash --ledger issues
+  ~/path-to/ledger notes -k handoff --key retry-config --ledger issues
+  ~/path-to/ledger set retry-config status=closed --evidence run:demo-2 --expect <moss's reclaim id> -m "done, per ash's handoff note" --as moss --ledger issues
+  ```
+
+- **Reclaim**: a stale claim (from `attention`) is retaken with `set
+  <key> status=in-progress --expect <its id> -m "reclaiming from <by>:
+  stale <age>"` — no override needed unless the key is also
+  human-labeled (`human` has no staleness exception); staleness
+  dissolved the claim signal. Concurrent reclaimers serialize on the
+  same id — the reclaim line inside the Close example above is this
+  idiom in action.
+
+- **Revise a settled outcome** (reopen, re-resolve, wontfix a closed
+  issue): one write with `--override -m "<why>"` against the terminal
+  event's id — the event records `override: settled`, greppable, which
+  is the visibility the old two-step reopen never actually had.
+
+  ```
+  ~/path-to/ledger set docs-typo status=open --expect none -m "typo in readme install section" --as ash --ledger issues
+  ~/path-to/ledger set docs-typo status=closed --evidence commit:abc111 --expect <the seed id> -m "done" --as ash --ledger issues
+  ~/path-to/ledger set docs-typo status=wontfix --expect <the close id> --override -m "dup of [[readme-typo-2]]" --as kit --ledger issues
+  ```
+
+- **Break a squat / evict a live claim**: triage-only by doctrine. Free
+  the key with `status=open --expect <the live claim's id> --override
+  -m "<why, naming the claimant>"`; or take it directly with
+  `status=in-progress` and your own `--as` — same write, same override.
+  Either records `override: claim`.
+
+  ```
+  ~/path-to/ledger set urgent-fix status=open --expect none -m "urgent: prod alert flapping" --as ash --ledger issues
+  ~/path-to/ledger set urgent-fix status=in-progress --expect <the seed id> -m "claiming" --as moss --ledger issues
+  ~/path-to/ledger set urgent-fix status=open --expect <moss's claim id> --override -m "freeing: moss went dark, urgent-fix needs a new owner" --as triager --ledger issues
+
+  ~/path-to/ledger set hotfix-now status=open --expect none -m "hotfix: payment webhook 500s" --as ash --ledger issues
+  ~/path-to/ledger set hotfix-now status=in-progress --expect <the seed id> -m "claiming" --as kit --ledger issues
+  ~/path-to/ledger set hotfix-now status=in-progress --expect <kit's claim id> --override -m "taking over: kit unresponsive, needed now" --as triager --ledger issues
+  ```
+
+- **Edge edit**: read the current set, union or prune, write whole:
+  `set <key> blocked-by=<full,new,set> --expect <the edge field's latest
+  id>`. Never combined with a status write; a human-labeled key needs
+  `--override` here like everywhere.
+
+  ```
+  ~/path-to/ledger set deploy blocked-by=fix-retry --expect none --as ash --ledger issues
+  ~/path-to/ledger set deploy status=open --expect none -m "deploy the retry fix" --as ash --ledger issues
+  ~/path-to/ledger status deploy --field blocked-by --ledger issues
+  ~/path-to/ledger set deploy blocked-by=fix-retry,cache-warm-2 --expect <the edge field's latest id> -m "also wait on the cache warm fix" --as ash --ledger issues
+  ```
+
+- **Label edit**: the same read-union-write pattern, `--expect <the
+  labels field's latest id>` (`--expect none` on a key's first labels
+  write, including the `human` reservation's label step). `labels` is
+  unguarded, so the tool never demands this — but replace-wholesale
+  means two unprotected concurrent label edits silently clobber (no
+  error, nothing greppable), and `labels` carries the `human`
+  reservation; use the protected form, never drop a label a concurrent
+  writer just added.
+
+  ```
+  ~/path-to/ledger set fix-retry labels=needs-triage --expect none -m "flagging for triage review" --as ash --ledger issues
+  ~/path-to/ledger status fix-retry --field labels --ledger issues
+  ~/path-to/ledger set fix-retry labels=needs-triage,perf --expect <the labels field's latest id> -m "also perf-relevant" --as kit --ledger issues
+  ```
+
+- **Recovery** (after discovering a clobber or duplication): a
+  `handoff` note with what happened, then the corrective guarded write
+  with `--evidence` and a message naming the mistake. Never quietly
+  re-fix.
+
+  ```
+  ~/path-to/ledger set db-migrate status=open --expect none -m "run the pending schema migration" --as ash --ledger issues
+  ~/path-to/ledger set db-migrate status=closed --evidence commit:wrong0000 --expect <the seed id> -m "done" --as ash --ledger issues
+  ~/path-to/ledger note -k handoff --key db-migrate -m "closed with the wrong evidence ref (copy-pasted from deploy); correcting below, not re-closing quietly" --as kit --ledger issues
+  ~/path-to/ledger set db-migrate status=closed --evidence commit:c9f1a02 --expect <the bad close's id> --override -m "correcting: evidence ref was copy-pasted from deploy, see handoff" --as kit --ledger issues
+  ```
+
+Claiming a key `ready` annotates `unblocked_without_evidence`: name it in
+the claim message, persisting the warning into the key's own history.
+
+**Triage moment**: work the `attention` list — it IS the sweep (stale
+claims to reclaim or take over, statusless keys to finish seeding or
+abandon, cycles to break by edge edit). Walk `show --where status=open`
+for staleness of content (close with evidence / `wontfix` with the why
+in `-m` / re-label via the Label-edit idiom above — protected, since
+triage is exactly where label edits and edge edits run concurrently).
+Grep the chain for `override:` events and review each — every override
+is somebody deciding a standing signal didn't apply, and reviewing them
+is the entire point of making them greppable (`ledger tail --raw | grep
+'override:'`). Evidence on `wontfix` is NOT required — evidence of a
+non-decision is pasted-string theater; the honest signal is the
+annotation itself. Any non-zero `totals.attention` is a triage cue on
+its own, regardless of what `frontier` says.
+
+```
+~/path-to/ledger show --where status=open --ledger issues
+```
+
+Dup defense: search titles before seeding (`ready`/`show` carry titles
+for live keys; `tail --raw` — never the curated view — for closed ones;
+rollup summaries SHOULD retain key names verbatim, advisory). Dups close
+`wontfix -m "dup of [[key]]"` — `[[key]]` is a plain-text grep
+convention, no rendering semantics; the `docs-typo` example above is one.
+
+What no mechanism supplies: honoring what the id you fetched actually
+said. `--expect` proves you read the state; the signal gate makes
+ignoring it visible; judgment does the rest.
+
+**Waiting for others** (only when told to wait): `watch` with the full
+status vocab as `--value` terms — watch matches any field's value,
+unscoped, so a label token that happens to equal a status word (e.g.
+`labels=open`) causes a rare spurious wake; harmless, just re-run
+`ready`. Every watch timeout is also a cue to re-run `ready` — staleness
+fires no event, so a timeout is how it gets noticed.
+
+```
+~/path-to/ledger watch --value open,in-progress,closed,wontfix --timeout 1 --ledger issues  # expect: exit 2
+```
+
+Run `ledger quickstart` for general mechanics; `ledger create --help`
+for the board declaration flags.
