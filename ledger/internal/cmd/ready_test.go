@@ -247,9 +247,10 @@ func TestReadyAttentionStaleClaimAndFrontier(t *testing.T) {
 // TestReadyTTYRendersListsAndStaleFlag: readyLines' TTY rendering, bypassing
 // run() (which never sets TTY, per TestShowTTYNoteSummaryOneLine's own
 // established pattern) to invoke runReady directly with an explicit TTY
-// Ctx. Covers a ready entry, a held claim with stale:true, and both
-// attention reasons this task implements (stale-claim, statusless) — cycle
-// isn't implemented yet (Task 11), so it's not exercised here.
+// Ctx. Covers a ready entry, a held claim with stale:true, and the
+// stale-claim/statusless attention reasons; the cycle reason's own TTY
+// rendering (the "break:" suggestion line) isn't exercised by this
+// fixture — see the rev-17 cycle-break tests below for that.
 func TestReadyTTYRendersListsAndStaleFlag(t *testing.T) {
 	dir := setupReadyStale(t, "10ms")
 	run(t, dir, "set", "fix-retry", "status=open", "--expect", "none", "-m", "fix the retry loop", "--as", "alice")
@@ -283,5 +284,174 @@ func TestReadyTTYRendersListsAndStaleFlag(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "statusless") || !strings.Contains(rendered, "half-seeded") {
 		t.Fatalf("TTY output must render a statusless attention line: %q", rendered)
+	}
+}
+
+// --- Rev 17: CLI-level self-service cycle breaking ---
+
+// TestReadyTTYRendersCycleBreakLine: readyLines' cycle rendering must
+// include the paste-ready "break: set ... --expect ..." suggestion, with
+// --override appended when the break target is human-labeled.
+func TestReadyTTYRendersCycleBreakLine(t *testing.T) {
+	dir := setupReady(t)
+	run(t, dir, "set", "tty-cycle-p", "status=open", "--expect", "none", "-m", "tty cycle p", "--as", "a")
+	run(t, dir, "set", "tty-cycle-q", "labels=human", "--expect", "none", "-m", "reserving", "--as", "a")
+	run(t, dir, "set", "tty-cycle-q", "status=open", "--expect", "none", "--override", "-m", "tty cycle q -- reserved", "--as", "a")
+	if _, se, code := run(t, dir, "set", "tty-cycle-p", "blocked-by=tty-cycle-q", "--expect", "none", "--as", "a"); code != 0 {
+		t.Fatalf("tty-cycle-p blocked-by=tty-cycle-q: %s", se)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if _, se, code := run(t, dir, "set", "tty-cycle-q", "blocked-by=tty-cycle-p", "--expect", "none", "--override", "-m", "closing", "--as", "a"); code != 0 {
+		t.Fatalf("tty-cycle-q blocked-by=tty-cycle-p: %s", se)
+	}
+
+	var buf bytes.Buffer
+	c := &Ctx{Store: store.Store{Repo: gitx.Repo{Dir: dir}}, TTY: true, Stdout: &buf, Stderr: &buf}
+	if err := runReady(c, "", nil, 50); err != nil {
+		t.Fatal(err)
+	}
+	rendered := buf.String()
+	if !strings.Contains(rendered, "cycle") || !strings.Contains(rendered, "tty-cycle-p") || !strings.Contains(rendered, "tty-cycle-q") {
+		t.Fatalf("TTY output must render the cycle attention line: %q", rendered)
+	}
+	if !strings.Contains(rendered, "break: set tty-cycle-q blocked-by=\"\" --expect ") {
+		t.Fatalf("TTY output must render the paste-ready break suggestion: %q", rendered)
+	}
+	if !strings.Contains(rendered, "--override") {
+		t.Fatalf("TTY output must append --override for a human-labeled break target: %q", rendered)
+	}
+}
+
+// TestReadyAttentionCycleBreakObjectExecutesAndClears: a staged 2-cycle's
+// ready output must carry the break object naming the youngest (closing)
+// edge, and executing the suggested paste-ready fix through the real CLI
+// must clear the cycle and recover the frontier on the next ready.
+func TestReadyAttentionCycleBreakObjectExecutesAndClears(t *testing.T) {
+	dir := setupReady(t)
+	run(t, dir, "set", "cycle-p", "status=open", "--expect", "none", "-m", "cycle p", "--as", "a")
+	run(t, dir, "set", "cycle-q", "status=open", "--expect", "none", "-m", "cycle q", "--as", "a")
+	if _, se, code := run(t, dir, "set", "cycle-p", "blocked-by=cycle-q", "--expect", "none", "--as", "a"); code != 0 {
+		t.Fatalf("cycle-p blocked-by=cycle-q: %s", se)
+	}
+	time.Sleep(5 * time.Millisecond) // gives the closing edge a distinct, later timestamp
+	if _, se, code := run(t, dir, "set", "cycle-q", "blocked-by=cycle-p", "--expect", "none", "--as", "a"); code != 0 {
+		t.Fatalf("cycle-q blocked-by=cycle-p: %s", se)
+	}
+
+	so, se, code := run(t, dir, "ready")
+	if code != 0 {
+		t.Fatalf("ready: %d %s", code, se)
+	}
+	doc := mustJSON(t, so)
+	if doc["frontier"] != "attention-needed" {
+		t.Fatalf("a true cycle must drive attention-needed, got %v", doc["frontier"])
+	}
+	cycle := findCycleEntry(t, doc["attention"].([]any))
+	brk := cycle["break"].(map[string]any)
+	// cycle-q's edge write is the younger (closing) one — it's the
+	// suggested break target.
+	if brk["key"] != "cycle-q" || brk["drop"] != "cycle-p" || brk["keep"] != "" || brk["human"] != false {
+		t.Fatalf("break object: %+v", brk)
+	}
+	expect, _ := brk["expect"].(string)
+	if expect == "" {
+		t.Fatalf("break.expect must be a real event id: %+v", brk)
+	}
+
+	// Execute the paste-ready fix.
+	msg := "breaking cycle [cycle-p cycle-q]: dropping cycle-p"
+	if _, se, code := run(t, dir, "set", "cycle-q", "blocked-by=", "--expect", expect, "-m", msg, "--as", "kit"); code != 0 {
+		t.Fatalf("break write: %s", se)
+	}
+
+	so2, se2, code2 := run(t, dir, "ready")
+	if code2 != 0 {
+		t.Fatalf("ready after break: %d %s", code2, se2)
+	}
+	doc2 := mustJSON(t, so2)
+	assertNoCycleEntry(t, doc2["attention"].([]any))
+	if doc2["frontier"] != "work-available" {
+		t.Fatalf("frontier must recover once the cycle is broken (cycle-q is now ready), got %v", doc2["frontier"])
+	}
+}
+
+// TestReadyAttentionCycleBreakHumanVariantRequiresOverride: a cycle whose
+// suggested break target is human-labeled needs --override to execute;
+// without it the CLI rejects with needs_override, and with it the cycle
+// clears and the frontier recovers to all-handled (the human key resolves
+// the chain, but stays unpickable).
+func TestReadyAttentionCycleBreakHumanVariantRequiresOverride(t *testing.T) {
+	dir := setupReady(t)
+	run(t, dir, "set", "hcycle-p", "status=open", "--expect", "none", "-m", "hcycle p", "--as", "a")
+	run(t, dir, "set", "hcycle-q", "labels=human", "--expect", "none", "-m", "reserving", "--as", "a")
+	if _, se, code := run(t, dir, "set", "hcycle-q", "status=open", "--expect", "none", "--override", "-m", "hcycle q -- reserved for jesse", "--as", "a"); code != 0 {
+		t.Fatalf("seed hcycle-q: %s", se)
+	}
+	if _, se, code := run(t, dir, "set", "hcycle-p", "blocked-by=hcycle-q", "--expect", "none", "--as", "a"); code != 0 {
+		t.Fatalf("hcycle-p blocked-by=hcycle-q: %s", se)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if _, se, code := run(t, dir, "set", "hcycle-q", "blocked-by=hcycle-p", "--expect", "none", "--override", "-m", "closing the demo cycle", "--as", "a"); code != 0 {
+		t.Fatalf("hcycle-q blocked-by=hcycle-p: %s", se)
+	}
+
+	so, se, code := run(t, dir, "ready")
+	if code != 0 {
+		t.Fatalf("ready: %d %s", code, se)
+	}
+	doc := mustJSON(t, so)
+	cycle := findCycleEntry(t, doc["attention"].([]any))
+	brk := cycle["break"].(map[string]any)
+	if brk["key"] != "hcycle-q" || brk["human"] != true {
+		t.Fatalf("break must target the human-labeled member (hcycle-q's edge write closed the loop): %+v", brk)
+	}
+	expect, _ := brk["expect"].(string)
+	msg := "breaking cycle [hcycle-p hcycle-q]: dropping hcycle-p"
+
+	if _, se, code := run(t, dir, "set", "hcycle-q", "blocked-by=", "--expect", expect, "-m", msg, "--as", "kit"); code != 4 {
+		t.Fatalf("break write without --override must be rejected: %d %s", code, se)
+	} else {
+		errDoc := mustJSON(t, se)
+		if errDoc["error"] != "needs_override" {
+			t.Fatalf("expected needs_override, got %v: %s", errDoc["error"], se)
+		}
+	}
+
+	if _, se, code := run(t, dir, "set", "hcycle-q", "blocked-by=", "--expect", expect, "--override", "-m", msg, "--as", "kit"); code != 0 {
+		t.Fatalf("break write with --override: %s", se)
+	}
+
+	so2, se2, code2 := run(t, dir, "ready")
+	if code2 != 0 {
+		t.Fatalf("ready after break: %d %s", code2, se2)
+	}
+	doc2 := mustJSON(t, so2)
+	assertNoCycleEntry(t, doc2["attention"].([]any))
+	if doc2["frontier"] != "all-handled" {
+		t.Fatalf("frontier must recover to all-handled — hcycle-p's chain now ends at the non-terminal human key, got %v", doc2["frontier"])
+	}
+}
+
+// findCycleEntry locates the (sole) "cycle" attention entry in a decoded
+// ready envelope's attention list, failing the test if none is present.
+func findCycleEntry(t *testing.T, attention []any) map[string]any {
+	t.Helper()
+	for _, a := range attention {
+		m := a.(map[string]any)
+		if m["reason"] == "cycle" {
+			return m
+		}
+	}
+	t.Fatalf("expected a cycle attention entry: %+v", attention)
+	return nil
+}
+
+// assertNoCycleEntry fails the test if attention carries any "cycle" entry.
+func assertNoCycleEntry(t *testing.T, attention []any) {
+	t.Helper()
+	for _, a := range attention {
+		if a.(map[string]any)["reason"] == "cycle" {
+			t.Fatalf("expected no cycle attention entry, got %+v", attention)
+		}
 	}
 }

@@ -44,6 +44,18 @@ func skillMDPath(t *testing.T) string {
 // bare `ledger` get typed as bare `ledger`, a trial-proven failure mode).
 const doctrineBinary = "~/path-to/ledger"
 
+// doctrineCdTokens is the exact three-token prefix every command line in
+// the section must open with, ahead of doctrineBinary — rev 17's
+// cwd-independence convention (spec: "a missing, empty, or broken-looking
+// store is REPORTED, never repaired" — trial 5's worker destroyed the live
+// store by re-running a setup script after a cwd mistake, so every line now
+// carries its own working directory, like the binary path before it).
+// "<board dir>" is a placeholder exactly like doctrineBinary itself:
+// neither is substituted with a real value, since run()/execLedger already
+// supply the scratch board via --store; both are just asserted-and-stripped
+// here.
+var doctrineCdTokens = []string{"cd", "<board dir>", "&&"}
+
 // expectCommentRE parses a doctrine command line's optional trailing
 // outcome annotation, mirroring quickstart.md's own walkthrough convention
 // (`# expect: exit 4 error vocab_unknown`, or exit-code-only for cases
@@ -155,12 +167,31 @@ func parseDoctrineCommands(t *testing.T) []doctrineCmd {
 		if len(toks) == 0 {
 			continue
 		}
-		if toks[0] != doctrineBinary {
+		if len(toks) < len(doctrineCdTokens) || !equalTokens(toks[:len(doctrineCdTokens)], doctrineCdTokens) {
+			t.Fatalf("doctrine command line must open with %q (drifted cwd-independence convention): %q",
+				strings.Join(doctrineCdTokens, " "), l)
+		}
+		toks = toks[len(doctrineCdTokens):]
+		if len(toks) == 0 || toks[0] != doctrineBinary {
 			t.Fatalf("doctrine command line must open with %q (drifted binary-path convention): %q", doctrineBinary, l)
 		}
 		cmds = append(cmds, doctrineCmd{raw: l, tokens: toks[1:], wantExit: wantExit, wantErr: wantErr})
 	}
 	return cmds
+}
+
+// equalTokens reports whether a and b are the same tokens in the same
+// order.
+func equalTokens(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // TestSkillFrontmatterIncludesBoardTriggers is spec test 17's second

@@ -93,7 +93,14 @@ func readyLines(slug string, env board.Envelope) []string {
 		case "statusless":
 			lines = append(lines, "  attn     statusless   "+out.EscapeControls(e.Key))
 		case "cycle":
-			lines = append(lines, "  attn     cycle        "+strings.Join(e.Keys, ","))
+			l := "  attn     cycle        " + strings.Join(e.Keys, ",")
+			if e.Break != nil {
+				l += fmt.Sprintf("  break: set %s blocked-by=%q --expect %s", e.Break.Key, e.Break.Keep, e.Break.Expect)
+				if e.Break.Human {
+					l += " --override"
+				}
+			}
+			lines = append(lines, l)
 		}
 	}
 	return lines

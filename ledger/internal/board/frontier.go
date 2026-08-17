@@ -2,6 +2,7 @@ package board
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"ledger/internal/model"
@@ -80,15 +81,41 @@ type BlockedEntry struct {
 // "stale-claim" carries key/title/by/age/id (human-labeled stale claims
 // included — title appears on this reason only); "statusless" carries only
 // key (a half-seed or an orphan reference); "cycle" carries Keys (every
-// member of the cycle) instead of a singular Key.
+// member of the cycle) instead of a singular Key, plus Break, the
+// self-service paste-ready fix (spec: "a cycle entry carries its own fix").
 type AttentionEntry struct {
-	Reason string   `json:"reason"`
-	Key    string   `json:"key,omitempty"`
-	Title  string   `json:"title,omitempty"`
-	By     string   `json:"by,omitempty"`
-	Age    string   `json:"age,omitempty"`
-	ID     string   `json:"id,omitempty"`
-	Keys   []string `json:"keys,omitempty"`
+	Reason string      `json:"reason"`
+	Key    string      `json:"key,omitempty"`
+	Title  string      `json:"title,omitempty"`
+	By     string      `json:"by,omitempty"`
+	Age    string      `json:"age,omitempty"`
+	ID     string      `json:"id,omitempty"`
+	Keys   []string    `json:"keys,omitempty"`
+	Break  *CycleBreak `json:"break,omitempty"`
+}
+
+// CycleBreak is a "cycle" attention entry's suggested fix: among the
+// cycle's members, the one whose blocked-by field's own latest event
+// carries the newest timestamp (the youngest edge — the most recently
+// added link, and so the least-established one), naming the token to drop
+// from that member's blocked-by value. Key is the member to write; Drop is
+// the token being removed (the next member in the cycle, the one that edge
+// points to); Keep is the resulting full blocked-by value after removing
+// EVERY occurrence of Drop, comma-joined, or "" if that empties it (no
+// omitempty on Keep or Human — both are meaningful, present-but-zero
+// values here, not absent fields, matching the spec's own pinned example
+// and HeldEntry.Stale's precedent for never dropping a false/empty value
+// via omitempty). Expect is that member's blocked-by field's latest event
+// id, the CAS ticket that makes the suggested `ledger set <key>
+// blocked-by=<keep> --expect <expect>` a single paste-ready guarded write.
+// Human is set when Key itself carries the human label, so doctrine can
+// tell the caller to add --override too.
+type CycleBreak struct {
+	Key    string `json:"key"`
+	Drop   string `json:"drop"`
+	Keep   string `json:"keep"`
+	Expect string `json:"expect"`
+	Human  bool   `json:"human"`
 }
 
 // Totals carries the true per-list counts, computed before --limit
@@ -290,22 +317,27 @@ func (b *Board) frontierVerdict(now time.Time) string {
 }
 
 // detectCycles walks the blocked-by graph with path-stack cycle detection
-// and a visited memo (spec rule 9's DFS). Only a target that is currently
-// open and NOT human-labeled gets recursed into ("open targets recursed") —
-// a terminal status, a live claim, a non-terminal human-owned key, or a
-// statusless reference (missing key, or a key with no status write) all end
-// a chain right there: the first three are the spec's valid termini, and
-// statusless references are already flagged by buildLists' own per-key and
-// orphan passes, so this function neither re-flags them nor walks past
-// them. onPath tracks the current recursion path (a repeat of a name still
-// onPath is a true cycle — the path slice from that name's first occurrence
-// to here names every member); finished is the shared visited memo that
-// makes diamonds (a node reached twice via different paths, but never via
-// itself) legal and never re-walked, so shared dependencies cost no more
-// than a single visit each.
+// and a visited memo (spec rule 9's DFS). Holder-blind (trial 5): every
+// non-terminal target gets recursed into, regardless of status value or
+// labels — a claimed (in-progress) or human-labeled key sits on a cycle
+// exactly as validly as an open one, and self-service breaking needs to see
+// it. Only a terminal status or a statusless reference (missing key, or a
+// key with no status write) ends a chain right there: a terminal status's
+// edges are moot, and statusless references are already flagged by
+// buildLists' own per-key and orphan passes, so this function neither
+// re-flags them nor walks past them. onPath tracks the current recursion
+// path (a repeat of a name still onPath is a true cycle — the path slice
+// from that name's first occurrence to here names every member, in
+// dependency order: path[i] is blocked-by path[i+1], wrapping); finished is
+// the shared visited memo that makes diamonds (a node reached twice via
+// different paths, but never via itself) legal and never re-walked, so
+// shared dependencies cost no more than a single visit each. seen dedupes
+// identical-member cycle entries (spec: doubled edges must not double-
+// report) by a canonical (sorted) signature of the member set.
 func (b *Board) detectCycles() []AttentionEntry {
 	onPath := map[string]bool{}
 	finished := map[string]bool{}
+	seen := map[string]bool{}
 	var path []string
 	var entries []AttentionEntry
 
@@ -315,7 +347,7 @@ func (b *Board) detectCycles() []AttentionEntry {
 			return
 		}
 		k := b.Keys[name]
-		if k == nil || k.Status == nil || k.Status.Value != "open" || k.HasHuman() {
+		if k == nil || k.Status == nil || b.IsTerminal(k.Status.Value) {
 			return
 		}
 		onPath[name] = true
@@ -330,7 +362,10 @@ func (b *Board) detectCycles() []AttentionEntry {
 					}
 				}
 				cycle := append([]string(nil), path[start:]...)
-				entries = append(entries, AttentionEntry{Reason: "cycle", Keys: cycle})
+				if sig := cycleSignature(cycle); !seen[sig] {
+					seen[sig] = true
+					entries = append(entries, b.cycleEntry(cycle))
+				}
 				continue
 			}
 			walk(blocker)
@@ -344,6 +379,64 @@ func (b *Board) detectCycles() []AttentionEntry {
 		walk(name)
 	}
 	return entries
+}
+
+// cycleSignature is a cycle's dedup key: its member set, sorted — order-
+// and-rotation independent, so two detections of the "same" cycle (e.g. a
+// doubled edge triggering the back-edge check twice) collapse to one.
+func cycleSignature(cycle []string) string {
+	sorted := append([]string(nil), cycle...)
+	sort.Strings(sorted)
+	return strings.Join(sorted, ",")
+}
+
+// cycleEntry builds a "cycle" attention entry for cycle (detectCycles'
+// path-order slice: cycle[i] is blocked-by cycle[i+1], wrapping), including
+// the suggested break: the youngest edge in the cycle (per youngerEdge) —
+// the member whose blocked-by field's own latest event is the newest —
+// dropping every occurrence of the token that points to its successor in
+// the cycle.
+func (b *Board) cycleEntry(cycle []string) AttentionEntry {
+	youngest := 0
+	for i := 1; i < len(cycle); i++ {
+		if b.youngerEdge(cycle[i], cycle[youngest]) {
+			youngest = i
+		}
+	}
+
+	member := b.Keys[cycle[youngest]]
+	next := cycle[(youngest+1)%len(cycle)]
+	remaining := make([]string, 0, len(member.BlockedBy))
+	for _, tok := range member.BlockedBy {
+		if tok != next {
+			remaining = append(remaining, tok)
+		}
+	}
+
+	return AttentionEntry{Reason: "cycle", Keys: cycle, Break: &CycleBreak{
+		Key: member.Name, Drop: next,
+		Keep: strings.Join(remaining, ","), Expect: member.BlockedByID,
+		Human: member.HasHuman(),
+	}}
+}
+
+// youngerEdge reports whether a's blocked-by edge is younger (more
+// recently written) than c's. Compares BlockedByTS when both parse and
+// differ; otherwise falls back to chain order — the member whose status
+// event lands later in the event chain (higher statusSeq) counts as
+// younger. Every member of a detected cycle has a real blocked-by edge (a
+// non-nil Status, reached only through the walk above), so an unparseable
+// BlockedByTS should never happen in practice, and an exact-timestamp tie
+// is likewise rare — this just gives both a defined, deterministic answer
+// rather than leaving the comparison undefined.
+func (b *Board) youngerEdge(a, c string) bool {
+	ka, kc := b.Keys[a], b.Keys[c]
+	ta, errA := model.ParseTS(ka.BlockedByTS)
+	tc, errC := model.ParseTS(kc.BlockedByTS)
+	if errA == nil && errC == nil && !ta.Equal(tc) {
+		return ta.After(tc)
+	}
+	return ka.statusSeq > kc.statusSeq
 }
 
 // allEdgesTerminal reports whether every one of k's blocked-by edges

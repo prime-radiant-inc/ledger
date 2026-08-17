@@ -27,6 +27,11 @@ type Key struct {
 	LabelsID    string      // latest labels event id ("" if none)
 	BlockedBy   []string
 	BlockedByID string
+	// BlockedByTS is the latest blocked-by event's own timestamp — cycle
+	// detection's break suggestion needs it to find the youngest edge in a
+	// cycle (see frontier.go's cycleEntry); BlockedByID alone names the CAS
+	// ticket but carries no ordering.
+	BlockedByTS string
 	// Multi carries every declared multi-field's tokens by name, including
 	// "labels" and "blocked-by" (kept in sync with the dedicated Labels/
 	// BlockedBy slices above, which stay the source Tasks 6-8 already
@@ -95,6 +100,7 @@ func Build(meta model.Meta, events []model.Event) *Board {
 			case "blocked-by":
 				k.BlockedBy = splitTokens(value)
 				k.BlockedByID = ev.ID
+				k.BlockedByTS = ev.TS
 				k.setMulti(field, value)
 			default:
 				if containsStr(meta.MultiFields, field) {
