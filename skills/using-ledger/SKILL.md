@@ -155,7 +155,8 @@ For coordinating unblocked work on a shared board: create it with guarded
 --help` has the declaration flags; this pattern is everything downstream
 of that). First read is always `ready` — its envelope answers what to
 pick, what to respect, and whether anything needs a person, including a
-computed `frontier` verdict, so no agent re-derives graph logic by hand.
+computed `frontier` verdict, so no agent re-derives graph logic by hand;
+`show --where status=open` is the flat listing when you want one.
 
 **Picking loop**: while `frontier` is `work-available`, claim the oldest
 entry in `ready`, or reclaim a stale entry from `attention` — skip any
@@ -178,8 +179,9 @@ included, not just the idioms that spell it out — carries `--override -m
 idiom below.
 
 - **Seed**: `set <key> status=open --expect none -m "<title>"`. With a
-  dependency, edges first — a statusless key is unpickable and doesn't
-  exist in the dependency window yet:
+  dependency, edges first — a statusless key is unpickable and in
+  neither `ready` nor `blocked` (a `ready` run inside the window shows it
+  only under `attention` as a half-seed: momentary, harmless):
 
   ```
   ~/path-to/ledger set spike-probe status=open --expect none -m "spike probe: investigate retry storm" --as ash --ledger issues
@@ -192,7 +194,8 @@ idiom below.
   none` success proves the key had no prior edges, so recovery is
   deterministic: clear what you wrote and re-seed under a new name (add
   `--override` if the stranger's key turns out to be human-labeled — the
-  message names the collision):
+  message names the collision). Never chain the two writes without
+  checking exit codes:
 
   ```
   ~/path-to/ledger set cache-warm status=open --expect none -m "warm the cache on boot" --as ash --ledger issues
