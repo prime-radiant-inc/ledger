@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"ledger/internal/gitx"
+	"ledger/internal/model"
 	"ledger/internal/store"
 )
 
@@ -102,7 +103,7 @@ func TestReadyEnvelopeMembersAndTitles(t *testing.T) {
 	}
 
 	ready := doc["ready"].([]any)
-	if got := keysOf(ready); len(got) != 2 || !contains2(got, "fix-retry") || !contains2(got, "dep-x") {
+	if got := keysOf(ready); len(got) != 2 || !model.Contains(got, "fix-retry") || !model.Contains(got, "dep-x") {
 		t.Fatalf("ready members: got %v want [fix-retry dep-x]", got)
 	}
 	fr := entryByKey(ready, "fix-retry")
@@ -115,7 +116,7 @@ func TestReadyEnvelopeMembersAndTitles(t *testing.T) {
 	}
 
 	held := doc["held"].([]any)
-	if got := keysOf(held); len(got) != 2 || !contains2(got, "big-task") || !contains2(got, "sign-off") {
+	if got := keysOf(held); len(got) != 2 || !model.Contains(got, "big-task") || !model.Contains(got, "sign-off") {
 		t.Fatalf("held members: got %v want [big-task sign-off]", got)
 	}
 	bt := entryByKey(held, "big-task")

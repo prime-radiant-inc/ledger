@@ -3,6 +3,8 @@ package cmd
 import (
 	"strings"
 	"testing"
+
+	"ledger/internal/model"
 )
 
 // seedWhere builds a ready-capable board (setupReady's shape) with two keys
@@ -65,7 +67,7 @@ func showKeys(t *testing.T, dir string, args ...string) []string {
 func TestWhereExactOnEnum(t *testing.T) {
 	dir := seedWhere(t)
 	keys := showKeys(t, dir, "--where", "status=in-progress")
-	if len(keys) != 2 || !contains2(keys, "k1") || !contains2(keys, "k2") {
+	if len(keys) != 2 || !model.Contains(keys, "k1") || !model.Contains(keys, "k2") {
 		t.Fatalf("expected k1,k2: %v", keys)
 	}
 }
@@ -85,7 +87,7 @@ func TestWhereMembershipOnMulti(t *testing.T) {
 func TestWhereANDComposition(t *testing.T) {
 	dir := seedWhere(t)
 	keys := showKeys(t, dir, "--where", "status=in-progress", "--where", "labels~=bug")
-	if len(keys) != 2 || !contains2(keys, "k1") || !contains2(keys, "k2") {
+	if len(keys) != 2 || !model.Contains(keys, "k1") || !model.Contains(keys, "k2") {
 		t.Fatalf("both k1,k2 carry status=in-progress AND labels~=bug: %v", keys)
 	}
 	keys2 := showKeys(t, dir, "--where", "status=in-progress", "--where", "labels~=urgent")
@@ -99,7 +101,7 @@ func TestWhereANDComposition(t *testing.T) {
 func TestWhereNoValueDoesntMatchNoError(t *testing.T) {
 	dir := seedWhere(t)
 	keys := showKeys(t, dir, "--where", "labels~=bug")
-	if contains2(keys, "k3") {
+	if model.Contains(keys, "k3") {
 		t.Fatalf("k3 has no labels value and must not match: %v", keys)
 	}
 }
@@ -153,7 +155,7 @@ func TestWhereUndeclaredFieldUnknownField(t *testing.T) {
 func TestShowBareUnchangedByWhere(t *testing.T) {
 	dir := seedWhere(t)
 	keys := showKeys(t, dir)
-	if len(keys) != 3 || !contains2(keys, "k1") || !contains2(keys, "k2") || !contains2(keys, "k3") {
+	if len(keys) != 3 || !model.Contains(keys, "k1") || !model.Contains(keys, "k2") || !model.Contains(keys, "k3") {
 		t.Fatalf("bare show must list every key: %v", keys)
 	}
 }
@@ -223,7 +225,7 @@ func TestWhereThirdMultiFieldFilters(t *testing.T) {
 		t.Fatalf("expected only k1 to match reviewers~=alice: %v", keys)
 	}
 	keys2 := showKeys(t, dir, "--where", "reviewers~=bob")
-	if len(keys2) != 2 || !contains2(keys2, "k1") || !contains2(keys2, "k2") {
+	if len(keys2) != 2 || !model.Contains(keys2, "k1") || !model.Contains(keys2, "k2") {
 		t.Fatalf("expected both k1,k2 to match reviewers~=bob: %v", keys2)
 	}
 }

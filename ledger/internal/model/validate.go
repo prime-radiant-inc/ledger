@@ -172,13 +172,3 @@ func subtract(all, minus []string) []string {
 	}
 	return out
 }
-
-// Contains reports whether x is present in xs.
-func Contains(xs []string, x string) bool {
-	for _, v := range xs {
-		if v == x {
-			return true
-		}
-	}
-	return false
-}

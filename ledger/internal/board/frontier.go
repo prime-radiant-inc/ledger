@@ -188,14 +188,7 @@ func (b *Board) Envelope(now time.Time, limit int, filter func(*Key) bool) Envel
 	fBlocked := filterEntries(b, blocked, filter, func(e BlockedEntry) string { return e.Key })
 	fAttention := filterAttention(b, attention, filter)
 
-	sort.Slice(fReady, func(i, j int) bool {
-		ti, _ := model.ParseTS(fReady[i].TS)
-		tj, _ := model.ParseTS(fReady[j].TS)
-		if !ti.Equal(tj) {
-			return ti.Before(tj)
-		}
-		return b.Keys[fReady[i].Key].statusSeq < b.Keys[fReady[j].Key].statusSeq
-	})
+	sortReady(b, fReady)
 	sort.Slice(fHeld, func(i, j int) bool { return fHeld[i].Key < fHeld[j].Key })
 	sort.Slice(fBlocked, func(i, j int) bool { return fBlocked[i].Key < fBlocked[j].Key })
 	// SliceStable: cycle entries all share Key "" (they're keyed by Keys, not
@@ -212,6 +205,33 @@ func (b *Board) Envelope(now time.Time, limit int, filter func(*Key) bool) Envel
 		Blocked:   truncate(fBlocked, limit),
 		Attention: truncate(fAttention, limit),
 		Totals:    totals,
+	}
+}
+
+// sortReady orders entries by claim TS ascending, tie-broken by the key's
+// statusSeq — byte-identical to the naive comparator that calls
+// model.ParseTS and looks up statusSeq on every comparison, except each
+// entry's TS is parsed and its seq looked up exactly once (decorate-sort)
+// instead of up to O(n log n) times over the course of the sort.
+func sortReady(b *Board, entries []ReadyEntry) {
+	type decorated struct {
+		entry ReadyEntry
+		ts    time.Time
+		seq   int
+	}
+	ds := make([]decorated, len(entries))
+	for i, e := range entries {
+		t, _ := model.ParseTS(e.TS)
+		ds[i] = decorated{entry: e, ts: t, seq: b.Keys[e.Key].statusSeq}
+	}
+	sort.Slice(ds, func(i, j int) bool {
+		if !ds[i].ts.Equal(ds[j].ts) {
+			return ds[i].ts.Before(ds[j].ts)
+		}
+		return ds[i].seq < ds[j].seq
+	})
+	for i := range ds {
+		entries[i] = ds[i].entry
 	}
 }
 
@@ -267,17 +287,27 @@ func (b *Board) buildLists(now time.Time) (ready []ReadyEntry, held []HeldEntry,
 	for _, name := range names {
 		k := b.Keys[name]
 		human := k.HasHuman()
+		// stale/age are the one StaleAge(k, now) result this key needs: both
+		// heldEntry (below, for an in-progress key) and the stale-claim
+		// attention check just after the switch consult the same (key, now)
+		// pair, so it's computed once here and threaded to both instead of
+		// each re-deriving it.
+		var stale bool
+		var age time.Duration
+		if k.Status != nil && k.Status.Value == "in-progress" {
+			stale, age = b.StaleAge(k, now)
+		}
 		switch {
 		case k.Status != nil && k.Status.Value == "open" && !human:
-			if b.allEdgesTerminal(k) {
-				ready = append(ready, b.readyEntry(k))
+			if terminal, unevidenced := b.allEdgesTerminalUnevidenced(k); terminal {
+				ready = append(ready, b.readyEntry(k, unevidenced))
 			} else {
 				blocked = append(blocked, b.blockedEntry(k, now))
 			}
 		case k.Status != nil && k.Status.Value == "in-progress" && !human:
-			held = append(held, b.heldEntry(k, "claim", now))
+			held = append(held, b.heldEntry(k, "claim", now, stale, age))
 		case human && k.Status != nil && !b.IsTerminal(k.Status.Value):
-			held = append(held, b.heldEntry(k, "human", now))
+			held = append(held, b.heldEntry(k, "human", now, stale, age))
 		// Belt-and-braces default arm (finding: a live-extended vocab must
 		// never make a key vanish from every list): every case above
 		// requires human, "open", or "in-progress" — a non-human key whose
@@ -294,7 +324,7 @@ func (b *Board) buildLists(now time.Time) (ready []ReadyEntry, held []HeldEntry,
 		}
 
 		if k.Status != nil && k.Status.Value == "in-progress" {
-			if stale, age := b.StaleAge(k, now); stale {
+			if stale {
 				attention = append(attention, AttentionEntry{
 					Reason: "stale-claim", Key: k.Name, Title: k.Title,
 					By: k.Status.Author, Age: FormatAge(age), ID: k.Status.ID,
@@ -323,7 +353,7 @@ func (b *Board) buildLists(now time.Time) (ready []ReadyEntry, held []HeldEntry,
 			attSeen[blockerName] = true
 		}
 	}
-	for _, cycle := range b.detectCycles() {
+	for _, cycle := range b.detectCycles(names) {
 		attention = append(attention, cycle)
 	}
 
@@ -392,8 +422,11 @@ func frontierVerdict(ready []ReadyEntry, attention []AttentionEntry, workAvailab
 // different paths, but never via itself) legal and never re-walked, so
 // shared dependencies cost no more than a single visit each. seen dedupes
 // identical-member cycle entries (spec: doubled edges must not double-
-// report) by a canonical (sorted) signature of the member set.
-func (b *Board) detectCycles() []AttentionEntry {
+// report) by a canonical (sorted) signature of the member set. names is
+// the walk's own deterministic starting order — buildLists' own
+// sortedKeyNames(b.Keys), passed in rather than recomputed here, since
+// it's the identical (b.Keys, ascending) result either way.
+func (b *Board) detectCycles(names []string) []AttentionEntry {
 	onPath := map[string]bool{}
 	finished := map[string]bool{}
 	seen := map[string]bool{}
@@ -434,7 +467,7 @@ func (b *Board) detectCycles() []AttentionEntry {
 		finished[name] = true
 	}
 
-	for _, name := range sortedKeyNames(b.Keys) {
+	for _, name := range names {
 		walk(name)
 	}
 	return entries
@@ -516,6 +549,27 @@ func (b *Board) allEdgesTerminal(k *Key) bool {
 	return true
 }
 
+// allEdgesTerminalUnevidenced is allEdgesTerminal's ready-path variant: the
+// same single walk over k's blocked-by edges also collects unevidenced —
+// the terminal blockers whose own terminal event carries no evidence refs
+// (readyEntry's UnblockedWithoutEvidence) — so the ready branch (the only
+// caller that needs both answers) never walks the same edge set twice.
+// unevidenced is only meaningful when terminal is true; on the first
+// non-terminal edge this returns immediately, exactly as allEdgesTerminal
+// does, since a not-fully-terminal k never reaches readyEntry.
+func (b *Board) allEdgesTerminalUnevidenced(k *Key) (terminal bool, unevidenced []string) {
+	for _, name := range k.BlockedBy() {
+		blocker, exists := b.Keys[name]
+		if !exists || blocker.Status == nil || !b.IsTerminal(blocker.Status.Value) {
+			return false, nil
+		}
+		if len(blocker.Status.Evidence) == 0 {
+			unevidenced = append(unevidenced, name)
+		}
+	}
+	return true, unevidenced
+}
+
 // blockerState classifies one blocker by name for a waiting_on entry (spec
 // "blocked": state ∈ terminal | open | in-progress | in-progress-stale |
 // human | statusless). Terminal wins whenever the blocker's status is
@@ -556,19 +610,15 @@ func (b *Board) waitingOnList(k *Key, now time.Time) []WaitingOn {
 // readyEntry builds a ready-list entry for k, which the caller has already
 // confirmed is open, unlabeled, and fully edge-terminal. id is the claim
 // ticket: the status field's own latest event, since status=open IS that
-// event here. unblocked_without_evidence names every terminal blocker
-// whose own terminal event carries no evidence refs, regardless of which
-// terminal value it landed — a floor against omission, not a defense
-// against fabrication.
-func (b *Board) readyEntry(k *Key) ReadyEntry {
-	e := ReadyEntry{Key: k.Name, Title: k.Title, Note: k.Status.Note, TS: k.Status.TS, By: k.Status.Author, ID: k.Status.ID}
-	for _, name := range k.BlockedBy() {
-		blocker := b.Keys[name] // exists and terminal — allEdgesTerminal already verified this
-		if len(blocker.Status.Evidence) == 0 {
-			e.UnblockedWithoutEvidence = append(e.UnblockedWithoutEvidence, name)
-		}
-	}
-	return e
+// event here. unblockedWithoutEvidence names every terminal blocker whose
+// own terminal event carries no evidence refs, regardless of which terminal
+// value it landed — a floor against omission, not a defense against
+// fabrication — computed by the caller's own allEdgesTerminalUnevidenced
+// walk (the same one that confirmed k is fully edge-terminal) rather than
+// re-walked here.
+func (b *Board) readyEntry(k *Key, unblockedWithoutEvidence []string) ReadyEntry {
+	return ReadyEntry{Key: k.Name, Title: k.Title, Note: k.Status.Note, TS: k.Status.TS, By: k.Status.Author, ID: k.Status.ID,
+		UnblockedWithoutEvidence: unblockedWithoutEvidence}
 }
 
 // blockedEntry builds a blocked-list entry for k, which the caller has
@@ -588,17 +638,18 @@ func (b *Board) blockedEntry(k *Key, now time.Time) BlockedEntry {
 // status is in-progress (always true for a claim entry, and true for a
 // human entry that is ALSO actively claimed) it additionally carries the
 // claim fields (Age, Stale — By/ID are already the base fields above,
-// since status=in-progress's own latest event IS the claim). WaitingOn
-// appears only when k has at least one unresolved edge — claimed-but-
-// blocked and human-but-blocked are both legal and visible.
-func (b *Board) heldEntry(k *Key, kind string, now time.Time) HeldEntry {
+// since status=in-progress's own latest event IS the claim), taken from
+// stale/age (the caller's own b.StaleAge(k, now), already computed once
+// for this key rather than re-derived here). WaitingOn appears only when k
+// has at least one unresolved edge — claimed-but-blocked and human-but-
+// blocked are both legal and visible.
+func (b *Board) heldEntry(k *Key, kind string, now time.Time, stale bool, age time.Duration) HeldEntry {
 	e := HeldEntry{Key: k.Name, Title: k.Title, Kind: kind, By: k.Status.Author, ID: k.Status.ID}
 	if kind == "human" {
 		e.Status = k.Status.Value
 		e.TS = k.Status.TS
 	}
 	if k.Status.Value == "in-progress" {
-		stale, age := b.StaleAge(k, now)
 		e.Age = FormatAge(age)
 		e.Stale = &stale
 	}

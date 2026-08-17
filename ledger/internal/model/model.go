@@ -27,6 +27,16 @@ func ParseTS(s string) (time.Time, error) {
 	return t.UTC(), err
 }
 
+// Contains reports whether x is present in xs.
+func Contains(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type Origin struct {
 	Host          string `json:"host"`
 	CWD           string `json:"cwd"`

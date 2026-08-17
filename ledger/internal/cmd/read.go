@@ -376,8 +376,15 @@ func runShow(c *Ctx, ledgerFlag string, whereRaw []string) error {
 	}
 
 	rows := spineRows(led, "")
-	b := board.Build(led.Meta, led.Events)
-	if model.ReadyCapable(led.Meta) {
+	ready := model.ReadyCapable(led.Meta)
+	// board.Build is only ever consulted below when ready (Title lookup) or
+	// clauses is non-empty (matchWhere) — build it exactly then, never
+	// unconditionally.
+	var b *board.Board
+	if ready || len(clauses) > 0 {
+		b = board.Build(led.Meta, led.Events)
+	}
+	if ready {
 		for i := range rows {
 			if k, exists := b.Keys[rows[i].Key]; exists {
 				rows[i].Title = k.Title

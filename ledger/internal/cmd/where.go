@@ -36,7 +36,7 @@ func parseWhere(raw []string, meta model.Meta) ([]WhereClause, error) {
 			return nil, err
 		}
 		_, isEnum := meta.Fields[field]
-		isMulti := contains(meta.MultiFields, field)
+		isMulti := model.Contains(meta.MultiFields, field)
 		if !isEnum && !isMulti {
 			return nil, out.Errf("unknown_field", "declared fields: "+declared, 4,
 				"'%s' is not a declared field", field)
@@ -99,7 +99,7 @@ func matchOne(k *board.Key, c WhereClause) bool {
 		return false
 	}
 	if c.Membership {
-		return contains(k.Multi[c.Field], c.Value)
+		return model.Contains(k.Multi[c.Field], c.Value)
 	}
 	if c.Field == "status" {
 		return k.Status != nil && k.Status.Value == c.Value

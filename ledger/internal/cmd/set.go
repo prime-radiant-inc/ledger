@@ -77,7 +77,7 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts, expect string
 			return out.Errf("bad_value", "write it as field=value", 4, "'%s' looks like a flag, not a value", v)
 		}
 		vocab, declared := led.Schema[f]
-		isMulti := contains(led.Meta.MultiFields, f)
+		isMulti := model.Contains(led.Meta.MultiFields, f)
 		if !declared && !isMulti {
 			return out.Errf("unknown_field", "declared: "+declaredList, 4,
 				"'%s' is not a declared field on '%s'", f, led.Slug)
@@ -90,7 +90,7 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts, expect string
 				}
 			}
 		}
-		if vocab != nil && !contains(vocab, v) {
+		if vocab != nil && !model.Contains(vocab, v) {
 			hint := fmt.Sprintf("ledger vocab add %s %s %s -m \"why this value is needed\"  — then re-run this set", led.Slug, f, v)
 			if f == "status" && ready {
 				// A ready-capable board's status vocab is part of its
@@ -103,7 +103,7 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts, expect string
 			return out.Errf("vocab_unknown", hint,
 				4, "%q is not in %s's vocabulary (valid: %s)", v, f, strings.Join(vocab, ", "))
 		}
-		if contains(led.Require[f], v) && len(o.evidence) == 0 {
+		if model.Contains(led.Require[f], v) && len(o.evidence) == 0 {
 			return out.Errf("evidence_required", "re-run with --evidence commit:<range> | run:<id> | file:<path>", 4,
 				"%s=%s requires evidence on '%s'", f, v, led.Slug)
 		}
@@ -244,7 +244,7 @@ func setPrecondition(key string, fields map[string]string, target, expect string
 	// is a fact the read must resolve only when the decision logic actually
 	// consults it.
 	needKeyExists := ready && !tokenRE.MatchString(key)
-	needLabels := ready && contains(meta.Guard, target)
+	needLabels := ready && model.Contains(meta.Guard, target)
 
 	return func(events []model.Event, reachedRoot bool) error {
 		// Reset unconditionally at the top of every attempt: overrideOut
@@ -305,7 +305,7 @@ func setPrecondition(key string, fields map[string]string, target, expect string
 				}
 			}
 		}
-		if contains(meta.Guard, target) {
+		if model.Contains(meta.Guard, target) {
 			signals := b.Signals(b.Keys[key], touchesStatus, author, time.Now())
 			if len(signals) > 0 {
 				if !override {
@@ -337,8 +337,19 @@ func windowResolved(events []model.Event, key, target string, latestTarget *mode
 	if needKeyExists && !keyTouched(events, key) {
 		return false
 	}
-	if touchesStatus && latestFieldEvent(events, key, "status") == nil {
-		return false
+	if touchesStatus {
+		// When target is "status", latestTarget already IS
+		// latestFieldEvent(events, key, "status") (setPrecondition computed
+		// it that way) — reuse it instead of re-scanning. A different (or
+		// empty) target names an unrelated field, so status still needs its
+		// own scan then.
+		statusEvent := latestTarget
+		if target != "status" {
+			statusEvent = latestFieldEvent(events, key, "status")
+		}
+		if statusEvent == nil {
+			return false
+		}
 	}
 	if needLabels && latestFieldEvent(events, key, "labels") == nil {
 		return false
@@ -453,15 +464,6 @@ func fieldNames(fields map[string]string) []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-func contains(xs []string, x string) bool {
-	for _, v := range xs {
-		if v == x {
-			return true
-		}
-	}
-	return false
 }
 
 // formatSignals renders standing signals in the needs_override message's
