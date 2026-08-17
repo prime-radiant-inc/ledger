@@ -95,7 +95,13 @@ func readyLines(slug string, env board.Envelope) []string {
 		case "cycle":
 			l := "  attn     cycle        " + strings.Join(e.Keys, ",")
 			if e.Break != nil {
-				l += fmt.Sprintf("  break: set %s blocked-by=%q --expect %s", e.Break.Key, e.Break.Keep, e.Break.Expect)
+				// The rendered command must be pastable as-is: --override
+				// with no -m is bad_usage by the tool's own rule, and the
+				// idiom's load-bearing message convention ("breaking cycle
+				// [...]: dropping ...") is what watch consumers and chain
+				// readers grep for — never omit it here.
+				msg := fmt.Sprintf("breaking cycle [%s]: dropping %s", strings.Join(e.Keys, " "), e.Break.Drop)
+				l += fmt.Sprintf("  break: set %s blocked-by=%q --expect %s -m %q", e.Break.Key, e.Break.Keep, e.Break.Expect, msg)
 				if e.Break.Human {
 					l += " --override"
 				}

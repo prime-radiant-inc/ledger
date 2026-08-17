@@ -317,6 +317,12 @@ func TestReadyTTYRendersCycleBreakLine(t *testing.T) {
 	if !strings.Contains(rendered, "break: set tty-cycle-q blocked-by=\"\" --expect ") {
 		t.Fatalf("TTY output must render the paste-ready break suggestion: %q", rendered)
 	}
+	// The rendered line must be pastable as-is: --override with no -m is
+	// bad_usage by the tool's own rule, so the load-bearing message
+	// convention must be present too.
+	if !strings.Contains(rendered, `-m "breaking cycle [tty-cycle-p tty-cycle-q]: dropping tty-cycle-p"`) {
+		t.Fatalf("TTY output must render the -m message naming the cycle and the dropped key: %q", rendered)
+	}
 	if !strings.Contains(rendered, "--override") {
 		t.Fatalf("TTY output must append --override for a human-labeled break target: %q", rendered)
 	}

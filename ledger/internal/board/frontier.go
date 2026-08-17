@@ -422,13 +422,17 @@ func (b *Board) cycleEntry(cycle []string) AttentionEntry {
 
 // youngerEdge reports whether a's blocked-by edge is younger (more
 // recently written) than c's. Compares BlockedByTS when both parse and
-// differ; otherwise falls back to chain order — the member whose status
-// event lands later in the event chain (higher statusSeq) counts as
-// younger. Every member of a detected cycle has a real blocked-by edge (a
-// non-nil Status, reached only through the walk above), so an unparseable
-// BlockedByTS should never happen in practice, and an exact-timestamp tie
-// is likewise rare — this just gives both a defined, deterministic answer
-// rather than leaving the comparison undefined.
+// differ; otherwise falls back to exact chain order — the member whose
+// blocked-by event itself lands later in the event chain (higher
+// blockedBySeq) counts as younger. blockedBySeq, not statusSeq, because
+// it's the position of the fact actually being compared (the edge write),
+// not a proxy borrowed from a different field; IDs are content-addressed
+// hashes with no inherent ordering, so chain position is the only
+// tiebreaker available. Every member of a detected cycle has a real
+// blocked-by edge (reached only through the walk above), so an
+// unparseable BlockedByTS should never happen in practice, and an
+// exact-timestamp tie is likewise rare — this just gives both a defined,
+// deterministic answer rather than leaving the comparison undefined.
 func (b *Board) youngerEdge(a, c string) bool {
 	ka, kc := b.Keys[a], b.Keys[c]
 	ta, errA := model.ParseTS(ka.BlockedByTS)
@@ -436,7 +440,7 @@ func (b *Board) youngerEdge(a, c string) bool {
 	if errA == nil && errC == nil && !ta.Equal(tc) {
 		return ta.After(tc)
 	}
-	return ka.statusSeq > kc.statusSeq
+	return ka.blockedBySeq > kc.blockedBySeq
 }
 
 // allEdgesTerminal reports whether every one of k's blocked-by edges

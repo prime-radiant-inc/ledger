@@ -80,6 +80,41 @@ func TestDetectCyclesHolderBlindThroughHumanLabel(t *testing.T) {
 	}
 }
 
+// TestCycleBreakHumanFalseWhenYoungestMemberIsThePlainOne: a cycle where a
+// human-labeled member EXISTS but is NOT the suggested break target — b is
+// human-labeled, but a's blocked-by write is the younger (closing) edge, so
+// the break must target a with human:false. This is the discriminating
+// case TestDetectCyclesHolderBlindThroughHumanLabel can't catch on its
+// own: that test's board has no plain member whose edge is younger, so an
+// implementation that (wrongly) set Human whenever ANY cycle member is
+// human-labeled — rather than only when the suggested break target is —
+// would still pass it. Here it wouldn't.
+func TestCycleBreakHumanFalseWhenYoungestMemberIsThePlainOne(t *testing.T) {
+	evs := []model.Event{
+		setEv("b1", "b", "status", "open", func(e *model.Event) { e.Text = "b" }),
+		setEv("bl", "b", "labels", "human", nil),
+		setEv("a1", "a", "status", "open", func(e *model.Event) { e.Text = "a" }),
+		// b's blocked-by write lands FIRST — the older edge.
+		setEv("b2", "b", "blocked-by", "a", func(e *model.Event) { e.TS = "2026-08-16T00:00:00.000" }),
+		// a's blocked-by write lands SECOND — the younger (closing) edge, so
+		// the break targets a, the plain (non-human) member.
+		setEv("a2", "a", "blocked-by", "b", func(e *model.Event) { e.TS = "2026-08-16T00:00:01.000" }),
+	}
+	b := Build(envelopeMeta(), evs)
+	env := b.Envelope(envNow, 50, allowAll)
+	cycles := cycleEntries(env)
+	if len(cycles) != 1 {
+		t.Fatalf("expected exactly one cycle entry, got %+v", cycles)
+	}
+	brk := cycles[0].Break
+	if brk == nil || brk.Key != "a" {
+		t.Fatalf("the younger edge (a's) must be suggested even though b is human-labeled, got %+v", brk)
+	}
+	if brk.Human {
+		t.Fatalf("break.human must be false — the suggested target (a) is not the human-labeled member, got %+v", brk)
+	}
+}
+
 // TestDetectCyclesTerminalKeyBreaksChain: a blocked-by b, b CLOSED (terminal)
 // blocked-by a. A terminal status's edges are moot — the walk must stop at
 // b and never re-discover a "cycle" back through its own (irrelevant)
@@ -230,13 +265,18 @@ func TestCycleBreakSelfEdge(t *testing.T) {
 
 // TestCycleBreakTieBreakFallsBackToChainOrderWhenTimestampUnparseable: both
 // members' BlockedByTS are malformed (unparseable). Per the defined
-// fallback, the tie is broken by chain order — the member whose status
-// event lands LATER in the chain (higher statusSeq) is treated as younger.
-// b's status event is built after a's, so b must be suggested.
+// fallback, the tie is broken by chain order — the member whose
+// blocked-by event lands LATER in the chain (higher blockedBySeq) is
+// treated as younger. The status events are deliberately ordered OPPOSITE
+// of the blocked-by events (b's status write comes first, but a's
+// blocked-by write comes first) — a fallback that mistakenly used status
+// chain position instead of blocked-by chain position would pick the
+// wrong member (a) here; only the correct one (b, whose blocked-by event
+// b2 is the later of the two edge writes) satisfies this test.
 func TestCycleBreakTieBreakFallsBackToChainOrderWhenTimestampUnparseable(t *testing.T) {
 	evs := []model.Event{
-		setEv("a1", "a", "status", "open", func(e *model.Event) { e.Text = "a" }),
 		setEv("b1", "b", "status", "open", func(e *model.Event) { e.Text = "b" }),
+		setEv("a1", "a", "status", "open", func(e *model.Event) { e.Text = "a" }),
 		setEv("a2", "a", "blocked-by", "b", func(e *model.Event) { e.TS = "not-a-timestamp" }),
 		setEv("b2", "b", "blocked-by", "a", func(e *model.Event) { e.TS = "also-not-a-timestamp" }),
 	}
@@ -247,17 +287,20 @@ func TestCycleBreakTieBreakFallsBackToChainOrderWhenTimestampUnparseable(t *test
 		t.Fatalf("expected exactly one cycle entry, got %+v", cycles)
 	}
 	if cycles[0].Break.Key != "b" {
-		t.Fatalf("unparseable timestamps must fall back to chain order (later statusSeq = younger); expected b, got %q", cycles[0].Break.Key)
+		t.Fatalf("unparseable timestamps must fall back to blocked-by chain order (later blockedBySeq = younger); expected b, got %q", cycles[0].Break.Key)
 	}
 }
 
 // TestCycleBreakTieBreakFallsBackToChainOrderOnEqualTimestamps: same
 // fallback path, exercised via two members with the identical (valid)
-// timestamp rather than a parse failure.
+// timestamp rather than a parse failure. Status/blocked-by chain order is
+// again deliberately opposite (see the unparseable-timestamp test above
+// for why) so the test can only pass if the fallback keys off blocked-by
+// chain position, not status chain position.
 func TestCycleBreakTieBreakFallsBackToChainOrderOnEqualTimestamps(t *testing.T) {
 	evs := []model.Event{
-		setEv("a1", "a", "status", "open", func(e *model.Event) { e.Text = "a" }),
 		setEv("b1", "b", "status", "open", func(e *model.Event) { e.Text = "b" }),
+		setEv("a1", "a", "status", "open", func(e *model.Event) { e.Text = "a" }),
 		setEv("a2", "a", "blocked-by", "b", func(e *model.Event) { e.TS = "2026-08-16T00:00:00.000" }),
 		setEv("b2", "b", "blocked-by", "a", func(e *model.Event) { e.TS = "2026-08-16T00:00:00.000" }),
 	}
@@ -268,7 +311,7 @@ func TestCycleBreakTieBreakFallsBackToChainOrderOnEqualTimestamps(t *testing.T) 
 		t.Fatalf("expected exactly one cycle entry, got %+v", cycles)
 	}
 	if cycles[0].Break.Key != "b" {
-		t.Fatalf("an exact timestamp tie must fall back to chain order (later statusSeq = younger); expected b, got %q", cycles[0].Break.Key)
+		t.Fatalf("an exact timestamp tie must fall back to blocked-by chain order (later blockedBySeq = younger); expected b, got %q", cycles[0].Break.Key)
 	}
 }
 

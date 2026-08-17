@@ -32,6 +32,15 @@ type Key struct {
 	// cycle (see frontier.go's cycleEntry); BlockedByID alone names the CAS
 	// ticket but carries no ordering.
 	BlockedByTS string
+	// blockedBySeq is the latest blocked-by event's position in Build's
+	// input events slice — the ledger's true chain order, exactly like
+	// statusSeq below but for the blocked-by field. frontier.go's
+	// youngerEdge falls back to this (never statusSeq) when BlockedByTS is
+	// unparseable or tied: it's the position of the edge write itself, the
+	// fact actually in question, not a proxy borrowed from a different
+	// field. Unexported for the same reason statusSeq is: meaningful only
+	// within a single Build() call.
+	blockedBySeq int
 	// Multi carries every declared multi-field's tokens by name, including
 	// "labels" and "blocked-by" (kept in sync with the dedicated Labels/
 	// BlockedBy slices above, which stay the source Tasks 6-8 already
@@ -101,6 +110,7 @@ func Build(meta model.Meta, events []model.Event) *Board {
 				k.BlockedBy = splitTokens(value)
 				k.BlockedByID = ev.ID
 				k.BlockedByTS = ev.TS
+				k.blockedBySeq = i
 				k.setMulti(field, value)
 			default:
 				if containsStr(meta.MultiFields, field) {
