@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -352,6 +353,164 @@ func gitStdin(t *testing.T, dir, stdin string, args ...string) string {
 		t.Fatalf("git %s: %v", strings.Join(args, " "), err)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// TestSyncAdoptionRefusesBadSlug (review finding 3a): adoption is a third
+// slug-creation path alongside create/import, so a remote publishing
+// refs/ledger/<bad-slug> directly (never through this tool, which enforces
+// the grammar itself — the threat model is a foreign or corrupted
+// publisher) must be refused with the same bad_slug shape, never silently
+// minted as an ungoverned local ref.
+func TestSyncAdoptionRefusesBadSlug(t *testing.T) {
+	_, a, b := twoReplicas(t)
+	// Plant a grammar-invalid slug ref directly on the remote via raw git —
+	// uppercase and underscore both fail [a-z0-9][a-z0-9-]*.
+	sha := git(t, a, "commit-tree", git(t, a, "rev-parse", "HEAD^{tree}"), "-m", "planted")
+	git(t, a, "push", "-q", "origin", sha+":refs/ledger/Bad_Slug")
+
+	so, _, code := run(t, b, "sync")
+	if code != 3 {
+		t.Fatalf("a bad-slug adoption is a partial failure (exit 3), got %d\n%s", code, so)
+	}
+	got := syncResults(t, so, "synced")
+	if got["Bad_Slug"]["result"] != "refused" {
+		t.Fatalf("a grammar-invalid slug must be refused, not adopted: %+v", got)
+	}
+	detail, _ := got["Bad_Slug"]["detail"].(string)
+	if !strings.Contains(detail, "bad_slug") {
+		t.Fatalf("the refusal must name bad_slug: %q", detail)
+	}
+	if _, _, code := run(t, b, "show", "--ledger", "Bad_Slug"); code == 0 {
+		t.Fatal("a refused bad-slug adoption must not have created a local ref")
+	}
+}
+
+// TestSyncAdoptionCASFailureReportsRealCauseNotRace (review finding 3b): a
+// non-race CAS failure — here a D/F ref-name conflict, one of several named
+// classes (illegal ref name, macOS case-aliasing, lock contention are the
+// others) — must be diagnosed truthfully, never misreported as "appeared
+// mid-adoption". The slug "a" itself is perfectly valid; the conflict comes
+// from a stray sibling ref already occupying the git ref-storage path
+// adoption needs, unrelated to slug grammar (finding 3a's own test already
+// covers the grammar gate).
+func TestSyncAdoptionCASFailureReportsRealCauseNotRace(t *testing.T) {
+	_, a, b := twoReplicas(t)
+	seedBoard(t, a, "a")
+	pushLedgerRef(t, a, "a")
+
+	// A stray ref at refs/ledger/a/stray makes refs/ledger/a un-creatable —
+	// git's loose-ref storage can't have both a leaf and a directory at the
+	// same path. Probed directly: git's own message is "cannot lock ref
+	// 'refs/ledger/a': 'refs/ledger/a/stray' exists; cannot create
+	// 'refs/ledger/a'".
+	git(t, b, "update-ref", "refs/ledger/a/stray", git(t, b, "rev-parse", "origin/main"))
+
+	so, _, code := run(t, b, "sync")
+	if code != 3 {
+		t.Fatalf("a blocked adoption is a partial failure (exit 3), got %d\n%s", code, so)
+	}
+	got := syncResults(t, so, "synced")
+	if got["a"]["result"] == "adopted" {
+		t.Fatalf("a D/F-conflicted adoption must not silently succeed: %+v", got)
+	}
+	detail, _ := got["a"]["detail"].(string)
+	if strings.Contains(detail, "appeared mid-adoption") {
+		t.Fatalf("a D/F ref conflict must not be misreported as a race: %q", detail)
+	}
+	if !strings.Contains(detail, "refs/ledger/a/stray") || !strings.Contains(detail, "exists") {
+		t.Fatalf("the refusal must surface git's real diagnosis: %q", detail)
+	}
+}
+
+// TestSyncRaceFastForwardRetriesInsteadOfFailing (review finding 2): two
+// REAL processes both fast-forward the same local ref to the same tracking
+// head at once. Under the pre-fix code the ff case had a single CAS shot,
+// so the loser reported exit-3 partial_failure for what is the design's
+// normal concurrent state (a local agent's own sync racing another). Fixed
+// code loops back, re-reads the fresh head, and finds a no-op — never a
+// merge, never a failure.
+func TestSyncRaceFastForwardRetriesInsteadOfFailing(t *testing.T) {
+	_, a, b := twoReplicas(t)
+	seedBoard(t, a, "board")
+	pushLedgerRef(t, a, "board")
+	if _, se, code := execLedger(t, b, "sync"); code != 0 {
+		t.Fatalf("adopt: %s", se)
+	}
+
+	for i := 0; i < 10; i++ {
+		task := fmt.Sprintf("ff-race-task-%d", i)
+		if _, se, code := execLedger(t, a, "set", task, "status=open", "--expect", "none", "-m", "from a", "--as", "alice"); code != 0 {
+			t.Fatalf("round %d: a advance: %s", i, se)
+		}
+		pushLedgerRef(t, a, "board")
+		// Pre-fetch the tracking ref via raw git (not `ledger sync`, which
+		// would also move b's local ref before the race starts). This keeps
+		// each raced invocation's OWN internal fetch a no-op — nothing new
+		// to bring in — so the two processes contend on the LOCAL ref's CAS
+		// alone, the thing finding 2 is actually about, rather than also
+		// racing git fetch's own ref-transaction on the tracking ref itself
+		// (a real but different contention point: two concurrent `git
+		// fetch`es into the same tracking ref can lock-fail each other).
+		git(t, b, "fetch", "-q", "--prune", "origin", "+refs/ledger/*:refs/ledger-remote/origin/*")
+		r1, r2 := raceLedger(t, b, []string{"sync"}, []string{"sync"})
+		for j, r := range []raceResult{r1, r2} {
+			if r.code != 0 {
+				t.Fatalf("round %d side %d: a raced fast-forward must retry, not fail: exit %d\nstdout: %s\nstderr: %s",
+					i, j, r.code, r.stdout, r.stderr)
+			}
+		}
+		if n := mergeCount(t, b, "board"); n != 0 {
+			t.Fatalf("round %d: a pure fast-forward race must never mint a merge, got %d merges", i, n)
+		}
+	}
+}
+
+// TestSyncRaceRetryReclassifiesInsteadOfDoublingTheMerge (review finding 1):
+// two REAL processes both sync the same true divergence at once. Whichever
+// loses the CAS race must re-read the fresh head and re-decide
+// no-op/fast-forward/merge against it — not blindly rebuild a merge from
+// stale parents, which either mints a second, pointless sentinel, or (if
+// the winner already landed exactly `track`) gets silently deduped into a
+// single-parent commit for nothing. Across 10 rounds, both processes must
+// succeed and exactly one NEW sentinel merge must land per round.
+func TestSyncRaceRetryReclassifiesInsteadOfDoublingTheMerge(t *testing.T) {
+	_, a, b := twoReplicas(t)
+	seedBoard(t, a, "board")
+	pushLedgerRef(t, a, "board")
+	if _, se, code := execLedger(t, b, "sync"); code != 0 {
+		t.Fatalf("adopt: %s", se)
+	}
+
+	for i := 0; i < 10; i++ {
+		// a advances and publishes.
+		task := fmt.Sprintf("race-task-%d", i)
+		if _, se, code := execLedger(t, a, "set", task, "status=open", "--expect", "none", "-m", "from a", "--as", "alice"); code != 0 {
+			t.Fatalf("round %d: a advance: %s", i, se)
+		}
+		pushLedgerRef(t, a, "board")
+		// Fetch b's tracking ref directly — NOT via `ledger sync`, which
+		// would also fast-forward b's own local ref and leave nothing
+		// diverged for this round to race over.
+		git(t, b, "fetch", "-q", "--prune", "origin", "+refs/ledger/*:refs/ledger-remote/origin/*")
+
+		// b's own local diverges too.
+		btask := fmt.Sprintf("race-btask-%d", i)
+		if _, se, code := execLedger(t, b, "set", btask, "status=open", "--expect", "none", "-m", "from b", "--as", "bob"); code != 0 {
+			t.Fatalf("round %d: b advance: %s", i, se)
+		}
+
+		before := mergeCount(t, b, "board")
+		r1, r2 := raceLedger(t, b, []string{"sync"}, []string{"sync"})
+		for j, r := range []raceResult{r1, r2} {
+			if r.code != 0 {
+				t.Fatalf("round %d side %d: concurrent sync must not fail (must re-classify, not error): exit %d\nstdout: %s\nstderr: %s",
+					i, j, r.code, r.stdout, r.stderr)
+			}
+		}
+		if n := mergeCount(t, b, "board") - before; n != 1 {
+			t.Fatalf("round %d: a raced pair of syncs must mint exactly ONE new sentinel merge, got %d", i, n)
+		}
+	}
 }
 
 // TestDegradedNoRemoteIsACleanNoOp: a repo with no remote is a legitimate

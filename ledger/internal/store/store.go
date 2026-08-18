@@ -383,14 +383,18 @@ func (s Store) CommitAuthor(sha string) string {
 }
 
 // CAS moves refName from old to new via update-ref, failing (false) if the
-// ref moved under us since old was read. old == "" requires the ref to be
-// currently absent — the create case (sync's adoption). A single attempt:
-// callers that need to retry across a race (fast-forward, adoption, the
-// sentinel merge) re-read and retry themselves, exactly as casLoop does for
-// Append.
-func (s Store) CAS(refName, newSHA, old string) bool {
-	_, _, code := s.Repo.Git("", "update-ref", refName, newSHA, old)
-	return code == 0
+// ref moved under us since old was read — OR for any other reason
+// update-ref refuses: a D/F ref-name conflict, an illegal ref name,
+// macOS case-aliasing, lock contention. stderr carries git's own diagnosis
+// on failure (empty on success) so a caller can tell a genuine CAS race
+// from a real defect it must name truthfully rather than blame on a race
+// that never happened. old == "" requires the ref to be currently absent —
+// the create case (sync's adoption). A single attempt: callers that need to
+// retry across a race (fast-forward, adoption, the sentinel merge) re-read
+// and retry themselves, exactly as casLoop does for Append.
+func (s Store) CAS(refName, newSHA, old string) (ok bool, stderr string) {
+	_, se, code := s.Repo.Git("", "update-ref", refName, newSHA, old)
+	return code == 0, se
 }
 
 // catBatch fetches every id (an object sha, or a "<rev>:<path>" spec) with a

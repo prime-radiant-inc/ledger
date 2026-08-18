@@ -117,32 +117,45 @@ func (c *Ctx) syncOne(remote, slug, author string) SlugOutcome {
 	if bad := c.rootMismatch(slug, trackResult.Roots); bad != nil {
 		return *bad
 	}
-	if c.Store.IsAncestor(local, track) {
-		if !c.Store.CAS(store.Ref(slug), track, local) {
-			return SlugOutcome{Slug: slug, Result: "failed", Detail: "local ref moved during fast-forward — re-run ledger sync"}
-		}
-		return SlugOutcome{Slug: slug, Result: "fast-forward", ID: track[:10]}
-	}
 
-	// True divergence: one sentinel merge, under CAS. The sentinel carries a
-	// type:"sync" event.json, which every read, fold, count and idempotency
-	// scan skips and the fold order contracts out of the DAG entirely.
+	// Fast-forward or true divergence, both under CAS: re-classify against a
+	// FRESH head at the top of every retry, never blindly re-parenting a
+	// merge from stale state — the winner of a race may already have
+	// brought `track` in (a plain fast-forward, or even a no-op), and
+	// building a merge without re-checking first mints a redundant sentinel
+	// for nothing (the exact chain-growth-per-sync failure the ff rule
+	// exists to prevent). A CAS loss on EITHER branch loops back here rather
+	// than failing outright — a concurrent local writer appending one event
+	// during sync is normal, not exceptional.
 	for attempt := 0; attempt < 5; attempt++ {
-		ev := model.NewEvent("sync", author, c.Store.Repo)
-		ev.Text = "sync " + remote + "/" + slug
-		merge, err := c.Store.BuildMerge([]string{local, track}, ev)
-		if err != nil {
-			return SlugOutcome{Slug: slug, Result: "failed", Detail: err.Error()}
+		if c.Store.IsAncestor(track, local) {
+			return SlugOutcome{Slug: slug, Result: "no-op"}
 		}
-		if c.Store.CAS(store.Ref(slug), merge, local) {
-			c.Store.GCAuto()
-			return SlugOutcome{Slug: slug, Result: "merged", ID: merge[:10]}
+		if c.Store.IsAncestor(local, track) {
+			if ok, _ := c.Store.CAS(store.Ref(slug), track, local); ok {
+				return SlugOutcome{Slug: slug, Result: "fast-forward", ID: track[:10]}
+			}
+		} else {
+			// True divergence: one sentinel merge, under CAS. The sentinel
+			// carries a type:"sync" event.json, which every read, fold,
+			// count and idempotency scan skips and the fold order contracts
+			// out of the DAG entirely.
+			ev := model.NewEvent("sync", author, c.Store.Repo)
+			ev.Text = "sync " + remote + "/" + slug
+			merge, err := c.Store.BuildMerge([]string{local, track}, ev)
+			if err != nil {
+				return SlugOutcome{Slug: slug, Result: "failed", Detail: err.Error()}
+			}
+			if ok, _ := c.Store.CAS(store.Ref(slug), merge, local); ok {
+				c.Store.GCAuto()
+				return SlugOutcome{Slug: slug, Result: "merged", ID: merge[:10]}
+			}
 		}
 		cur, still := c.Store.FullHead(slug)
 		if !still {
-			return SlugOutcome{Slug: slug, Result: "failed", Detail: "local ref disappeared mid-merge"}
+			return SlugOutcome{Slug: slug, Result: "failed", Detail: "local ref disappeared mid-sync"}
 		}
-		local = cur // a writer landed an event under us: re-parent and retry
+		local = cur // a writer landed an event under us: re-classify and retry
 	}
 	return SlugOutcome{Slug: slug, Result: "failed", Detail: "ref kept moving — re-run ledger sync"}
 }
@@ -210,13 +223,19 @@ func rootCreator(s store.Store, sha string) string {
 }
 
 // adopt is the remote-only CAS-create — the cross-host resume path. It is a
-// THIRD meta-minting path alongside create and import, so it re-validates
-// the arriving board's declarations exactly as import does: a ready-capable
-// board whose declared shape is broken must be refused with the defect
-// named, never minted. Adoption also announces the same provenance line
-// adopt-by-hand would, so a planted slug arrives labeled through either
-// door.
+// THIRD meta-minting path alongside create and import, so it enforces the
+// same slug grammar create/import do (a remote publishing refs/ledger/
+// <bad-slug> directly — never through this tool — must not silently mint an
+// ungoverned local ref) and re-validates the arriving board's declarations
+// exactly as import does: a ready-capable board whose declared shape is
+// broken must be refused with the defect named, never minted. Adoption also
+// announces the same provenance line adopt-by-hand would, so a planted slug
+// arrives labeled through either door.
 func (c *Ctx) adopt(slug, track string, roots []string) SlugOutcome {
+	if !model.ValidSlug(slug) {
+		return SlugOutcome{Slug: slug, Result: "refused",
+			Detail: "bad_slug: '" + slug + "' is not a valid slug (slugs are lowercase-kebab: [a-z0-9][a-z0-9-]*, max 64 chars) — not adopted"}
+	}
 	if len(roots) == 0 {
 		return SlugOutcome{Slug: slug, Result: "refused", Detail: "remote chain has no creation commit"}
 	}
@@ -229,12 +248,30 @@ func (c *Ctx) adopt(slug, track string, roots []string) SlugOutcome {
 		return SlugOutcome{Slug: slug, Result: "refused",
 			Detail: "remote board's declarations are invalid and were NOT adopted: " + declErr.Msg + " — fix: " + declErr.Hint}
 	}
-	if !c.Store.CAS(store.Ref(slug), track, "") {
-		return SlugOutcome{Slug: slug, Result: "failed", Detail: "a local ledger '" + slug + "' appeared mid-adoption"}
+	if casOK, stderr := c.Store.CAS(store.Ref(slug), track, ""); !casOK {
+		if looksLikeCASRace(stderr) {
+			return SlugOutcome{Slug: slug, Result: "failed", Detail: "a local ledger '" + slug + "' appeared mid-adoption"}
+		}
+		// Not a race: a real defect (D/F ref-name conflict, an illegal ref
+		// name, macOS case-aliasing, lock contention) — name it truthfully
+		// with git's own diagnosis rather than blame a race that never
+		// happened.
+		return SlugOutcome{Slug: slug, Result: "failed",
+			Detail: "could not create the local ref for '" + slug + "': " + firstLine(stderr)}
 	}
 	by, created, scope := creatorOf(c.Store, roots[0])
 	return SlugOutcome{Slug: slug, Result: "adopted", ID: track[:10],
 		Detail: fmt.Sprintf("created by %s at %s, scope %s", by, created, scope)}
+}
+
+// looksLikeCASRace recognizes update-ref's own wording for a genuine
+// compare-and-swap loss (the ref moved to something other than what "old"
+// named) — the only case adoption's CAS-create failure should ever blame on
+// a race. Everything else (a D/F ref-name conflict, an illegal ref name,
+// lock contention) is a real defect the caller must name truthfully.
+func looksLikeCASRace(stderr string) bool {
+	return strings.Contains(stderr, "reference already exists") ||
+		(strings.Contains(stderr, "is at ") && strings.Contains(stderr, "but expected"))
 }
 
 // emitOutcomes is the shared reporting tail of sync and push (Task 6 reuses
