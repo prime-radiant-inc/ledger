@@ -246,17 +246,14 @@ func truncateRunes(s string, n int) string {
 	return s
 }
 
-// noteSummaryLine is show's compact per-note render: age, provenance, id,
-// kind, and a truncated escaped first line — matching the JSON recent_notes
-// shape field-for-field, never the full body noteLines prints.
-func noteSummaryLine(n model.Event, committers map[string]string) string {
-	return noteSummaryLineAt(out.Age(n.TS), n, committers)
-}
-
-// noteSummaryLineAt is noteSummaryLine's render with the leading identity
-// timestamp taken explicitly rather than derived from Age(n.TS) — Age is
-// relative to wall-clock now, which render's byte-identical-on-rerun
-// contract can't tolerate; render passes the event's own absolute ts instead.
+// noteSummaryLineAt is show's (and render's) compact per-note render: an
+// explicit leading identity timestamp, provenance, id, kind, and a
+// truncated escaped first line — matching the JSON recent_notes shape
+// field-for-field, never the full body noteLines prints. The timestamp is
+// always the event's own absolute ts, never Age(n.TS): show has no --at
+// (sync spec Addition 4 — it's clock-free, like every covered verb but
+// ready/notes), and a wall-clock-relative age here would make two reads of
+// the same unchanged chain, moments apart, render different bytes.
 func noteSummaryLineAt(when string, n model.Event, committers map[string]string) string {
 	line := when + " " + provenance(n, committers, false) + "  [" + n.ID + "] " + out.EscapeControls(n.Kind)
 	if n.Key != "" {
@@ -472,7 +469,7 @@ func runShow(c *Ctx, ledgerFlag string, whereRaw []string, idFlag string) error 
 		lines = append(lines, spineLine(r))
 	}
 	for _, n := range recent {
-		lines = append(lines, noteSummaryLine(n, committers))
+		lines = append(lines, noteSummaryLineAt(n.TS, n, committers))
 	}
 	outEmit(c, payload, lines)
 	return nil

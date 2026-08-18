@@ -225,9 +225,9 @@ func TestStatusNotesTailCarrySupersededRedirect(t *testing.T) {
 }
 
 // TestRenderWritesDeterministicFile: render --to writes show's projection to
-// a file, and — unlike show's TTY render, which timestamps notes with a
-// wall-clock-relative Age() — must be byte-identical across two runs against
-// the same, unchanged ledger state.
+// a file and must be byte-identical across two runs against the same,
+// unchanged ledger state — the same clock-free guarantee show's own TTY
+// render carries (sync spec Addition 4).
 func TestRenderWritesDeterministicFile(t *testing.T) {
 	dir := seed(t)
 	outPath := filepath.Join(t.TempDir(), "out.txt")
