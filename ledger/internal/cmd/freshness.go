@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"ledger/internal/fold"
-	"ledger/internal/model"
 	"ledger/internal/store"
 )
 
@@ -63,22 +62,16 @@ func (c *Ctx) attachFreshness(led *fold.Ledger, payload map[string]any) {
 	fmt.Fprintf(c.Stderr, "[ledger] %d unmerged remote events — run 'ledger sync'\n", n)
 }
 
-// freshnessRemote picks the remote freshness checks against: the same
-// resolution order sync uses (breadcrumb > origin > sole configured remote —
-// a read verb takes no --remote flag), but degraded silently rather than
-// erroring on zero or ambiguous remotes. A read verb must never fail
-// because remotes are ambiguous; absent a clear answer it just has nothing
-// to warn from.
+// freshnessRemote picks the remote freshness checks against: routed through
+// resolveRemote itself (flag "" — a read verb takes no --remote flag) so
+// the resolution order lives in exactly one place, never a second copy that
+// can drift from sync's. Its error (ambiguous, or any other) is swallowed
+// into silence here: a read verb must never fail because remotes are
+// ambiguous; absent a clear answer it just has nothing to warn from.
 func freshnessRemote(c *Ctx) string {
-	known := remotes(c.Store.Repo)
-	if b := breadcrumbRemote(c.Store.Repo.Dir); b != "" && model.Contains(known, b) {
-		return b
+	remote, err := resolveRemote(c, "")
+	if err != nil {
+		return ""
 	}
-	if model.Contains(known, "origin") {
-		return "origin"
-	}
-	if len(known) == 1 {
-		return known[0]
-	}
-	return ""
+	return remote
 }
