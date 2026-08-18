@@ -133,8 +133,29 @@ func CaptureOrigin(r gitx.Repo) Origin {
 }
 
 func NewEvent(typ, author string, r gitx.Repo) Event {
-	return Event{TS: time.Now().UTC().Format(TSLayout), Type: typ,
+	return Event{TS: Now().UTC().Format(TSLayout), Type: typ,
 		Author: author, Origin: CaptureOrigin(r)}
+}
+
+// nowFn is the tool's single clock funnel: every evaluation-time or
+// mint-time read in the tree goes through Now(), never time.Now()
+// directly (sync spec, Addition 4/1). Production code never reassigns
+// it — the released binary has no clock env var or flag, so nowFn is
+// always time.Now() outside a test. SetNowForTest is the only seam.
+var nowFn = time.Now
+
+// Now returns the current time through the clock funnel.
+func Now() time.Time { return nowFn() }
+
+// SetNowForTest points the clock funnel at fn and returns a restore func
+// the caller defers — the same save/restore shape as the package-var test
+// seams elsewhere in the tree (e.g. cmd.lsClosedCutoff), just cross-package
+// since Now() is consulted well outside internal/model. Test-only: no
+// production code path may call this.
+func SetNowForTest(fn func() time.Time) (restore func()) {
+	old := nowFn
+	nowFn = fn
+	return func() { nowFn = old }
 }
 
 var _ = strings.TrimSpace // reserved for future normalizers

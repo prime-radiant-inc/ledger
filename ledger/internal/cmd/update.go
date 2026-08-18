@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"ledger/internal/model"
 	"ledger/internal/out"
 	"ledger/internal/selfupdate"
 )
@@ -131,7 +132,7 @@ func passiveUpdateCheck(c *Ctx, verb string) {
 	}
 	dir := updateStateDir()
 	st := selfupdate.LoadState(dir)
-	now := time.Now()
+	now := model.Now()
 	if selfupdate.Due(st, now) {
 		api, _ := updateBases()
 		client := &http.Client{Timeout: 2 * time.Second}

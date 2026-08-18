@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -13,6 +14,24 @@ import (
 	"ledger/internal/model"
 	"ledger/internal/out"
 )
+
+// resolveAt parses --at (millisecond UTC layout; legacy accepted) into the
+// evaluation clock for age/staleness rendering — the flag exists on ready
+// and notes only (sync spec Addition 4). An empty flag means "the real
+// clock, through the funnel"; an unparseable value is bad_value, never a
+// silent revert to wall-clock now.
+func resolveAt(at string) (time.Time, error) {
+	if at == "" {
+		return model.Now(), nil
+	}
+	t, err := model.ParseTS(at)
+	if err != nil {
+		return time.Time{}, out.Errf("bad_value",
+			"millisecond UTC layout, e.g. 2030-01-01T00:00:00.000 (the legacy 2030-01-01T00:00:00 layout is also accepted)",
+			4, "--at %q does not parse: %s", at, err)
+	}
+	return t, nil
+}
 
 // row is one spine cell: the latest value recorded for (key, field), with
 // its provenance. Shared by status (spine + by-branch) and show. Title is
@@ -143,12 +162,14 @@ func provenance(n model.Event, committers map[string]string, latest bool) string
 // absolute timestamp otherwise, per the spec's "age only in ls/--latest"
 // rule) followed by the control-escaped body, quote-prefixed per line so a
 // forged control sequence in the body can't overwrite the identity line.
-func noteLines(notes []model.Event, committers map[string]string, latest bool) []string {
+// now is the evaluation clock for the --latest age render (notes' --at,
+// resolved by the caller; unused when latest is false).
+func noteLines(notes []model.Event, committers map[string]string, latest bool, now time.Time) []string {
 	lines := make([]string, 0, len(notes)*2)
 	for _, n := range notes {
 		when := n.TS
 		if latest {
-			when = out.Age(n.TS)
+			when = out.AgeAt(n.TS, now)
 		}
 		head := when + " " + provenance(n, committers, latest) + "  [" + n.ID + "] " + out.EscapeControls(n.Kind)
 		if n.Key != "" {
@@ -352,7 +373,7 @@ func runStatus(c *Ctx, key, field string, byBranch bool, ledgerFlag string) erro
 	for _, f := range fieldNames {
 		lines = append(lines, spineLine(values[f]))
 	}
-	lines = append(lines, noteLines(noteEvs, committers, false)...)
+	lines = append(lines, noteLines(noteEvs, committers, false, model.Now())...)
 	for _, ev := range history {
 		lines = append(lines, "  "+eventLine(ev))
 	}
@@ -475,12 +496,12 @@ func redirectLine(c *Ctx, led *fold.Ledger) string {
 func init() { register(newNotesCmd) }
 
 func newNotesCmd(c *Ctx) *cobra.Command {
-	var kind, key, id, ledgerFlag string
+	var kind, key, id, ledgerFlag, at string
 	var latest bool
 	var limit int
 	cmd := &cobra.Command{Use: "notes", Short: "list notes", Args: noPositionals("notes"),
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runNotes(c, kind, key, id, latest, limit, ledgerFlag)
+			return runNotes(c, kind, key, id, latest, limit, ledgerFlag, at)
 		}}
 	cmd.Flags().StringVarP(&kind, "kind", "k", "", "filter by note kind")
 	cmd.Flags().StringVar(&key, "key", "", "filter by item key")
@@ -488,10 +509,15 @@ func newNotesCmd(c *Ctx) *cobra.Command {
 	cmd.Flags().BoolVar(&latest, "latest", false, "only the single most recent matching note")
 	cmd.Flags().IntVarP(&limit, "limit", "n", 10, "how many notes (most recent)")
 	cmd.Flags().StringVar(&ledgerFlag, "ledger", "", "target ledger")
+	cmd.Flags().StringVar(&at, "at", "", "fix the evaluation clock for --latest's age render (millisecond UTC; legacy layout accepted)")
 	return cmd
 }
 
-func runNotes(c *Ctx, kind, key, id string, latest bool, limit int, ledgerFlag string) error {
+func runNotes(c *Ctx, kind, key, id string, latest bool, limit int, ledgerFlag, at string) error {
+	now, err := resolveAt(at)
+	if err != nil {
+		return err
+	}
 	led, err := c.PickLedger(ledgerFlag)
 	if err != nil {
 		return err
@@ -524,7 +550,7 @@ func runNotes(c *Ctx, kind, key, id string, latest bool, limit int, ledgerFlag s
 	}
 	payload := map[string]any{"ledger": led.Slug, "notes": docs}
 	lines := addRedirect(c, led, payload)
-	lines = append(lines, noteLines(matched, committers, latest)...)
+	lines = append(lines, noteLines(matched, committers, latest, now)...)
 	outEmit(c, payload, lines)
 	return nil
 }

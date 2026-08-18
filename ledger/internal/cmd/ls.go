@@ -53,7 +53,7 @@ func runLs(c *Ctx, all bool) error {
 		leds = append(leds, led)
 	}
 
-	now := time.Now().UTC()
+	now := model.Now().UTC()
 	kept := leds[:0]
 	for _, led := range leds {
 		if all || led.State == "open" || now.Sub(lastEventTime(led)) <= lsClosedCutoff {

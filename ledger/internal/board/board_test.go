@@ -141,6 +141,71 @@ func TestStaleAgeNotInProgressNeverStale(t *testing.T) {
 	}
 }
 
+// TestStaleAgeClampsFutureClaimToZero: the sync spec's general age clamp
+// (Addition 4/1(c)) — a claim event whose own ts is AFTER the evaluation
+// clock (a peer host whose clock runs ahead, or --at fixed in the past)
+// must render age 0, never a negative duration, and can never be stale
+// (0 is never > a positive horizon).
+func TestStaleAgeClampsFutureClaimToZero(t *testing.T) {
+	meta := readyMeta()
+	meta.StaleAfter = "1h"
+	evs := []model.Event{
+		setEv("1a", "k1", "status", "in-progress", func(e *model.Event) {
+			e.TS = "2026-08-16T15:00:00.000" // 3h ahead of "now" below
+		}),
+	}
+	b := Build(meta, evs)
+	k := b.Keys["k1"]
+	now, _ := model.ParseTS("2026-08-16T12:00:00.000")
+	stale, age := b.StaleAge(k, now)
+	if age != 0 {
+		t.Fatalf("age: got %v, want 0 (clamped)", age)
+	}
+	if stale {
+		t.Fatal("a clamped-to-zero age must never be stale")
+	}
+}
+
+// TestStaleAgeAheadWriterGoesStaleExactlySkewLate: sync spec Addition 1(c)'s
+// asymmetric skew doctrine — an ahead-writer's claim ages `-skew` and goes
+// stale exactly `skew` LATE at every horizon, never early, no matter the
+// horizon setting. Probed at two horizons (1h and 5h) per the spec's own
+// two-horizon claim.
+func TestStaleAgeAheadWriterGoesStaleExactlySkewLate(t *testing.T) {
+	skew := 30 * time.Minute
+	base, _ := model.ParseTS("2026-08-16T12:00:00.000")
+	// The ahead-writer's clock reads base+skew at write time: the claim's
+	// own ts is stamped that far in the future relative to a synced clock.
+	claimTS := base.Add(skew)
+
+	for _, horizon := range []time.Duration{time.Hour, 5 * time.Hour} {
+		meta := readyMeta()
+		meta.StaleAfter = horizon.String()
+		evs := []model.Event{
+			setEv("1a", "k1", "status", "in-progress", func(e *model.Event) {
+				e.TS = claimTS.UTC().Format(model.TSLayout)
+			}),
+		}
+		b := Build(meta, evs)
+		k := b.Keys["k1"]
+
+		// A synced-clock claim would go stale at base+horizon. The
+		// ahead-writer's claim must still be live there — skew's worth of
+		// slack remains.
+		if stale, age := b.StaleAge(k, base.Add(horizon)); stale {
+			t.Fatalf("horizon=%s: must not be stale at base+horizon (skew not yet exhausted), age=%v", horizon, age)
+		}
+		// Just short of base+horizon+skew: still live.
+		if stale, age := b.StaleAge(k, base.Add(horizon).Add(skew).Add(-time.Millisecond)); stale {
+			t.Fatalf("horizon=%s: must not be stale 1ms before skew-late, age=%v", horizon, age)
+		}
+		// Just past base+horizon+skew: now stale — exactly skew late.
+		if stale, age := b.StaleAge(k, base.Add(horizon).Add(skew).Add(time.Millisecond)); !stale {
+			t.Fatalf("horizon=%s: must be stale exactly skew-late, age=%v", horizon, age)
+		}
+	}
+}
+
 // TestHasHumanMultiTokenLabels: "human" must be recognized as one token
 // among several, not just as the sole label.
 func TestHasHumanMultiTokenLabels(t *testing.T) {

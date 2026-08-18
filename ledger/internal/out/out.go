@@ -60,12 +60,24 @@ func IsTTY(f *os.File) bool {
 	return err == nil && (fi.Mode()&os.ModeCharDevice) != 0
 }
 
-func Age(ts string) string {
+// Age renders ts's age against the funnel's current time (model.Now()).
+func Age(ts string) string { return AgeAt(ts, model.Now()) }
+
+// AgeAt renders ts's age relative to an explicit evaluation clock — ready
+// and notes --latest pass --at's fixed clock here; every other caller goes
+// through Age, which supplies model.Now(). A future ts (at is before ts —
+// --at fixed in the past, or a peer host whose clock runs ahead) clamps to
+// zero rather than rendering a negative age: the sync spec's general age
+// clamp (Addition 4), which applies everywhere, under both clocks.
+func AgeAt(ts string, at time.Time) string {
 	t, err := model.ParseTS(ts)
 	if err != nil {
 		return ts
 	}
-	s := int(time.Since(t).Seconds())
+	s := int(at.Sub(t).Seconds())
+	if s < 0 {
+		s = 0
+	}
 	switch {
 	case s >= 86400:
 		return fmt.Sprintf("%dd ago", s/86400)

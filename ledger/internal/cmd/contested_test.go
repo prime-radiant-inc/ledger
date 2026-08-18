@@ -483,7 +483,7 @@ func TestContestedResolvedAbsentOnceCollapsed(t *testing.T) {
 func TestContestedTTYLines(t *testing.T) {
 	_, b, _ := contestedReplicas(t)
 	ctx, buf := ttyCtx(b)
-	if err := runReady(ctx, "board", nil, 50); err != nil {
+	if err := runReady(ctx, "board", nil, 50, ""); err != nil {
 		t.Fatalf("ready: %v", err)
 	}
 	so := buf.String()

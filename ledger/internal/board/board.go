@@ -193,6 +193,15 @@ func (b *Board) StaleAge(k *Key, now time.Time) (stale bool, age time.Duration) 
 		return false, 0
 	}
 	age = now.Sub(claimTS)
+	if age < 0 {
+		// General age clamp (sync spec Addition 4/1(c)): a claim event
+		// newer than the evaluation clock — a peer host whose clock runs
+		// ahead, or --at fixed in the past — renders age 0s rather than a
+		// negative duration. The clamp is silent on the reclaim side: it
+		// keeps the number honest but the replica cannot see this claim go
+		// stale until its own clock passes the claim's timestamp.
+		age = 0
+	}
 	if k.Status.Value != "in-progress" || b.Meta.StaleAfter == "" {
 		return false, age
 	}

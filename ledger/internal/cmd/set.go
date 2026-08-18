@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -304,7 +303,11 @@ func setPrecondition(key string, fields map[string]string, target, expect string
 			// guarded field, computed off THIS attempt's fresh read.
 			*resolvedOut = board.ResolvedHeads(events, d, key, target)
 
-			signals := b.Signals(b.Keys[key], touchesStatus, author, time.Now())
+			// Rule 5's append-time staleness stays on the real clock, through
+			// the funnel: set has no --at flag (Addition 4 — a write verb with
+			// a fake clock could dissolve this signal and skip needs_override
+			// unrecorded), so this is always model.Now()'s live wall time.
+			signals := b.Signals(b.Keys[key], touchesStatus, author, model.Now())
 			if len(signals) > 0 {
 				if !override {
 					return out.Errf("needs_override", `--override -m "<why>"`, 4,

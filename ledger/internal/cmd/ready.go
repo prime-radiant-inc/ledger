@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -18,16 +17,22 @@ func newReadyCmd(c *Ctx) *cobra.Command {
 	var ledgerFlag string
 	var whereRaw []string
 	var limit int
+	var at string
 	cmd := &cobra.Command{Use: "ready", Short: "the board, answered: ready/held/blocked/attention + frontier verdict",
 		Args: noPositionals("ready"),
-		RunE: func(_ *cobra.Command, _ []string) error { return runReady(c, ledgerFlag, whereRaw, limit) }}
+		RunE: func(_ *cobra.Command, _ []string) error { return runReady(c, ledgerFlag, whereRaw, limit, at) }}
 	cmd.Flags().StringVar(&ledgerFlag, "ledger", "", "target ledger")
 	cmd.Flags().StringArrayVar(&whereRaw, "where", nil, "FIELD=VALUE (exact) or FIELD~=TOKEN (membership); repeatable, AND'd — applies to every list")
 	cmd.Flags().IntVar(&limit, "limit", 50, "cap each list (ready/held/blocked/attention); totals always carry the true count")
+	cmd.Flags().StringVar(&at, "at", "", "fix the evaluation clock for age/staleness rendering (millisecond UTC; legacy layout accepted)")
 	return cmd
 }
 
-func runReady(c *Ctx, ledgerFlag string, whereRaw []string, limit int) error {
+func runReady(c *Ctx, ledgerFlag string, whereRaw []string, limit int, at string) error {
+	now, err := resolveAt(at)
+	if err != nil {
+		return err
+	}
 	led, err := c.PickLedger(ledgerFlag)
 	if err != nil {
 		return err
@@ -49,7 +54,7 @@ func runReady(c *Ctx, ledgerFlag string, whereRaw []string, limit int) error {
 	// events) — never a second fold to recover the shape.
 	b.ComputeContests(led.Events, led.DAG)
 	filter := func(k *board.Key) bool { return matchWhere(k, clauses) }
-	env := b.Envelope(time.Now(), limit, filter)
+	env := b.Envelope(now, limit, filter)
 
 	payload := map[string]any{
 		"ledger": led.Slug, "frontier": env.Frontier,

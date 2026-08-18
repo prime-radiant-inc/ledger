@@ -726,7 +726,7 @@ func TestFreshnessWarnsFetchedButUnmergedTTY(t *testing.T) {
 	const want = "[ledger] 1 unmerged remote events — run 'ledger sync'"
 
 	c, buf := ttyCtx(b)
-	if err := runReady(c, "board", nil, 50); err != nil {
+	if err := runReady(c, "board", nil, 50, ""); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), want) {
@@ -776,7 +776,7 @@ func TestFreshnessSilentWhenSynced(t *testing.T) {
 	}
 
 	c, buf := ttyCtx(b)
-	if err := runReady(c, "board", nil, 50); err != nil {
+	if err := runReady(c, "board", nil, 50, ""); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(buf.String(), "[ledger]") {
