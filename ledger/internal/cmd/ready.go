@@ -56,6 +56,7 @@ func runReady(c *Ctx, ledgerFlag string, whereRaw []string, limit int) error {
 		"ready": env.Ready, "held": env.Held, "blocked": env.Blocked, "attention": env.Attention,
 		"totals": env.Totals,
 	}
+	c.attachFreshness(led, payload)
 	lines := addRedirect(c, led, payload)
 	lines = append(lines, readyLines(led.Slug, env)...)
 	outEmit(c, payload, lines)

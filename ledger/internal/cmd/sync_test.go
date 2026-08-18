@@ -83,9 +83,27 @@ func syncResults(t *testing.T, payload, field string) map[string]map[string]any 
 
 func seedBoard(t *testing.T, dir, slug string) {
 	t.Helper()
+	seedBoardAs(t, dir, slug, "alice")
+}
+
+// seedBoardAs is seedBoard with an explicit creator — the root-mismatch
+// freshness fixture needs two independently-created same-slug boards whose
+// creators differ but whose declared shape is otherwise identical, so
+// `ready` still works on either side.
+func seedBoardAs(t *testing.T, dir, slug, as string) {
+	t.Helper()
 	mustRun(t, dir, "create", slug, "--scope", "sync-test",
 		"--field", "status=open,in-progress,done,failed", "--terminal", "status=done,failed",
-		"--guard", "status", "--multi-field", "labels", "--stale-after", "2h", "--as", "alice")
+		"--guard", "status", "--multi-field", "labels", "--stale-after", "2h", "--as", as)
+}
+
+// rawFetchTracking populates dir's tracking refs directly via git fetch,
+// bypassing `ledger sync`'s merge step — the freshness tests' "fetched but
+// not yet merged" fixture: the tracking ref moves while local stays put,
+// exactly the state a read-time warning has to catch.
+func rawFetchTracking(t *testing.T, dir, remote string) {
+	t.Helper()
+	git(t, dir, "fetch", "-q", "--prune", remote, "+refs/ledger/*:refs/ledger-remote/"+remote+"/*")
 }
 
 func statusID(t *testing.T, dir, slug, key string) string {
@@ -640,5 +658,276 @@ func TestInitSkipsRefspecInstallWithNoRemote(t *testing.T) {
 	json.Unmarshal([]byte(so), &doc)
 	if _, present := doc["refspec_repairs"]; present {
 		t.Fatalf("no remote configured: no refspec repair should be reported: %v", doc)
+	}
+}
+
+// ---- freshness (sync design Addition 3's freshness bullet) ----
+
+// freshnessFixture builds the read-time freshness tests' shared setup: a
+// ready-capable "board", replica b fully synced (adopted) to a's first
+// write, then replica a advances by exactly one more real event and pushes
+// it. b's tracking ref is NOT fetched by this fixture — a caller wanting the
+// "fetched but unmerged" state calls rawFetchTracking itself; a caller
+// wanting the "never fetched again" state uses b as-is.
+func freshnessFixture(t *testing.T) (a, b string) {
+	t.Helper()
+	_, a, b = twoReplicas(t)
+	seedBoard(t, a, "board")
+	mustRun(t, a, "set", "task-1", "status=open", "--expect", "none", "-m", "first", "--as", "alice")
+	pushLedgerRef(t, a, "board")
+	if got := syncResults(t, mustRun(t, b, "sync"), "synced"); got["board"]["result"] != "adopted" {
+		t.Fatalf("setup: expected adoption, got %+v", got)
+	}
+	prev := statusID(t, a, "board", "task-1")
+	mustRun(t, a, "set", "task-1", "status=in-progress", "--expect", prev, "-m", "second", "--as", "alice")
+	pushLedgerRef(t, a, "board")
+	return a, b
+}
+
+// TestFreshnessWarnsFetchedButUnmerged: a replica that has fetched but not
+// yet merged a remote's new events warns on every read verb the spec names
+// (ready, show, status — both the keyless spine and a single key's
+// drill-down), in JSON as a top-level `freshness` sibling key.
+func TestFreshnessWarnsFetchedButUnmerged(t *testing.T) {
+	_, b := freshnessFixture(t)
+	rawFetchTracking(t, b, "origin")
+
+	for _, args := range [][]string{
+		{"ready", "--ledger", "board"},
+		{"show", "--ledger", "board"},
+		{"status", "--ledger", "board"},
+		{"status", "task-1", "--ledger", "board"},
+	} {
+		so, _, code := run(t, b, args...)
+		if code != 0 {
+			t.Fatalf("%v: exit %d: %s", args, code, so)
+		}
+		doc := mustJSON(t, so)
+		fresh, ok := doc["freshness"].(map[string]any)
+		if !ok {
+			t.Fatalf("%v: expected a freshness key: %v", args, doc)
+		}
+		if fresh["unmerged_remote_events"] != float64(1) {
+			t.Fatalf("%v: expected 1 unmerged remote event: %v", args, fresh)
+		}
+		if fresh["hint"] != "run `ledger sync`" {
+			t.Fatalf("%v: unexpected hint: %v", args, fresh)
+		}
+	}
+}
+
+// TestFreshnessWarnsFetchedButUnmergedTTY: the same fetched-but-unmerged
+// state, on a TTY, prints the pinned stderr line — never inside the
+// rendered lines the projection's TTY chrome carries.
+func TestFreshnessWarnsFetchedButUnmergedTTY(t *testing.T) {
+	_, b := freshnessFixture(t)
+	rawFetchTracking(t, b, "origin")
+
+	const want = "[ledger] 1 unmerged remote events — run 'ledger sync'"
+
+	c, buf := ttyCtx(b)
+	if err := runReady(c, "board", nil, 50); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), want) {
+		t.Fatalf("ready TTY: missing freshness stderr line: %q", buf.String())
+	}
+
+	c, buf = ttyCtx(b)
+	if err := runShow(c, "board", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), want) {
+		t.Fatalf("show TTY: missing freshness stderr line: %q", buf.String())
+	}
+
+	c, buf = ttyCtx(b)
+	if err := runStatus(c, "", "", false, "board"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), want) {
+		t.Fatalf("status TTY: missing freshness stderr line: %q", buf.String())
+	}
+}
+
+// TestFreshnessSilentWhenSynced: once a replica actually runs `ledger sync`
+// (merging the fetched events, not just fetching them), the tracking ref is
+// an ancestor of local again and every read renders clean — no freshness
+// key, no stderr line.
+func TestFreshnessSilentWhenSynced(t *testing.T) {
+	_, b := freshnessFixture(t)
+	if got := syncResults(t, mustRun(t, b, "sync"), "synced"); got["board"]["result"] == "" {
+		t.Fatalf("setup: expected a sync result: %+v", got)
+	}
+
+	for _, args := range [][]string{
+		{"ready", "--ledger", "board"},
+		{"show", "--ledger", "board"},
+		{"status", "--ledger", "board"},
+	} {
+		so, _, code := run(t, b, args...)
+		if code != 0 {
+			t.Fatalf("%v: exit %d: %s", args, code, so)
+		}
+		doc := mustJSON(t, so)
+		if _, present := doc["freshness"]; present {
+			t.Fatalf("%v: a fully-synced replica must render clean: %v", args, doc)
+		}
+	}
+
+	c, buf := ttyCtx(b)
+	if err := runReady(c, "board", nil, 50); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "[ledger]") {
+		t.Fatalf("ready TTY: a synced replica must print no freshness line: %q", buf.String())
+	}
+}
+
+// TestFreshnessSilentWithNoTrackingRef: a repo that has never synced or
+// pushed carries no tracking ref at all — freshness degrades silently
+// rather than erroring (the interface note: a read verb must never fail
+// because there's nothing to check).
+func TestFreshnessSilentWithNoTrackingRef(t *testing.T) {
+	dir := initRepo(t)
+	seedBoard(t, dir, "board")
+	so, _, code := run(t, dir, "ready", "--ledger", "board")
+	if code != 0 {
+		t.Fatal(so)
+	}
+	doc := mustJSON(t, so)
+	if _, present := doc["freshness"]; present {
+		t.Fatalf("no remote/tracking ref: freshness must stay silent: %v", doc)
+	}
+}
+
+// TestFreshnessSilentWithAmbiguousRemotes: two configured remotes with
+// nothing selecting one is `ambiguous_remote` for sync/push, but a read verb
+// has no --remote flag to disambiguate with and must never fail on it —
+// freshness just has nothing to warn from.
+func TestFreshnessSilentWithAmbiguousRemotes(t *testing.T) {
+	dir := initRepo(t)
+	git(t, dir, "remote", "add", "r1", "https://example.invalid/r1.git")
+	git(t, dir, "remote", "add", "r2", "https://example.invalid/r2.git")
+	seedBoard(t, dir, "board")
+	so, _, code := run(t, dir, "ready", "--ledger", "board")
+	if code != 0 {
+		t.Fatalf("ambiguous remotes must not fail a read verb: %d %s", code, so)
+	}
+	doc := mustJSON(t, so)
+	if _, present := doc["freshness"]; present {
+		t.Fatalf("ambiguous remotes: freshness must stay silent, not guess which one: %v", doc)
+	}
+}
+
+// TestFreshnessProjectionByteUnchanged: the spec's placement pin, verified
+// directly — the freshness key's presence or absence must never change the
+// projection's other members. Compares the exact same local state rendered
+// before and after the tracking ref moves out from under it: b's local ref
+// never changes between the two reads, only its (unmerged) tracking ref
+// does, so stripping "freshness" from the warned document must reproduce
+// the clean one byte for byte.
+func TestFreshnessProjectionByteUnchanged(t *testing.T) {
+	_, b := freshnessFixture(t)
+
+	argSets := [][]string{
+		{"ready", "--ledger", "board"},
+		{"show", "--ledger", "board"},
+		{"status", "--ledger", "board"},
+	}
+	clean := map[string]string{}
+	for _, args := range argSets {
+		so, _, code := run(t, b, args...)
+		if code != 0 {
+			t.Fatalf("%v: exit %d: %s", args, code, so)
+		}
+		if strings.Contains(so, `"freshness"`) {
+			t.Fatalf("%v: pre-fetch baseline must carry no freshness key: %s", args, so)
+		}
+		clean[args[0]] = so
+	}
+
+	rawFetchTracking(t, b, "origin")
+
+	for _, args := range argSets {
+		warned, _, code := run(t, b, args...)
+		if code != 0 {
+			t.Fatalf("%v: exit %d: %s", args, code, warned)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal([]byte(warned), &doc); err != nil {
+			t.Fatalf("%v: payload not JSON: %v", args, err)
+		}
+		if _, present := doc["freshness"]; !present {
+			t.Fatalf("%v: expected the warned run to carry freshness: %s", args, warned)
+		}
+		delete(doc, "freshness")
+		strippedBytes, err := json.MarshalIndent(doc, "", " ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		stripped := string(strippedBytes) + "\n"
+
+		var cleanDoc map[string]any
+		json.Unmarshal([]byte(clean[args[0]]), &cleanDoc)
+		cleanBytes, _ := json.MarshalIndent(cleanDoc, "", " ")
+		cleanCanon := string(cleanBytes) + "\n"
+
+		if stripped != cleanCanon {
+			t.Fatalf("%v: projection changed by the freshness key's presence:\nclean:    %s\nstripped: %s",
+				args, cleanCanon, stripped)
+		}
+	}
+}
+
+// TestFreshnessRootMismatchGuidance: two independently-created same-slug
+// boards (TestSyncRefusesDifferentRoots' fixture, reused for the read
+// side) — `ledger sync` fetches (populating the tracking ref) before it
+// evaluates the same-root rule and refuses, so the tracking ref sits there
+// after the refusal, holding a chain that shares no root with local. A read
+// warns with the same export/import guidance sync's own refusal carries,
+// never an unmerged-events count (there's nothing of THIS chain to merge).
+func TestFreshnessRootMismatchGuidance(t *testing.T) {
+	_, a, b := twoReplicas(t)
+	seedBoardAs(t, a, "board", "alice")
+	pushLedgerRef(t, a, "board")
+	seedBoardAs(t, b, "board", "bob")
+
+	if _, _, code := run(t, b, "sync"); code != 3 {
+		t.Fatalf("setup: expected the root mismatch refusal (exit 3): got %d", code)
+	}
+
+	for _, args := range [][]string{
+		{"ready", "--ledger", "board"},
+		{"show", "--ledger", "board"},
+		{"status", "--ledger", "board"},
+	} {
+		so, _, code := run(t, b, args...)
+		if code != 0 {
+			t.Fatalf("%v: exit %d: %s", args, code, so)
+		}
+		doc := mustJSON(t, so)
+		fresh, ok := doc["freshness"].(map[string]any)
+		if !ok {
+			t.Fatalf("%v: expected a freshness key with export/import guidance: %v", args, doc)
+		}
+		if _, present := fresh["unmerged_remote_events"]; present {
+			t.Fatalf("%v: a root mismatch is not an unmerged-events count: %v", args, fresh)
+		}
+		hint, _ := fresh["hint"].(string)
+		for _, want := range []string{"alice", "bob", "ledger export", "ledger import"} {
+			if !strings.Contains(hint, want) {
+				t.Fatalf("%v: guidance must name both creators and the export/import exit; missing %q in %q",
+					args, want, hint)
+			}
+		}
+	}
+
+	c, buf := ttyCtx(b)
+	if err := runShow(c, "board", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "export the local chain") {
+		t.Fatalf("show TTY: missing root-mismatch guidance on stderr: %q", buf.String())
 	}
 }

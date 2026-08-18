@@ -306,6 +306,7 @@ func runStatus(c *Ctx, key, field string, byBranch bool, ledgerFlag string) erro
 			rows = spineRows(led, field)
 		}
 		payload := map[string]any{"ledger": led.Slug, "scope": led.Meta.Scope, "state": led.State, "rows": rows}
+		c.attachFreshness(led, payload)
 		lines := addRedirect(c, led, payload)
 		lines = append(lines, fmt.Sprintf("%s  scope=%s  state=%s", led.Slug, led.Meta.Scope, led.State))
 		for _, r := range rows {
@@ -344,6 +345,7 @@ func runStatus(c *Ctx, key, field string, byBranch bool, ledgerFlag string) erro
 
 	payload := map[string]any{"ledger": led.Slug, "key": key, "values": values,
 		"notes": notes, "history": eventsJSON(history)}
+	c.attachFreshness(led, payload)
 
 	lines := addRedirect(c, led, payload)
 	lines = append(lines, key+" on "+led.Slug)
@@ -427,6 +429,7 @@ func runShow(c *Ctx, ledgerFlag string, whereRaw []string) error {
 		"schema": led.Schema, "require_evidence": led.Require, "recent_notes": recentNotes,
 		"events": eventCount, "head": led.Head(),
 	}
+	c.attachFreshness(led, payload)
 
 	lines := addRedirect(c, led, payload)
 	lines = append(lines, fmt.Sprintf("%s  scope=%s  base=%s  state=%s  events=%d  head=%s",

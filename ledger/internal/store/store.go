@@ -243,6 +243,58 @@ func (s Store) RangeNodes(cursor, tip string) ([]dag.Node, error) {
 	return nodes, nil
 }
 
+// Roots lists a rev's root commits (parentless ancestors) via one cheap
+// rev-list, no blob reads. Sync's own same-root/multi-root checks already
+// pay for a whole-chain event read (EventsDAG/EventsDAGAt) since they need
+// the chain's shape for other reasons, but freshness's read-time check only
+// needs to know whether two chains share a root, so it uses this instead —
+// the read-time check runs on hot paths (show/status/ready) and must not
+// cost a second whole-chain blob read just to answer that.
+//
+// Coincides with dag.Result.Roots (the sentinel-CONTRACTED roots EventsDAG
+// computes) for every root any tool-driven path can mint: create, import
+// and adopt all write a root with a readable event.json, so it is never a
+// sentinel and raw git parentlessness and contracted-DAG parentlessness
+// agree. They would diverge only for a root commit with no readable
+// event.json at all — reachable solely by hand-crafted git surgery, a
+// corruption class this advisory read-time check does not chase; sync's own
+// whole-chain checks remain the authority there.
+func (s Store) Roots(rev string) []string {
+	out, _, code := s.Repo.Git("", "rev-list", "--max-parents=0", rev)
+	if code != 0 || out == "" {
+		return nil
+	}
+	return strings.Split(out, "\n")
+}
+
+// NonSentinelCount counts the commits in from..to that carry a real event —
+// sync sentinels (and torn/foreign commits) excluded. This is the N in the
+// freshness warning's "N unmerged remote events": counting plumbing would
+// tell a reader they're missing events that say nothing.
+func (s Store) NonSentinelCount(from, to string) int {
+	nodes, err := s.RangeNodes(from, to)
+	if err != nil {
+		return 0
+	}
+	reqs := make([]string, len(nodes))
+	for i, n := range nodes {
+		reqs[i] = n.SHA + ":event.json"
+	}
+	contents, present := s.catBatch(reqs)
+	count := 0
+	for i := range reqs {
+		if !present[i] {
+			continue
+		}
+		var ev model.Event
+		if json.Unmarshal([]byte(contents[i]), &ev) != nil || ev.Type == "sync" {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
 // Events reads the whole chain in the spec's pinned fold order (Addition
 // 1: Kahn's topological sort, ready set keyed on parsed timestamp then full
 // sha, sentinels contracted out before the sort) rather than git's own

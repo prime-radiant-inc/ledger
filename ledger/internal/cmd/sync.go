@@ -173,21 +173,40 @@ func (c *Ctx) rootMismatch(slug string, trackRoots []string) *SlugOutcome {
 	if err != nil {
 		return &SlugOutcome{Slug: slug, Result: "failed", Detail: err.Error()}
 	}
-	for _, lr := range localResult.Roots {
-		if model.Contains(trackRoots, lr) {
-			return nil
+	if rootsIntersect(localResult.Roots, trackRoots) {
+		return nil
+	}
+	return &SlugOutcome{Slug: slug, Result: "refused", Detail: rootMismatchDetail(c, slug, localResult.Roots, trackRoots)}
+}
+
+// rootsIntersect reports whether two root sets share a commit — the
+// same-root rule's core test, shared by sync's refusal (rootMismatch above)
+// and freshness's read-time check (freshness.go), which reaches the same
+// root set more cheaply (store.Roots, not a whole-chain event read).
+func rootsIntersect(a, b []string) bool {
+	for _, r := range a {
+		if model.Contains(b, r) {
+			return true
 		}
 	}
-	detail := "different creation commits"
-	if len(localResult.Roots) > 0 && len(trackRoots) > 0 {
-		lby, lat, _ := creatorOf(c.Store, localResult.Roots[0])
-		rby, rat, _ := creatorOf(c.Store, trackRoots[0])
-		detail = fmt.Sprintf("local chain created by %s at %s; remote chain created by %s at %s — "+
-			"export the local chain and re-import it under a new slug (ledger export %s --to %s.jsonl; "+
-			"ledger import %s.jsonl --slug %s-local), then sync adopts the remote chain",
-			lby, lat, rby, rat, slug, slug, slug, slug)
+	return false
+}
+
+// rootMismatchDetail builds the same-root rule's export/import guidance,
+// naming both chains' creators — shared by sync's refusal above and
+// freshness's read-time warning, which reaches the same conclusion without
+// paying for sync's own whole-chain local read (the caller already has its
+// root set in hand).
+func rootMismatchDetail(c *Ctx, slug string, localRoots, trackRoots []string) string {
+	if len(localRoots) == 0 || len(trackRoots) == 0 {
+		return "different creation commits"
 	}
-	return &SlugOutcome{Slug: slug, Result: "refused", Detail: detail}
+	lby, lat, _ := creatorOf(c.Store, localRoots[0])
+	rby, rat, _ := creatorOf(c.Store, trackRoots[0])
+	return fmt.Sprintf("local chain created by %s at %s; remote chain created by %s at %s — "+
+		"export the local chain and re-import it under a new slug (ledger export %s --to %s.jsonl; "+
+		"ledger import %s.jsonl --slug %s-local), then sync adopts the remote chain",
+		lby, lat, rby, rat, slug, slug, slug, slug)
 }
 
 // multiRootRefusal implements the rev 5 pin: a candidate chain with more
