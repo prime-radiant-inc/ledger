@@ -65,6 +65,33 @@ func breadcrumbRemote(repoDir string) string {
 	return string(m[1])
 }
 
+// breadcrumbExists reports whether the committed .ledger.toml breadcrumb is
+// present, independent of whether it declares a remote — `ls`'s bootstrap
+// hint (paired with installedRefspec below) needs the file's mere presence,
+// not its content.
+func breadcrumbExists(repoDir string) bool {
+	_, err := os.Stat(filepath.Join(repoDir, ".ledger.toml"))
+	return err == nil
+}
+
+// installedRefspec reports whether any configured remote already has the
+// ledger fetch refspec installed for its own tracking namespace — the
+// signal that `ledger init` (or a `sync`/`push` repair) has run at least
+// once in THIS clone. Refspec and config are repo-local and never clone
+// (spec: "every clone bootstraps itself"), so a fresh clone of a repo that
+// already uses ledger starts with this false even though its breadcrumb is
+// committed and present.
+func installedRefspec(repo gitx.Repo) bool {
+	for _, r := range remotes(repo) {
+		for _, v := range configAll(repo, "remote."+r+".fetch") {
+			if ns, ok := trackingDest(v); ok && ns == r {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // resolveRemote picks the remote sync/push talk to: an explicit --remote
 // (which must exist), else the breadcrumb's declared remote, else "origin",
 // else the sole configured remote. An empty return with a nil error is the
@@ -119,21 +146,29 @@ func resolveRemote(c *Ctx, flag string) (string, error) {
 // skipped: init has no --remote flag to disambiguate with, and sync repairs
 // on every invocation regardless.
 func installRefspecBestEffort(repo gitx.Repo) []string {
-	known := remotes(repo)
-	remote := ""
-	for _, r := range known {
-		if r == "origin" {
-			remote = "origin"
-			break
-		}
-	}
-	if remote == "" && len(known) == 1 {
-		remote = known[0]
-	}
+	remote := bestEffortRemote(repo)
 	if remote == "" {
 		return nil
 	}
 	return repairRefspecs(repo, remote)
+}
+
+// bestEffortRemote picks the same remote installRefspecBestEffort installs
+// a refspec for: "origin" if configured, else the sole remote, else
+// unresolvable ("") — init has no --remote flag to disambiguate zero or
+// several candidates. It's also what the committed breadcrumb's remote line
+// is written from, when resolvable (initRepoCase, initcmd.go).
+func bestEffortRemote(repo gitx.Repo) string {
+	known := remotes(repo)
+	for _, r := range known {
+		if r == "origin" {
+			return "origin"
+		}
+	}
+	if len(known) == 1 {
+		return known[0]
+	}
+	return ""
 }
 
 // repairRefspecs is the every-invocation repair the spec requires (round 5

@@ -28,14 +28,31 @@ func newInitCmd(c *Ctx) *cobra.Command {
 	return cmd
 }
 
-// ledgerTomlContent is the committed breadcrumb: a marker comment plus the
-// default sync remote as a commented-out git remote *name* (never a URL —
-// a committed URL would let anyone who lands a commit redirect every
-// clone's sync target).
-const ledgerTomlContent = "# This repo uses `ledger` for durable agent working-state (git phantom refs).\n" +
-	"# Bootstrap in a fresh clone:  ledger init && ledger sync\n" +
-	"# Docs: run `ledger quickstart`\n" +
-	"# remote = \"origin\"  # default sync remote (name only)\n"
+// bootstrapCmd is the fixed two-verb sequence that brings a fresh clone up
+// to date: refspec and config are repo-local and never clone (spec: "every
+// clone bootstraps itself"), so the breadcrumb, the quickstart, and `ls`'s
+// own bootstrap hint (lsBootstrapHint, ls.go) all point at the same literal
+// command.
+const bootstrapCmd = "ledger init && ledger sync"
+
+// ledgerTomlFor builds the committed breadcrumb's content. remote is the
+// name init resolved as the default sync remote (bestEffortRemote,
+// remote.go): when resolvable it's written active and uncommented, so a
+// later clone's own `resolveRemote` (breadcrumb > "origin" > sole remote)
+// reads it back; otherwise the line stays a commented-out "origin" example
+// for a human to fill in. Either way it's a git remote NAME only, never a
+// URL — a committed URL would let anyone who lands a commit redirect every
+// clone's sync target.
+func ledgerTomlFor(remote string) string {
+	remoteLine := "# remote = \"origin\"  # default sync remote (name only)\n"
+	if remote != "" {
+		remoteLine = fmt.Sprintf("remote = %q  # default sync remote (name only)\n", remote)
+	}
+	return "# This repo uses `ledger` for durable agent working-state (git phantom refs).\n" +
+		"# Bootstrap in a fresh clone:  " + bootstrapCmd + "\n" +
+		"# Docs: run `ledger quickstart`\n" +
+		remoteLine
+}
 
 var claudeStanzaLines = []string{
 	"  ## Ledger",
@@ -193,7 +210,7 @@ func initRepoCase(target string) ([]string, map[string]any, error) {
 		return lines, payload, nil
 	}
 
-	if err := os.WriteFile(tomlPath, []byte(ledgerTomlContent), 0o644); err != nil {
+	if err := os.WriteFile(tomlPath, []byte(ledgerTomlFor(bestEffortRemote(repo))), 0o644); err != nil {
 		return nil, nil, fmt.Errorf("write .ledger.toml: %w", err)
 	}
 	payload["already_initialized"] = false

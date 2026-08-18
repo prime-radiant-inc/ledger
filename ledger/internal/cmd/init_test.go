@@ -89,6 +89,34 @@ func TestInitRepoIdempotent(t *testing.T) {
 	}
 }
 
+// TestInitBreadcrumbRoundTripKeepsRemoteName: when init can resolve a
+// default remote (here the sole configured one, named something other than
+// "origin"), the committed breadcrumb records that NAME, active and
+// uncommented — never a URL (round 5) — and reading it back via
+// breadcrumbRemote reproduces the same name, the round trip a later clone's
+// own `resolveRemote` depends on.
+func TestInitBreadcrumbRoundTripKeepsRemoteName(t *testing.T) {
+	dir := initRepo(t)
+	git(t, dir, "remote", "add", "upstream", "https://example.invalid/x.git")
+	so, _, code := run(t, dir, "init")
+	if code != 0 {
+		t.Fatal(so)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, ".ledger.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `remote = "upstream"`) {
+		t.Fatalf("breadcrumb must record the resolved remote's name, uncommented: %s", body)
+	}
+	if strings.Contains(string(body), "https://") {
+		t.Fatalf("breadcrumb must never carry a URL: %s", body)
+	}
+	if got := breadcrumbRemote(dir); got != "upstream" {
+		t.Fatalf("breadcrumbRemote round-trip: got %q, want %q", got, "upstream")
+	}
+}
+
 func TestInitHooksWritesSnippetNotHarnessConfig(t *testing.T) {
 	dir := initRepo(t)
 	so, _, code := run(t, dir, "init", "--hooks")
