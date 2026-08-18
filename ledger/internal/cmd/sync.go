@@ -1,0 +1,285 @@
+package cmd
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	"ledger/internal/model"
+	"ledger/internal/out"
+	"ledger/internal/store"
+)
+
+// SlugOutcome is one slug's per-slug result. Both sync and push report a
+// list of these, and both exit 3 when any of them failed (the spec's
+// partial-failure code) — a fleet syncing twelve boards must never have one
+// unreachable slug reported as total success or total failure.
+type SlugOutcome struct {
+	Slug   string `json:"slug"`
+	Result string `json:"result"`
+	Detail string `json:"detail,omitempty"`
+	ID     string `json:"id,omitempty"`
+}
+
+// failed reports the outcomes that make the whole invocation partial.
+func (o SlugOutcome) failed() bool {
+	return o.Result == "refused" || o.Result == "failed" || o.Result == "rejected"
+}
+
+func init() { register(newSyncCmd) }
+
+func newSyncCmd(c *Ctx) *cobra.Command {
+	var remote, asFlag string
+	cmd := &cobra.Command{Use: "sync", Short: "fetch tracking refs and merge remote ledger history (never pushes)",
+		Long: "Fetches refs/ledger/* from a remote into this repo's private tracking namespace\n" +
+			"(refs/ledger-remote/<remote>/<slug>), then per slug: tracking already contained\n" +
+			"in local is a no-op; local behind tracking fast-forwards; a true divergence gets\n" +
+			"exactly one sentinel merge commit; a slug with no local ref is adopted at the\n" +
+			"tracking head. Sync never pushes — `ledger push` is a separate, deliberate act.",
+		Args: noPositionals("sync"),
+		RunE: func(_ *cobra.Command, _ []string) error { return runSync(c, remote, asFlag) }}
+	cmd.Flags().StringVar(&remote, "remote", "", "git remote name (default: .ledger.toml's remote, else origin)")
+	cmd.Flags().StringVar(&asFlag, "as", "", "author identity recorded on sentinel merge commits")
+	return cmd
+}
+
+func runSync(c *Ctx, remoteFlag, asFlag string) error {
+	remote, err := resolveRemote(c, remoteFlag)
+	if err != nil {
+		return err
+	}
+	if remote == "" {
+		// Degraded mode, stated by the spec: a clean no-op with a message,
+		// never an error. A repo with no remote is a legitimate way to run.
+		outEmit(c, map[string]any{"synced": []SlugOutcome{}, "remote": nil,
+			"note": "no git remote configured — nothing to sync"},
+			[]string{"no git remote configured — nothing to sync (git remote add origin <url>)"})
+		return nil
+	}
+
+	repairs := repairRefspecs(c.Store.Repo, remote)
+	for _, r := range repairs {
+		fmt.Fprintln(c.Stderr, "[ledger] "+r)
+	}
+	if err := fetchTracking(c.Store.Repo, remote); err != nil {
+		return err
+	}
+
+	author := model.ResolveAuthor(asFlag)
+	outcomes := []SlugOutcome{} // never nil: an empty invocation must marshal as [], not JSON null
+	for _, slug := range trackedSlugs(c.Store.Repo, remote) {
+		outcomes = append(outcomes, c.syncOne(remote, slug, author))
+	}
+	sort.Slice(outcomes, func(i, j int) bool { return outcomes[i].Slug < outcomes[j].Slug })
+
+	return c.emitOutcomes("synced", remote, outcomes)
+}
+
+// syncOne is the parent spec's per-slug rule, in the order the cases have
+// to be decided:
+//
+//	tracking ⊆ local          => no-op
+//	tracking has >1 root      => refused (multi-root, before anything moves)
+//	no local ref              => CAS-create at the tracking head (adoption)
+//	different creation commit => refused, naming both creators
+//	local ⊆ tracking          => fast-forward
+//	true divergence           => exactly ONE sentinel merge, under ref CAS
+func (c *Ctx) syncOne(remote, slug, author string) SlugOutcome {
+	trackRef := store.TrackingRef(remote, slug)
+	track, ok := c.Store.RevParse(trackRef)
+	if !ok {
+		return SlugOutcome{Slug: slug, Result: "failed", Detail: "tracking ref vanished mid-sync"}
+	}
+	local, haveLocal := c.Store.FullHead(slug)
+
+	if haveLocal && c.Store.IsAncestor(track, local) {
+		return SlugOutcome{Slug: slug, Result: "no-op"}
+	}
+
+	// Multi-root refusal (spec rev 5): before the local ref is moved or
+	// created, check the TRACKING chain's own root set. A grafted remote
+	// chain that retains the legitimate root would pass the same-root
+	// intersection check below forever; this catches it at the source, with
+	// the data the fold's own log parse already has in hand.
+	_, _, trackResult, err := c.Store.EventsDAGAt(trackRef)
+	if err != nil {
+		return SlugOutcome{Slug: slug, Result: "failed", Detail: err.Error()}
+	}
+	if len(trackResult.Roots) > 1 {
+		return c.multiRootRefusal(slug, trackRef, trackResult.Roots)
+	}
+
+	if !haveLocal {
+		return c.adopt(slug, track, trackResult.Roots)
+	}
+	if bad := c.rootMismatch(slug, trackResult.Roots); bad != nil {
+		return *bad
+	}
+	if c.Store.IsAncestor(local, track) {
+		if !c.Store.CAS(store.Ref(slug), track, local) {
+			return SlugOutcome{Slug: slug, Result: "failed", Detail: "local ref moved during fast-forward — re-run ledger sync"}
+		}
+		return SlugOutcome{Slug: slug, Result: "fast-forward", ID: track[:10]}
+	}
+
+	// True divergence: one sentinel merge, under CAS. The sentinel carries a
+	// type:"sync" event.json, which every read, fold, count and idempotency
+	// scan skips and the fold order contracts out of the DAG entirely.
+	for attempt := 0; attempt < 5; attempt++ {
+		ev := model.NewEvent("sync", author, c.Store.Repo)
+		ev.Text = "sync " + remote + "/" + slug
+		merge, err := c.Store.BuildMerge([]string{local, track}, ev)
+		if err != nil {
+			return SlugOutcome{Slug: slug, Result: "failed", Detail: err.Error()}
+		}
+		if c.Store.CAS(store.Ref(slug), merge, local) {
+			c.Store.GCAuto()
+			return SlugOutcome{Slug: slug, Result: "merged", ID: merge[:10]}
+		}
+		cur, still := c.Store.FullHead(slug)
+		if !still {
+			return SlugOutcome{Slug: slug, Result: "failed", Detail: "local ref disappeared mid-merge"}
+		}
+		local = cur // a writer landed an event under us: re-parent and retry
+	}
+	return SlugOutcome{Slug: slug, Result: "failed", Detail: "ref kept moving — re-run ledger sync"}
+}
+
+// rootMismatch enforces the same-root rule: sync merges only chains sharing
+// a creation commit. Two clones that independently created one slug have
+// nothing to merge — a merge would splice two unrelated ledgers into one
+// chain — so this refuses, names BOTH creators from their meta.json, and
+// points at the exit (export the local chain, import it under a new slug,
+// and let sync adopt the remote one). Distinct from multi-root refusal: this
+// compares two single-root chains that disagree, not one chain that already
+// has more than one root of its own.
+func (c *Ctx) rootMismatch(slug string, trackRoots []string) *SlugOutcome {
+	_, _, localResult, err := c.Store.EventsDAG(slug)
+	if err != nil {
+		return &SlugOutcome{Slug: slug, Result: "failed", Detail: err.Error()}
+	}
+	for _, lr := range localResult.Roots {
+		if model.Contains(trackRoots, lr) {
+			return nil
+		}
+	}
+	detail := "different creation commits"
+	if len(localResult.Roots) > 0 && len(trackRoots) > 0 {
+		lby, lat, _ := creatorOf(c.Store, localResult.Roots[0])
+		rby, rat, _ := creatorOf(c.Store, trackRoots[0])
+		detail = fmt.Sprintf("local chain created by %s at %s; remote chain created by %s at %s — "+
+			"export the local chain and re-import it under a new slug (ledger export %s --to %s.jsonl; "+
+			"ledger import %s.jsonl --slug %s-local), then sync adopts the remote chain",
+			lby, lat, rby, rat, slug, slug, slug, slug)
+	}
+	return &SlugOutcome{Slug: slug, Result: "refused", Detail: detail}
+}
+
+// multiRootRefusal implements the rev 5 pin: a candidate chain with more
+// than one root is refused outright, before the local ref is ever moved or
+// created. Unlike the same-root rule's export/import exit, this one is
+// remote-side: push is non-force and sync refuses, so nothing tool-side can
+// repair or worsen a grafted remote ref — an admin must delete or
+// force-replace it directly, and until they do, the slug stays wedged.
+func (c *Ctx) multiRootRefusal(slug, trackRef string, roots []string) SlugOutcome {
+	names := make([]string, len(roots))
+	for i, r := range roots {
+		names[i] = fmt.Sprintf("%s (created by %s)", r[:10], rootCreator(c.Store, r))
+	}
+	detail := fmt.Sprintf("the tracking ref %s has %d roots — %s — this chain was grafted, not synced from one "+
+		"creation; an admin must delete or force-replace the remote ref (refs/ledger/%s), and until then every "+
+		"host's sync refuses it",
+		trackRef, len(roots), strings.Join(names, "; "), slug)
+	return SlugOutcome{Slug: slug, Result: "refused", Detail: detail}
+}
+
+// rootCreator names a root commit's creator for the multi-root refusal:
+// meta.json's created_by when present, else the commit's own (synthetic)
+// git author name — a graft's foreign root often carries no meta.json at
+// all, and the refusal must still name someone responsible for it.
+func rootCreator(s store.Store, sha string) string {
+	if meta, ok := s.MetaAt(sha); ok && meta.CreatedBy != "" {
+		return meta.CreatedBy
+	}
+	if a := s.CommitAuthor(sha); a != "" {
+		return a
+	}
+	return "unknown"
+}
+
+// adopt is the remote-only CAS-create — the cross-host resume path. It is a
+// THIRD meta-minting path alongside create and import, so it re-validates
+// the arriving board's declarations exactly as import does: a ready-capable
+// board whose declared shape is broken must be refused with the defect
+// named, never minted. Adoption also announces the same provenance line
+// adopt-by-hand would, so a planted slug arrives labeled through either
+// door.
+func (c *Ctx) adopt(slug, track string, roots []string) SlugOutcome {
+	if len(roots) == 0 {
+		return SlugOutcome{Slug: slug, Result: "refused", Detail: "remote chain has no creation commit"}
+	}
+	meta, ok := c.Store.MetaAt(roots[0])
+	if !ok {
+		return SlugOutcome{Slug: slug, Result: "refused",
+			Detail: "remote chain's creation commit carries no meta.json — not a ledger"}
+	}
+	if declErr := model.ValidateDeclarations(meta); declErr != nil {
+		return SlugOutcome{Slug: slug, Result: "refused",
+			Detail: "remote board's declarations are invalid and were NOT adopted: " + declErr.Msg + " — fix: " + declErr.Hint}
+	}
+	if !c.Store.CAS(store.Ref(slug), track, "") {
+		return SlugOutcome{Slug: slug, Result: "failed", Detail: "a local ledger '" + slug + "' appeared mid-adoption"}
+	}
+	by, created, scope := creatorOf(c.Store, roots[0])
+	return SlugOutcome{Slug: slug, Result: "adopted", ID: track[:10],
+		Detail: fmt.Sprintf("created by %s at %s, scope %s", by, created, scope)}
+}
+
+// emitOutcomes is the shared reporting tail of sync and push (Task 6 reuses
+// it for push): one payload carrying every per-slug outcome and the remote
+// synced/pushed against, a TTY line per outcome, and exit 3 whenever any
+// slug failed (the spec's partial-failure code). ok is true iff every
+// outcome succeeded; any failure folds the parent's error contract
+// ({error,message,hint}) into THIS SAME document — ok:false,
+// error:"partial_failure", hint pointing at the outcomes array — rather than
+// a second one, so a consumer keying on either `ok` or `error` reads
+// failure as failure. The payload is written BEFORE the non-zero exit is
+// returned, exactly like watch's timeout.
+func (c *Ctx) emitOutcomes(verb, remote string, outcomes []SlugOutcome) error {
+	partial := false
+	lines := make([]string, 0, len(outcomes)+1)
+	for _, o := range outcomes {
+		if o.failed() {
+			partial = true
+		}
+		l := fmt.Sprintf("  %-24s %s", out.EscapeControls(o.Slug), o.Result)
+		if o.ID != "" {
+			l += " [" + o.ID + "]"
+		}
+		if o.Detail != "" {
+			l += "  " + out.EscapeControls(o.Detail)
+		}
+		lines = append(lines, l)
+	}
+	payload := map[string]any{verb: outcomes, "remote": remote}
+	if len(outcomes) == 0 {
+		note := "nothing to " + strings.TrimSuffix(verb, "ed") + " on remote '" + remote + "'"
+		lines = append(lines, note)
+		payload["note"] = note // non-TTY (agent) mode gets the same note a TTY reader sees
+	}
+	if partial {
+		payload["ok"] = false
+		payload["error"] = "partial_failure"
+		payload["message"] = "some slugs did not " + strings.TrimSuffix(verb, "ed")
+		payload["hint"] = "see the per-slug outcomes in `" + verb + "`"
+	}
+	outEmit(c, payload, lines)
+	if partial {
+		// Payload already written; root.go returns this exit code without
+		// printing a second document, as it does for watch's timeout.
+		return &out.CLIError{Code: "partial_failure", ExitCode: 3}
+	}
+	return nil
+}

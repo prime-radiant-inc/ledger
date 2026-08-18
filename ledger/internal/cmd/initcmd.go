@@ -33,9 +33,9 @@ func newInitCmd(c *Ctx) *cobra.Command {
 // a committed URL would let anyone who lands a commit redirect every
 // clone's sync target).
 const ledgerTomlContent = "# This repo uses `ledger` for durable agent working-state (git phantom refs).\n" +
-	"# Bootstrap in a fresh clone:  ledger init && ledger ls\n" +
+	"# Bootstrap in a fresh clone:  ledger init && ledger sync\n" +
 	"# Docs: run `ledger quickstart`\n" +
-	"# remote = \"origin\"  # default sync remote (name only); uncomment once `ledger sync` ships\n"
+	"# remote = \"origin\"  # default sync remote (name only)\n"
 
 var claudeStanzaLines = []string{
 	"  ## Ledger",
@@ -161,6 +161,13 @@ func initRepoCase(target string) ([]string, map[string]any, error) {
 		return nil, nil, fmt.Errorf("git config core.logAllRefUpdates: %s", stderr)
 	}
 
+	// Best-effort refspec install: a freshly cloned repo already has its
+	// "origin" remote, so this makes it sync-ready immediately rather than
+	// waiting for the first `ledger sync` to repair it. Silently skipped
+	// when the remote can't be resolved (zero or ambiguous remotes) — init
+	// has no --remote flag, and sync's own repair runs regardless.
+	refspecRepairs := installRefspecBestEffort(repo)
+
 	payload := map[string]any{
 		"kind": "repo", "path": target,
 		"bootstrap_hint": bootstrapHint,
@@ -168,13 +175,22 @@ func initRepoCase(target string) ([]string, map[string]any, error) {
 		"admin_doc":      adminDocPath,
 		"commit_hint":    commitHint,
 	}
+	if len(refspecRepairs) > 0 {
+		payload["refspec_repairs"] = refspecRepairs
+	}
+	refspecLines := make([]string, len(refspecRepairs))
+	for i, r := range refspecRepairs {
+		refspecLines[i] = "[ledger] " + r
+	}
+
 	tomlPath := filepath.Join(target, ".ledger.toml")
 	if _, err := os.Stat(tomlPath); err == nil {
 		payload["already_initialized"] = true
-		return []string{
+		lines := append([]string{
 			"[ledger] already initialized (.ledger.toml exists) — refreshed core.logAllRefUpdates",
 			adminPointerLine,
-		}, payload, nil
+		}, refspecLines...)
+		return lines, payload, nil
 	}
 
 	if err := os.WriteFile(tomlPath, []byte(ledgerTomlContent), 0o644); err != nil {
@@ -186,6 +202,7 @@ func initRepoCase(target string) ([]string, map[string]any, error) {
 		"Add to CLAUDE.md or AGENTS.md:"}
 	lines = append(lines, claudeStanzaLines...)
 	lines = append(lines, "", adminPointerLine)
+	lines = append(lines, refspecLines...)
 	return lines, payload, nil
 }
 

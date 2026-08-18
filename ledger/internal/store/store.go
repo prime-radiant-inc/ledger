@@ -52,6 +52,19 @@ type Store struct{ Repo gitx.Repo }
 
 func ref(slug string) string { return "refs/ledger/" + slug }
 
+// Ref is a ledger's phantom ref name — the one place outside this package
+// (sync/push) that has to name refs/ledger/<slug> directly, for CAS moves
+// the plumbing here doesn't otherwise expose.
+func Ref(slug string) string { return ref(slug) }
+
+// TrackingRef is a synced remote's private tracking ref for one slug. The
+// namespace is refs/ledger-remote/, deliberately NOT refs/remotes/, which
+// git's own default branch refspec also populates (verified fatal collision
+// when a branch is named ledger/<x>).
+func TrackingRef(remote, slug string) string {
+	return "refs/ledger-remote/" + remote + "/" + slug
+}
+
 // Resolution is what Resolve settled on.
 type Resolution struct {
 	Store Store
@@ -151,8 +164,18 @@ func (s Store) Slugs() ([]string, error) {
 	return slugs, nil
 }
 
-func (s Store) head(slug string) (string, bool) {
-	out, _, code := s.Repo.Git("", "rev-parse", "-q", "--verify", ref(slug))
+func (s Store) head(slug string) (string, bool) { return s.RevParse(ref(slug)) }
+
+// FullHead is head's exported form: a ledger's tip as a full 40-char sha,
+// which a CAS old-value needs — the 10-char event id everything else passes
+// around is not a legal CAS ticket.
+func (s Store) FullHead(slug string) (string, bool) { return s.head(slug) }
+
+// RevParse resolves any rev — a slug's own ref, or an arbitrary ref like a
+// sync tracking ref refs/ledger-remote/<remote>/<slug> — to a full sha. ok
+// is false when it doesn't resolve (an absent ref, a vanished tracking ref).
+func (s Store) RevParse(rev string) (string, bool) {
+	out, _, code := s.Repo.Git("", "rev-parse", "-q", "--verify", rev)
 	return out, code == 0
 }
 
@@ -243,10 +266,27 @@ func (s Store) Events(slug string) ([]model.Event, model.Meta, error) {
 // dropped) when its event.json is missing or unparseable, or its event
 // type is "sync".
 func (s Store) EventsDAG(slug string) ([]model.Event, model.Meta, dag.Result, error) {
+	return s.eventsDAG(ref(slug), slug)
+}
+
+// EventsDAGAt is EventsDAG generalized to an arbitrary ref instead of a
+// slug's own refs/ledger/<slug> — sync's multi-root refusal and same-root
+// check both have to run this exact fold-order read against a tracking ref
+// (refs/ledger-remote/<remote>/<slug>) before any local ref is moved or
+// created, since the fold's root set (not raw git ancestry) is what "root"
+// means everywhere else in this codebase.
+func (s Store) EventsDAGAt(refName string) ([]model.Event, model.Meta, dag.Result, error) {
+	return s.eventsDAG(refName, refName)
+}
+
+// eventsDAG is EventsDAG/EventsDAGAt's shared read, generalized over the
+// ref to read (refName) and the label an error names (label — the slug for
+// EventsDAG, the ref itself for EventsDAGAt, which has no slug of its own).
+func (s Store) eventsDAG(refName, label string) ([]model.Event, model.Meta, dag.Result, error) {
 	var meta model.Meta
-	out, _, code := s.Repo.Git("", "log", "--format=%H%x09%P", ref(slug))
+	out, _, code := s.Repo.Git("", "log", "--format=%H%x09%P", refName)
 	if code != 0 || out == "" {
-		return nil, meta, dag.Result{}, fmt.Errorf("%w: %s", ErrUnknownLedger, slug)
+		return nil, meta, dag.Result{}, fmt.Errorf("%w: %s", ErrUnknownLedger, label)
 	}
 	lines := strings.Split(out, "\n")
 	commits := make([]string, len(lines))
@@ -313,6 +353,44 @@ func (s Store) Committers(slug string) (map[string]string, error) {
 		m[sha[:10]] = cn
 	}
 	return m, nil
+}
+
+// MetaAt reads the meta.json carried by a specific commit — sync's adoption
+// and its two-creator root-mismatch/multi-root diagnoses all need a
+// particular ROOT commit's own declarations and provenance, not the ref's
+// aggregate meta (ambiguous once a chain has more than one root).
+func (s Store) MetaAt(commit string) (model.Meta, bool) {
+	var meta model.Meta
+	contents, present := s.catBatch([]string{commit + ":meta.json"})
+	if !present[0] {
+		return meta, false
+	}
+	if err := json.Unmarshal([]byte(contents[0]), &meta); err != nil {
+		return meta, false
+	}
+	return meta, true
+}
+
+// CommitAuthor reads a commit's git author name — the asserted author
+// gitx.IdentityArgs set at write time — used as a creator fallback when a
+// root commit carries no meta.json at all (a grafted or foreign root).
+func (s Store) CommitAuthor(sha string) string {
+	out, _, code := s.Repo.Git("", "log", "-1", "--format=%an", sha)
+	if code != 0 {
+		return ""
+	}
+	return out
+}
+
+// CAS moves refName from old to new via update-ref, failing (false) if the
+// ref moved under us since old was read. old == "" requires the ref to be
+// currently absent — the create case (sync's adoption). A single attempt:
+// callers that need to retry across a race (fast-forward, adoption, the
+// sentinel merge) re-read and retry themselves, exactly as casLoop does for
+// Append.
+func (s Store) CAS(refName, newSHA, old string) bool {
+	_, _, code := s.Repo.Git("", "update-ref", refName, newSHA, old)
+	return code == 0
 }
 
 // catBatch fetches every id (an object sha, or a "<rev>:<path>" spec) with a
@@ -512,6 +590,27 @@ func (s Store) runPrecondition(slug string, ok bool, pre Precondition) error {
 // full-length (40 hex chars): Append truncates it for its own callers, but
 // the supersede transaction needs the untruncated form for CAS Old values.
 func (s Store) BuildCommit(slug, parent string, ev model.Event, extra map[string]string) (string, error) {
+	var parents []string
+	if parent != "" {
+		parents = []string{parent}
+	}
+	_ = slug // reserved: commit content doesn't need the slug today, kept for signature symmetry with Append
+	return s.buildCommit(parents, ev, extra)
+}
+
+// BuildMerge writes a sentinel sync merge: a commit with two (or, after a
+// re-parent-and-retry race, still two) parents whose tree carries only a
+// type:"sync" event.json — sync's true-divergence case, minted under the
+// caller's own ref CAS. Every read, fold, count and idempotency scan skips
+// it, and the fold order (dag package) contracts it out of the DAG
+// entirely: it exists to join two chains, never to say anything.
+func (s Store) BuildMerge(parents []string, ev model.Event) (string, error) {
+	return s.buildCommit(parents, ev, nil)
+}
+
+// buildCommit is BuildCommit and BuildMerge's shared plumbing: write the
+// event's blob(s), tree, and commit object, touching no ref.
+func (s Store) buildCommit(parents []string, ev model.Event, extra map[string]string) (string, error) {
 	body, err := json.MarshalIndent(ev, "", " ")
 	if err != nil {
 		return "", err
@@ -534,14 +633,13 @@ func (s Store) BuildCommit(slug, parent string, ev model.Event, extra map[string
 	}
 	args := append(gitx.IdentityArgs(ev.Author, committerMarker(ev)),
 		"commit-tree", tree, "-m", ev.Type+":"+ev.Key)
-	if parent != "" {
-		args = append(args, "-p", parent)
+	for _, p := range parents {
+		args = append(args, "-p", p)
 	}
 	csha, se, code := s.Repo.Git("", args...)
 	if code != 0 {
 		return "", fmt.Errorf("git_failed: %s", se)
 	}
-	_ = slug // reserved: commit content doesn't need the slug today, kept for signature symmetry with Append
 	return csha, nil
 }
 

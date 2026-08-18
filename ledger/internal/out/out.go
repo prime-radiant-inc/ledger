@@ -31,7 +31,14 @@ func Emit(w io.Writer, tty bool, payload map[string]any, lines []string) {
 		}
 		return
 	}
-	payload["ok"] = true
+	// A caller building the sync/push partial-failure envelope pre-sets
+	// ok:false (plus error/message/hint) directly on the payload so the
+	// whole document — outcomes and error contract together — is written
+	// in one write, never a second error document tacked on after. Every
+	// other caller leaves "ok" unset and gets the ordinary true.
+	if _, has := payload["ok"]; !has {
+		payload["ok"] = true
+	}
 	doc, _ := json.MarshalIndent(payload, "", " ")
 	fmt.Fprintln(w, string(doc))
 }

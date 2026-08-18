@@ -47,6 +47,24 @@ func TestCheckVersion(t *testing.T) {
 	}
 }
 
+// TestWithEnv: sync's degraded-mode guard (GIT_TERMINAL_PROMPT=0, blanked
+// askpass) has to actually reach the git subprocess, not just live in a
+// struct field nobody reads.
+func TestWithEnv(t *testing.T) {
+	dir := initRepo(t)
+	r := Repo{Dir: dir}.WithEnv("GIT_COMMITTER_NAME=envtest", "GIT_COMMITTER_EMAIL=envtest@example.com")
+	out, _, code := r.Git("", "var", "GIT_COMMITTER_IDENT")
+	if code != 0 || !strings.Contains(out, "envtest") {
+		t.Fatalf("WithEnv did not reach the subprocess: %q (code %d)", out, code)
+	}
+	// The base Repo (no WithEnv) must be untouched — WithEnv returns a copy.
+	plain := Repo{Dir: dir}
+	out, _, _ = plain.Git("", "var", "GIT_COMMITTER_IDENT")
+	if strings.Contains(out, "envtest") {
+		t.Fatalf("WithEnv leaked into the base Repo: %q", out)
+	}
+}
+
 func TestIdentityArgs(t *testing.T) {
 	got := strings.Join(IdentityArgs("alice", "terminal"), " ")
 	want := "-c user.name=alice -c user.email=author@ledger.invalid -c committer.name=terminal -c committer.email=marker@ledger.invalid"

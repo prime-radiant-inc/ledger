@@ -4,6 +4,7 @@ package gitx
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -23,6 +24,20 @@ type Repo struct {
 	Dir   string
 	Calls *int64
 	Bytes *int64
+	// Env holds extra KEY=VALUE entries appended to the subprocess
+	// environment, on top of the inherited os.Environ() — set via WithEnv.
+	// Empty (the zero value) means "inherit exactly", the ordinary case.
+	Env []string
+}
+
+// WithEnv returns a copy of r whose subprocess environment additionally
+// carries the given KEY=VALUE entries — sync/push's degraded-mode guard
+// (GIT_TERMINAL_PROMPT=0, blanked askpass) uses this so a credential
+// prompt inside a non-interactive harness fails fast instead of stalling.
+// r itself is untouched.
+func (r Repo) WithEnv(vars ...string) Repo {
+	r.Env = append(append([]string{}, r.Env...), vars...)
+	return r
 }
 
 func (r Repo) Git(stdin string, args ...string) (stdout, stderr string, code int) {
@@ -42,6 +57,9 @@ func (r Repo) GitRaw(stdin string, args ...string) (stdout, stderr string, code 
 	cmd := exec.Command("git", full...)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
+	}
+	if len(r.Env) > 0 {
+		cmd.Env = append(os.Environ(), r.Env...)
 	}
 	var so, se bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &so, &se

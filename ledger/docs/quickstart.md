@@ -4,7 +4,7 @@ Durable working-state for coding agents, stored in git phantom refs. Full
 per-verb mechanics live in `ledger <verb> --help` (add `--orchestrator` for
 fleet-dispatch) — this is the doctrine `--help` doesn't teach.
 
-**All 17 verbs** (top two rows: slug positional or none; bottom four take
+**All 18 verbs** (top two rows: slug positional or none; bottom four take
 `--ledger <slug>`, ambient when one ledger's open — except `ls`, which takes none):
 
 | | | |
@@ -14,7 +14,7 @@ fleet-dispatch) — this is the doctrine `--help` doesn't teach.
 | set | note | status |
 | show | notes | tail |
 | since | watch | rollup |
-| ls | ready | |
+| ls | ready | sync |
 
 ## Doctrine
 

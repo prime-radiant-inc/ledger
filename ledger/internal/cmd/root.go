@@ -81,9 +81,10 @@ func ExecuteArgs(args []string, stdout, stderr io.Writer) int {
 	}
 	var ce *out.CLIError
 	if errors.As(err, &ce) {
-		if ce.Code == "watch_timeout" {
-			// the verb already emitted its payload; a second error document
-			// would be a second write to the same stream.
+		if ce.Code == "watch_timeout" || ce.Code == "partial_failure" {
+			// the verb already emitted its payload (watch's timeout line, or
+			// sync/push's ok:false envelope) — a second error document would
+			// be a second write to the same stream.
 			return ce.ExitCode
 		}
 		out.WriteError(stderr, ctx.TTY, ce)

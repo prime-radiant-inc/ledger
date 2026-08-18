@@ -20,6 +20,23 @@ func TestEmitJSONEnvelope(t *testing.T) {
 	}
 }
 
+// TestEmitRespectsPresetOK: the sync/push partial-failure envelope needs
+// ok:false folded into the SAME document as the rest of the payload
+// (spec's error contract merged with the outcomes array), not a second
+// error document on a second write. A caller that pre-sets "ok" in the
+// payload must have it survive untouched.
+func TestEmitRespectsPresetOK(t *testing.T) {
+	var b bytes.Buffer
+	Emit(&b, false, map[string]any{"ok": false, "error": "partial_failure", "synced": []string{}}, nil)
+	var doc map[string]any
+	if err := json.Unmarshal(b.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc["ok"] != false || doc["error"] != "partial_failure" {
+		t.Fatalf("preset ok/error must survive: %v", doc)
+	}
+}
+
 func TestEmitTTYLines(t *testing.T) {
 	var b bytes.Buffer
 	Emit(&b, true, map[string]any{"id": "abc"}, []string{"line1", "line2"})
