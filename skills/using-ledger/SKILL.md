@@ -5,7 +5,7 @@ description: Use when work spans sessions or agents and needs durable, verifiabl
 
 # Using ledger
 
-Eight patterns for when and how to reach for a ledger. This is judgment,
+Nine patterns for when and how to reach for a ledger. This is judgment,
 not mechanics — every command shape here is spelled out in full in `ledger
 quickstart`; read that before your first real write.
 
@@ -165,7 +165,13 @@ not a form to fill in. Work it, close it, re-run `ready` — that re-run
 *is* the loop, never polling. A non-zero `totals.attention` alongside
 available work is a cue to flag triage, not a reason to wait for the
 verdict to flip — and break any cycle in `attention` on sight (the
-Break-a-cycle idiom below), verdict regardless, never merely flagged.
+Break-a-cycle idiom below), verdict regardless, never merely flagged. A
+`contested` entry is resolved the same on-sight way: read BOTH heads
+with `show --id` on each of `contest.ids` before collapsing with
+`--expect <contest.expect>`, adding `--override` where the collapse
+trips the settled gate — a seed collision can hide two distinct tasks
+under one key, and renaming or splitting them is a human call, never a
+picker's.
 When `frontier` is `all-handled`, leave — the tool has verified every
 dependency chain ends at a live worker or a human, and — cycle detection
 being holder-blind — that no dependency loop hides behind either. When
@@ -432,3 +438,48 @@ cd <board dir> && ~/path-to/ledger watch --value open,in-progress,closed,wontfix
 
 Run `ledger quickstart` for general mechanics; `ledger create --help`
 for the board declaration flags.
+
+## Sync
+
+Sync and push are cross-host doctrine, not board-only — the habit
+applies to every ledger you touch, coordination boards most of all.
+Start of a session: `ledger sync` fetches and merges remote history,
+never pushes. End of a session, or whenever a handoff needs to reach
+someone else: `ledger push`. Bare `push` publishes every local slug;
+naming slugs publishes only those — the privacy lever for a ledger
+that isn't ready to be seen, since everything pushed is readable by
+anyone with read access to the repo.
+
+Clock skew is an asymmetric threat to claim staleness: board horizons
+MUST exceed expected inter-host clock skew, so claims are not born
+stale. That covers only one direction — a peer whose clock runs ahead
+has no horizon setting that helps; clock discipline is the only
+defense there.
+
+A `contested` attention entry is a partition's fingerprint: two
+replicas raced the same guarded field. Recovery reads BOTH heads with
+`show --id` on each of `contest.ids` before collapsing anything — a
+seed collision can hide two distinct tasks under one key, and the
+title alone won't reveal it. Collapse with `--expect
+<contest.expect>`; where the collapse re-asserts a settled value it
+trips the settled gate, so add `--override` and say why in `-m`, the
+same as any other settled-outcome revision. Renaming or splitting a
+seed-collided key is a human call, never a recovery agent's to make
+alone.
+
+A multi-root refusal (a grafted or foreign chain arriving via sync)
+wedges that slug for the whole fleet: push is non-force and sync
+refuses, so no tool operation can repair or worsen it locally. The
+refusal error names the tracking ref
+(`refs/ledger-remote/<remote>/<slug>`) so the operator can inspect the
+refused chain with plain git — the fix is remote-side ref surgery, the
+same class of human-run repair as a leaked secret: an admin deletes or
+force-replaces the poisoned ref, and the slug stays wedged until they
+do.
+
+```
+ledger sync
+ledger push
+```
+
+Run `ledger quickstart` for mechanics.

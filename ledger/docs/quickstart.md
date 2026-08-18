@@ -4,13 +4,14 @@ Durable working-state for coding agents, stored in git phantom refs. Full
 per-verb mechanics live in `ledger <verb> --help` (add `--orchestrator` for
 fleet-dispatch) — this is the doctrine `--help` doesn't teach.
 
-**All 18 verbs** (top two rows: slug positional or none; bottom four take
-`--ledger <slug>`, ambient when one ledger's open — except `ls`, which takes none):
+**All 19 verbs** (top three rows: slug positional or none; bottom four
+take `--ledger <slug>`, ambient when one ledger's open — except `ls`/`sync`):
 
 | | | |
 |---|---|---|
 | create | close | vocab add |
 | export | import | init |
+| push | | |
 | set | note | status |
 | show | notes | tail |
 | since | watch | rollup |
@@ -66,6 +67,10 @@ fleet-dispatch) — this is the doctrine `--help` doesn't teach.
     shipped|abandoned|superseded`. Otherwise `ls`'s idle mark catches it.
 14. **Never alias the invocation into a shell variable** — `cmd="ledger set
     ..."; $cmd` re-splits on every space. Always call `ledger` directly.
+15. **Sync at session start, push at session end.** `sync` fetches and
+    merges remote history, never pushes; `push [<slug>...]` publishes
+    local refs, non-force — bare sends every slug, naming sends only
+    those, the privacy lever for a partial handoff.
 
 ## Issue boards
 
@@ -78,9 +83,12 @@ take `--expect`; `needs_override` names which of three signals stopped
 you — `human` is a stop sign, walk away; `claim` and `settled` mean you
 are revising a live claim or a settled outcome, so re-read it and say
 why in `-m` alongside `--override`. An `attention` entry with `"reason":
-"contested"` means two replicas raced that field — read BOTH
-`contest.ids` before collapsing with `--expect <contest.expect>`. Full
-doctrine: the `using-ledger` skill's Issue board section.
+"contested"` means two replicas raced that field — a seed collision can
+hide two tasks under one key, so read BOTH heads (`show --id` on each
+`contest.ids` entry) before collapsing with `--expect <contest.expect>`,
+adding `--override` where it trips the settled gate. Board horizons must
+exceed expected inter-host clock skew, so claims aren't born stale. Full
+doctrine: the `using-ledger` skill's Issue board and Sync sections.
 
 ## Walkthrough — a disposable scratch ledger, start to finish
 
@@ -107,4 +115,6 @@ ledger rollup
 ledger rollup deadbeef00 -m "no such record"  # expect: exit 4 error unknown_event
 ledger tail --raw -n 5
 ledger watch --timeout 1  # expect: exit 2
+ledger sync  # expect: exit 0
+ledger push  # expect: exit 0
 ```
