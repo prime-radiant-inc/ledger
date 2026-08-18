@@ -88,7 +88,7 @@ hide two tasks under one key, so read BOTH heads (`show --id` on each
 `contest.ids` entry) before collapsing with `--expect <contest.expect>`,
 adding `--override` where it trips the settled gate. Board horizons must
 exceed expected inter-host clock skew, so claims aren't born stale. Full
-doctrine: the `using-ledger` skill's Issue board and Sync sections.
+doctrine: the `ledger-issues` skill's Issue board and Sync sections.
 
 ## Walkthrough — a disposable scratch ledger, start to finish
 

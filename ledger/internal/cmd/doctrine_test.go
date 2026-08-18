@@ -1,11 +1,15 @@
-// Doctrine tests: the skill's "Issue board" pattern section
-// (skills/using-ledger/SKILL.md, repo root) is executable doctrine, not
-// aspirational prose. TestDoctrineVerbatimWalkthrough (spec test 17) parses
-// that section straight out of the file, extracts every fenced command
+// Doctrine tests: the "Issue board" pattern section, extracted out of
+// skills/using-ledger/SKILL.md into its own skills/ledger-issues/SKILL.md
+// (repo root), is executable doctrine, not aspirational prose.
+// TestDoctrineVerbatimWalkthrough (spec test 17) parses that section
+// straight out of the ledger-issues file, extracts every fenced command
 // line, and replays them in document order against a real scratch board —
 // if the doctrine and the tool ever drift, this test is the one that
 // notices. TestWatch* (spec test 18) independently exercises the watch
 // doctrine bullet's three claims against the real watch implementation.
+// TestSkillFrontmatterIncludesBoardTriggers still pins using-ledger's own
+// frontmatter, which keeps the board scenarios in its trigger text even
+// though the full doctrine now lives one hop away.
 package cmd
 
 import (
@@ -36,6 +40,19 @@ func skillMDPath(t *testing.T) string {
 	// thisFile: <repo-root>/ledger/internal/cmd/doctrine_test.go
 	// up three (cmd -> internal -> ledger) reaches <repo-root>.
 	return filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "skills", "using-ledger", "SKILL.md")
+}
+
+// ledgerIssuesSkillMDPath finds skills/ledger-issues/SKILL.md the same way
+// skillMDPath finds using-ledger's — the Issue board pattern section (and
+// its fenced doctrine commands) now lives there, extracted out of
+// using-ledger's original companion skill.
+func ledgerIssuesSkillMDPath(t *testing.T) string {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller(0) failed")
+	}
+	return filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "skills", "ledger-issues", "SKILL.md")
 }
 
 // doctrineBinary is the exact placeholder every command line in the
@@ -139,14 +156,14 @@ func tokenizeCommand(line string) []string {
 	return tokens
 }
 
-// parseDoctrineCommands reads SKILL.md, isolates the "## Issue board"
-// section, and returns every fenced command line inside it, in document
-// order, across every fenced block the section contains (multiple idioms
-// each carry their own small fenced example; this walks them as one
-// continuous scratch-board scenario).
+// parseDoctrineCommands reads skills/ledger-issues/SKILL.md, isolates the
+// "## Issue board" section, and returns every fenced command line inside
+// it, in document order, across every fenced block the section contains
+// (multiple idioms each carry their own small fenced example; this walks
+// them as one continuous scratch-board scenario).
 func parseDoctrineCommands(t *testing.T) []doctrineCmd {
 	t.Helper()
-	path := skillMDPath(t)
+	path := ledgerIssuesSkillMDPath(t)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading %s: %v", path, err)
@@ -383,9 +400,10 @@ func doctrineBoard(t *testing.T) string {
 }
 
 // TestDoctrineVerbatimWalkthrough is spec test 17: every fenced command
-// line in SKILL.md's "## Issue board" section, executed in document order
-// against a fresh scratch board, must exit 0 or with its documented error
-// identifier. No drift between doctrine and tool allowed.
+// line in skills/ledger-issues/SKILL.md's "## Issue board" section,
+// executed in document order against a fresh scratch board, must exit 0
+// or with its documented error identifier. No drift between doctrine and
+// tool allowed.
 func TestDoctrineVerbatimWalkthrough(t *testing.T) {
 	dir := doctrineBoard(t)
 	cmds := parseDoctrineCommands(t)
