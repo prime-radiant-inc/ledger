@@ -687,14 +687,17 @@ func freshnessFixture(t *testing.T) (a, b string) {
 // TestFreshnessWarnsFetchedButUnmerged: a replica that has fetched but not
 // yet merged a remote's new events warns on every read verb the spec names
 // (ready, show, status — both the keyless spine and a single key's
-// drill-down), in JSON as a top-level `freshness` sibling key.
+// drill-down — and show --id, still the `show` verb under a different
+// flag), in JSON as a top-level `freshness` sibling key.
 func TestFreshnessWarnsFetchedButUnmerged(t *testing.T) {
 	_, b := freshnessFixture(t)
 	rawFetchTracking(t, b, "origin")
+	id := statusID(t, b, "board", "task-1")
 
 	for _, args := range [][]string{
 		{"ready", "--ledger", "board"},
 		{"show", "--ledger", "board"},
+		{"show", "--id", id, "--ledger", "board"},
 		{"status", "--ledger", "board"},
 		{"status", "task-1", "--ledger", "board"},
 	} {
@@ -734,7 +737,7 @@ func TestFreshnessWarnsFetchedButUnmergedTTY(t *testing.T) {
 	}
 
 	c, buf = ttyCtx(b)
-	if err := runShow(c, "board", nil); err != nil {
+	if err := runShow(c, "board", nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), want) {
@@ -924,7 +927,7 @@ func TestFreshnessRootMismatchGuidance(t *testing.T) {
 	}
 
 	c, buf := ttyCtx(b)
-	if err := runShow(c, "board", nil); err != nil {
+	if err := runShow(c, "board", nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "export the local chain") {

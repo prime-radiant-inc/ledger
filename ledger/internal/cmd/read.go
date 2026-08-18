@@ -158,12 +158,23 @@ func provenance(n model.Event, committers map[string]string, latest bool) string
 	return "by " + out.EscapeControls(n.Author)
 }
 
+// quotedBody renders text as control-escaped lines, quote-prefixed per line
+// so a forged control sequence in the body can't overwrite surrounding
+// output — the one body-rendering path, shared by noteLines and show --id's
+// full-event render (never a second escaping implementation).
+func quotedBody(text string) []string {
+	lines := make([]string, 0)
+	for _, bl := range strings.Split(out.EscapeControls(text), "\n") {
+		lines = append(lines, "  | "+bl)
+	}
+	return lines
+}
+
 // noteLines renders notes for a TTY: an identity line (age under --latest,
 // absolute timestamp otherwise, per the spec's "age only in ls/--latest"
-// rule) followed by the control-escaped body, quote-prefixed per line so a
-// forged control sequence in the body can't overwrite the identity line.
-// now is the evaluation clock for the --latest age render (notes' --at,
-// resolved by the caller; unused when latest is false).
+// rule) followed by the quoted body (quotedBody). now is the evaluation
+// clock for the --latest age render (notes' --at, resolved by the caller;
+// unused when latest is false).
 func noteLines(notes []model.Event, committers map[string]string, latest bool, now time.Time) []string {
 	lines := make([]string, 0, len(notes)*2)
 	for _, n := range notes {
@@ -176,9 +187,7 @@ func noteLines(notes []model.Event, committers map[string]string, latest bool, n
 			head += " (" + n.Key + ")"
 		}
 		lines = append(lines, head)
-		for _, bl := range strings.Split(out.EscapeControls(n.Text), "\n") {
-			lines = append(lines, "  | "+bl)
-		}
+		lines = append(lines, quotedBody(n.Text)...)
 	}
 	return lines
 }
@@ -386,16 +395,20 @@ func runStatus(c *Ctx, key, field string, byBranch bool, ledgerFlag string) erro
 func init() { register(newShowCmd) }
 
 func newShowCmd(c *Ctx) *cobra.Command {
-	var ledgerFlag string
+	var ledgerFlag, idFlag string
 	var whereRaw []string
 	cmd := &cobra.Command{Use: "show", Short: "full render: schema, spine, notes", Args: noPositionals("show"),
-		RunE: func(_ *cobra.Command, _ []string) error { return runShow(c, ledgerFlag, whereRaw) }}
+		RunE: func(_ *cobra.Command, _ []string) error { return runShow(c, ledgerFlag, whereRaw, idFlag) }}
 	cmd.Flags().StringVar(&ledgerFlag, "ledger", "", "target ledger")
 	cmd.Flags().StringArrayVar(&whereRaw, "where", nil, "FIELD=VALUE (exact) or FIELD~=TOKEN (membership); repeatable, AND'd")
+	cmd.Flags().StringVar(&idFlag, "id", "", "render exactly one event by id (prefix match) — a ticket's contest ids, or any event off `tail --raw`")
 	return cmd
 }
 
-func runShow(c *Ctx, ledgerFlag string, whereRaw []string) error {
+func runShow(c *Ctx, ledgerFlag string, whereRaw []string, idFlag string) error {
+	if idFlag != "" {
+		return runShowID(c, ledgerFlag, idFlag)
+	}
 	led, err := c.PickLedger(ledgerFlag)
 	if err != nil {
 		return err
@@ -463,6 +476,114 @@ func runShow(c *Ctx, ledgerFlag string, whereRaw []string) error {
 	}
 	outEmit(c, payload, lines)
 	return nil
+}
+
+// findByID resolves a possibly-short --id argument (prefix match, mirroring
+// notes --id's existing convention) against a set of events. Exactly one
+// match is the only usable result: show --id's whole point is exactly one
+// event, and notes --id's bad_value path (below) needs to tell "unknown"
+// from "ambiguous" from "a real, different event" apart.
+func findByID(evs []model.Event, id string) (ev model.Event, matches int) {
+	for _, e := range evs {
+		if strings.HasPrefix(e.ID, id) {
+			ev = e
+			matches++
+		}
+	}
+	return ev, matches
+}
+
+// idReadErr is the bad_value show --id and notes --id share for an id that
+// doesn't resolve to exactly one event: 0 matches is unknown, >1 is an
+// ambiguous prefix — neither can hand back a specific event.
+func idReadErr(slug, id string, matches int) error {
+	if matches == 0 {
+		return out.Errf("bad_value", "check the id — a ticket's contest ids, or any id off `ledger tail --raw`, are exact", 4,
+			"'%s' does not match any event on '%s'", id, slug)
+	}
+	return out.Errf("bad_value", fmt.Sprintf("give more hex characters — the prefix matches %d events", matches), 4,
+		"'%s' is ambiguous on '%s' (%d events match)", id, slug, matches)
+}
+
+// notesIDErr is notes --id's bad_value for an id that isn't a note event of
+// this ledger: a real event of some other type (ev/matches==1 but not
+// "note"), or unknown/ambiguous outright (matches != 1). Either way the
+// hint sends the caller to show --id, which renders any event, note or not.
+func notesIDErr(slug, id string, ev model.Event, matches int) error {
+	hint := "use `show --id " + id + "` — it renders any event, note or not"
+	if matches == 1 {
+		return out.Errf("bad_value", hint, 4, "'%s' is a %s event on '%s', not a note", id, ev.Type, slug)
+	}
+	if matches == 0 {
+		return out.Errf("bad_value", hint, 4, "'%s' does not match any event on '%s'", id, slug)
+	}
+	return out.Errf("bad_value", hint, 4, "'%s' is ambiguous on '%s' (%d events match, none are notes)", id, slug, matches)
+}
+
+// runShowID is show --id's full single-event render (sync spec Addition 3,
+// "Id reads, both paths pinned"): a ticket hands out bare event ids — a
+// contested entry's loser heads, chiefly — and this is how an agent reads
+// one back in full; a ticket holder following a redirect must never land on
+// less than the event.
+func runShowID(c *Ctx, ledgerFlag, id string) error {
+	led, err := c.PickLedger(ledgerFlag)
+	if err != nil {
+		return err
+	}
+	ev, matches := findByID(led.Events, id)
+	if matches != 1 {
+		return idReadErr(led.Slug, id, matches)
+	}
+	committers, _ := c.Store.Committers(led.Slug)
+	payload := eventJSON(ev)
+	payload["ledger"] = led.Slug
+	payload["via"] = committers[ev.ID]
+	// show --id is the `show` verb (freshness's documented scope) and a
+	// read verb (addRedirect's — every read verb carries the superseded
+	// redirect, not just bare show), so both apply here exactly as they do
+	// on the rest of show.
+	c.attachFreshness(led, payload)
+	lines := addRedirect(c, led, payload)
+	lines = append(lines, showIDLines(ev, committers)...)
+	outEmit(c, payload, lines)
+	return nil
+}
+
+// showIDLines is show --id's TTY render: a header (id/ts/type/key/kind, plus
+// the contested-resolved marker eventLine also carries), mandatory
+// provenance (unlike an ordinary spine row, a bare event id has no key/field
+// context for a reader to infer authorship from), fields, evidence, and —
+// when the event carries a body — the message under quotedBody, the exact
+// per-line-quoted, control-escaped treatment noteLines gives a note body.
+// An event's Text is a note's body under a different Type; there is no
+// second rendering for it here.
+func showIDLines(ev model.Event, committers map[string]string) []string {
+	head := "[" + ev.ID + "] " + ev.TS + " " + ev.Type
+	if ev.Key != "" {
+		head += " key=" + out.EscapeControls(ev.Key)
+	}
+	if ev.Kind != "" {
+		head += " kind=" + out.EscapeControls(ev.Kind)
+	}
+	if m := out.ContestedResolvedMarker(ev.ContestedResolved); m != "" {
+		head += "  " + m
+	}
+	lines := []string{head, "  " + provenance(ev, committers, true)}
+	if len(ev.Fields) > 0 {
+		names := fieldNames(ev.Fields)
+		parts := make([]string, 0, len(names))
+		for _, f := range names {
+			parts = append(parts, out.EscapeControls(f)+"="+out.EscapeControls(ev.Fields[f]))
+		}
+		lines = append(lines, "  fields: "+strings.Join(parts, " "))
+	}
+	if len(ev.Evidence) > 0 {
+		lines = append(lines, "  evidence: "+out.EscapeControls(strings.Join(ev.Evidence, " ")))
+	}
+	if ev.Text != "" {
+		lines = append(lines, quotedBody(ev.Text)...)
+	}
+	return lines
 }
 
 // addRedirect is the superseded-read rule shared by every read verb: when a
@@ -534,6 +655,16 @@ func runNotes(c *Ctx, kind, key, id string, latest bool, limit int, ledgerFlag, 
 			continue
 		}
 		matched = append(matched, n)
+	}
+	// notes --id's non-note branch (sync spec Addition 3): an id that isn't
+	// a note event of THIS ledger — wrong type, or unknown outright — must
+	// never fall through to a silent empty list (the parent's "empty
+	// results announce themselves" rule). An id that IS a note but got
+	// filtered out by --kind/--key is the ordinary, unchanged empty list.
+	if id != "" && len(matched) == 0 {
+		if ev, m := findByID(led.Events, id); m != 1 || ev.Type != "note" {
+			return notesIDErr(led.Slug, id, ev, m)
+		}
 	}
 	n := limit
 	if latest {

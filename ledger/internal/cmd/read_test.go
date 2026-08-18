@@ -124,7 +124,7 @@ func TestShowTTYNoteSummaryOneLine(t *testing.T) {
 
 	var buf bytes.Buffer
 	c := &Ctx{Store: store.Store{Repo: gitx.Repo{Dir: dir}}, TTY: true, Stdout: &buf, Stderr: &buf}
-	if err := runShow(c, "", nil); err != nil {
+	if err := runShow(c, "", nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	rendered := buf.String()
@@ -193,11 +193,12 @@ func TestStatusTTYEscapesControlChars(t *testing.T) {
 }
 
 // TestStatusNotesTailCarrySupersededRedirect: status (both the spine listing
-// and a key drill-down), notes, and tail all read led.SupersededBy the same
-// way show already did — every read verb, not just show, must redirect a
-// caller off a superseded ledger.
+// and a key drill-down), notes, tail, and show --id all read
+// led.SupersededBy the same way show already did — every read verb, not
+// just bare show, must redirect a caller off a superseded ledger.
 func TestStatusNotesTailCarrySupersededRedirect(t *testing.T) {
 	dir := seed(t)
+	id := rawEventID(t, dir, func(ev map[string]any) bool { return ev["type"] == "set" })
 	run(t, dir, "create", "demo2", "--scope", "next", "--supersedes", "demo")
 
 	so, _, _ := run(t, dir, "status", "--ledger", "demo")
@@ -215,6 +216,10 @@ func TestStatusNotesTailCarrySupersededRedirect(t *testing.T) {
 	so, _, _ = run(t, dir, "tail", "--ledger", "demo")
 	if mustJSON(t, so)["superseded_by"] != "demo2" {
 		t.Fatalf("tail must carry the redirect: %s", so)
+	}
+	so, _, _ = run(t, dir, "show", "--id", id, "--ledger", "demo")
+	if mustJSON(t, so)["superseded_by"] != "demo2" {
+		t.Fatalf("show --id must carry the redirect: %s", so)
 	}
 }
 
@@ -251,5 +256,140 @@ func TestRenderWritesDeterministicFile(t *testing.T) {
 	}
 	if string(b1) != string(b2) {
 		t.Fatalf("render must be byte-identical across runs with no new events:\n%s\n---\n%s", b1, b2)
+	}
+}
+
+// rawEventID finds the id of the first raw event matching pred — the id
+// reads tests need a real event/note id off the chain, not a guessed one.
+func rawEventID(t *testing.T, dir string, pred func(ev map[string]any) bool) string {
+	t.Helper()
+	tso, _, _ := run(t, dir, "tail", "--raw", "-n", "100")
+	for _, e := range mustJSON(t, tso)["events"].([]any) {
+		ev := e.(map[string]any)
+		if pred(ev) {
+			return ev["id"].(string)
+		}
+	}
+	t.Fatal("no matching raw event found")
+	return ""
+}
+
+// TestShowIDRendersSetEvent: show --id on a set-event id renders the event
+// in full (sync spec Addition 3, "Id reads, both paths pinned") — type,
+// key, author, and provenance must all be present in the JSON payload.
+func TestShowIDRendersSetEvent(t *testing.T) {
+	dir := seed(t)
+	id := rawEventID(t, dir, func(ev map[string]any) bool {
+		return ev["type"] == "set" && ev["key"] == "t2"
+	})
+	so, _, code := run(t, dir, "show", "--id", id)
+	if code != 0 {
+		t.Fatalf("show --id: %s", so)
+	}
+	doc := mustJSON(t, so)
+	if doc["type"] != "set" || doc["key"] != "t2" || doc["author"] != "reviewer" {
+		t.Fatalf("show --id must render the full event: %v", doc)
+	}
+	if doc["via"] == nil || doc["via"] == "" {
+		t.Fatalf("show --id must render author provenance: %v", doc)
+	}
+	if doc["ledger"] != "demo" {
+		t.Fatalf("show --id payload must carry ledger like every other verb: %v", doc)
+	}
+}
+
+// TestShowIDRendersNoteBody: show --id on a note id renders the body under
+// the parent's per-line quoting and control-character escaping — the same
+// treatment noteLines gives a note body, reused rather than reimplemented.
+func TestShowIDRendersNoteBody(t *testing.T) {
+	dir := seed(t)
+	run(t, dir, "note", "-k", "handoff", "-m", "line one\nbad\rFORGED", "--as", "x")
+	id := rawEventID(t, dir, func(ev map[string]any) bool {
+		return ev["type"] == "note" && ev["author"] == "x"
+	})
+
+	var buf bytes.Buffer
+	c := &Ctx{Store: store.Store{Repo: gitx.Repo{Dir: dir}}, TTY: true, Stdout: &buf, Stderr: &buf}
+	if err := runShow(c, "", nil, id); err != nil {
+		t.Fatal(err)
+	}
+	rendered := buf.String()
+	if !strings.Contains(rendered, "  | line one") {
+		t.Fatalf("show --id must render the note body, per-line quoted: %q", rendered)
+	}
+	if strings.Contains(rendered, "\r") {
+		t.Fatalf("show --id must control-escape the body, not print it raw: %q", rendered)
+	}
+	if !strings.Contains(rendered, "^M") {
+		t.Fatalf("expected the escaped \\r as ^M: %q", rendered)
+	}
+
+	so, _, code := run(t, dir, "show", "--id", id)
+	if code != 0 {
+		t.Fatalf("show --id: %s", so)
+	}
+	doc := mustJSON(t, so)
+	if doc["type"] != "note" || doc["kind"] != "handoff" {
+		t.Fatalf("show --id on a note must render its type/kind: %v", doc)
+	}
+	if !strings.Contains(doc["text"].(string), "\r") {
+		t.Fatal("JSON must carry the raw, unescaped body")
+	}
+}
+
+// TestShowIDUnknown: an unknown id is bad_value naming it (never a bare
+// "not found" without the offending id, and never anything but exit 4).
+func TestShowIDUnknown(t *testing.T) {
+	dir := seed(t)
+	_, se, code := run(t, dir, "show", "--id", "0000000000")
+	if code != 4 || !strings.Contains(se, "bad_value") || !strings.Contains(se, "0000000000") {
+		t.Fatalf("unknown id must be bad_value naming it: code=%d se=%s", code, se)
+	}
+}
+
+// TestNotesIDOnSetEventErrorsWithShowHint: notes --id on a real event id
+// that is NOT a note — a set event's id — must never fall through to a
+// silent empty list; it errors bad_value naming the id, hinting at
+// `show --id` (the parent's "empty results announce themselves" rule).
+func TestNotesIDOnSetEventErrorsWithShowHint(t *testing.T) {
+	dir := seed(t)
+	id := rawEventID(t, dir, func(ev map[string]any) bool { return ev["type"] == "set" })
+	_, se, code := run(t, dir, "notes", "--id", id)
+	if code != 4 || !strings.Contains(se, "bad_value") {
+		t.Fatalf("notes --id on a non-note event must be bad_value: code=%d se=%s", code, se)
+	}
+	if !strings.Contains(se, id) {
+		t.Fatalf("error must name the id: %s", se)
+	}
+	if !strings.Contains(se, "show --id") {
+		t.Fatalf("hint must point at show --id: %s", se)
+	}
+}
+
+// TestNotesIDUnknownErrorsWithShowHint: an id that matches no event at all
+// gets the identical bad_value/show --id treatment as a non-note event —
+// the spec's "non-note event and unknown id alike" clause.
+func TestNotesIDUnknownErrorsWithShowHint(t *testing.T) {
+	dir := seed(t)
+	_, se, code := run(t, dir, "notes", "--id", "0000000000")
+	if code != 4 || !strings.Contains(se, "bad_value") || !strings.Contains(se, "show --id") {
+		t.Fatalf("unknown id on notes --id must be bad_value with a show --id hint: code=%d se=%s", code, se)
+	}
+}
+
+// TestNotesIDOnRealNoteUnchanged: notes --id keeps its existing
+// note-rendering contract for an id that actually is a note.
+func TestNotesIDOnRealNoteUnchanged(t *testing.T) {
+	dir := seed(t)
+	id := rawEventID(t, dir, func(ev map[string]any) bool {
+		return ev["type"] == "note" && ev["kind"] == "handoff"
+	})
+	so, _, code := run(t, dir, "notes", "--id", id)
+	if code != 0 {
+		t.Fatalf("notes --id on a real note must succeed: %s", so)
+	}
+	notes := mustJSON(t, so)["notes"].([]any)
+	if len(notes) != 1 {
+		t.Fatalf("notes --id on a real note id must return exactly it: %v", notes)
 	}
 }

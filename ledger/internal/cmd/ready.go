@@ -132,7 +132,7 @@ func readyLines(slug string, env board.Envelope) []string {
 			// under one key and hide two genuinely different tasks.
 			l := fmt.Sprintf("  attn     contested    %-20s field=%s heads=%s expect=%s",
 				out.EscapeControls(e.Key), out.EscapeControls(c.Field), strings.Join(heads, ","), c.Expect)
-			l += "  read both heads before collapsing"
+			l += "  read both heads before collapsing (show --id <sha>)"
 			if c.Human {
 				l += " (human-labeled: the collapsing write needs --override)"
 			}
