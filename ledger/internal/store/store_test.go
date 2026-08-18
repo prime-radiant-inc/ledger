@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"ledger/internal/dag"
 	"ledger/internal/gitx"
 	"ledger/internal/model"
 )
@@ -283,7 +284,7 @@ func TestAppendCheckedPreconditionRunsFreshPerAttempt(t *testing.T) {
 		lastSawSentinel bool
 		once            sync.Once
 	)
-	pre := func(events []model.Event) error {
+	pre := func(events []model.Event, _ dag.Result) error {
 		saw := false
 		for _, ev := range events {
 			if ev.Key == "sentinel" {
@@ -332,7 +333,7 @@ func TestAppendCheckedPreconditionErrorAbortsNothingWritten(t *testing.T) {
 	evsBefore, _, _ := s.Events("demo")
 
 	wantErr := errors.New("precondition not met")
-	pre := func(events []model.Event) error { return wantErr }
+	pre := func(events []model.Event, _ dag.Result) error { return wantErr }
 
 	evC := mkEvent("c")
 	if _, err := s.AppendChecked("demo", &evC, pre, ExpectPresent); !errors.Is(err, wantErr) {

@@ -72,6 +72,11 @@ type Key struct {
 type Board struct {
 	Meta model.Meta
 	Keys map[string]*Key
+	// Contests holds the live write-head antichains per key (sync design,
+	// Addition 3), keyed by key name and field-sorted within a key. Nil
+	// until ComputeContests runs — Build alone cannot derive them, since a
+	// contest is a property of the event DAG's shape, not of the fold.
+	Contests map[string][]Contest
 }
 
 // Build folds events into per-key state in a single pass, in order.

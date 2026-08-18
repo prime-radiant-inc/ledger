@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"ledger/internal/dag"
 	"ledger/internal/model"
 	"ledger/internal/store"
 )
@@ -401,15 +402,15 @@ func TestOverrideResetsAcrossLosingCASAttempt(t *testing.T) {
 
 	// The real production closure: bob, --override with a real message,
 	// against alice's live claim id.
-	realPre := setPrecondition("k1", fields, "status", claimID, true, led.Meta, ev.Text, "bob", true, &ev.Override)
+	realPre := setPrecondition("k1", fields, "status", claimID, true, led.Meta, ev.Text, "bob", true, &ev.Override, &ev.ContestedResolved)
 
 	var (
 		once     sync.Once
 		attempts int
 	)
-	pre := func(events []model.Event) error {
+	pre := func(events []model.Event, d dag.Result) error {
 		attempts++
-		err := realPre(events)
+		err := realPre(events, d)
 		once.Do(func() {
 			// A competing write on an unrelated field (never invalidates
 			// status's CAS) forces attempt 1's update-ref to lose the race.

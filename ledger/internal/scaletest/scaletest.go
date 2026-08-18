@@ -79,51 +79,115 @@ func Churn(n int) []model.Event {
 // firstExtra convention.
 func Seed(t testing.TB, repo gitx.Repo, slug string, evs []model.Event, firstExtra map[string]string) {
 	t.Helper()
-	var b strings.Builder
-	mark := 1
-	blobMark := func(content string) int {
-		m := mark
-		mark++
-		fmt.Fprintf(&b, "blob\nmark :%d\ndata %d\n%s\n", m, len(content), content)
-		return m
+	im := &importer{mark: 1}
+	im.chain(t, slug, evs, 0, firstExtra)
+	im.run(t, repo)
+}
+
+// SeedMerged seeds the shape a true divergence leaves behind: base as one
+// linear chain, then branchA and branchB both parented on base's tip, joined
+// by ONE sync sentinel — exactly what `ledger sync` mints, and the only
+// shape a contest can exist in. Both branches writing the same keys is what
+// makes the merged board carry contests to measure against.
+func SeedMerged(t testing.TB, repo gitx.Repo, slug string, base, branchA, branchB []model.Event, firstExtra map[string]string) {
+	t.Helper()
+	im := &importer{mark: 1}
+	baseTip := im.chain(t, slug, base, 0, firstExtra)
+	tipA := im.chain(t, slug, branchA, baseTip, nil)
+	tipB := im.chain(t, slug, branchB, baseTip, nil)
+
+	last := branchB[len(branchB)-1]
+	sentinel := model.Event{TS: last.TS, Type: "sync", Author: "sync"}
+	im.commit(t, slug, sentinel, tipA, tipB, nil)
+	im.run(t, repo)
+}
+
+// importer accumulates one `git fast-import` stream. Marks are fast-import's
+// own forward references: every blob and commit gets one, and a commit names
+// its parents by theirs.
+type importer struct {
+	b    strings.Builder
+	mark int
+}
+
+func (im *importer) blob(content string) int {
+	m := im.mark
+	im.mark++
+	fmt.Fprintf(&im.b, "blob\nmark :%d\ndata %d\n%s\n", m, len(content), content)
+	return m
+}
+
+// commit writes one commit carrying ev as event.json, parented on first
+// (0 = a root commit) and, when second is non-zero, merging it — the
+// two-parent shape of a sync sentinel. Returns its mark.
+func (im *importer) commit(t testing.TB, slug string, ev model.Event, first, second int, extra map[string]string) int {
+	t.Helper()
+	body, err := json.MarshalIndent(ev, "", " ")
+	if err != nil {
+		t.Fatal(err)
 	}
-	prevCommitMark := 0
+	evMark := im.blob(string(body))
+	extraMarks := map[string]int{}
+	for name, content := range extra {
+		extraMarks[name] = im.blob(content)
+	}
+	commitMark := im.mark
+	im.mark++
+	ts, err := model.ParseTS(ev.TS)
+	if err != nil {
+		ts = time.Now().UTC()
+	}
+	fmt.Fprintf(&im.b, "commit refs/ledger/%s\nmark :%d\n", slug, commitMark)
+	fmt.Fprintf(&im.b, "author %s <author@ledger.invalid> %d +0000\n", ev.Author, ts.Unix())
+	fmt.Fprintf(&im.b, "committer terminal <marker@ledger.invalid> %d +0000\n", ts.Unix())
+	msg := ev.Type + ":" + ev.Key
+	fmt.Fprintf(&im.b, "data %d\n%s\n", len(msg), msg)
+	if first != 0 {
+		fmt.Fprintf(&im.b, "from :%d\n", first)
+	}
+	if second != 0 {
+		fmt.Fprintf(&im.b, "merge :%d\n", second)
+	}
+	fmt.Fprintf(&im.b, "M 100644 :%d event.json\n", evMark)
+	for name, m := range extraMarks {
+		fmt.Fprintf(&im.b, "M 100644 :%d %s\n", m, name)
+	}
+	im.b.WriteString("\n")
+	return commitMark
+}
+
+// chain writes evs as one parent-chained run starting from parent (0 = a
+// root), attaching firstExtra to the run's first commit. Returns the tip's
+// mark.
+func (im *importer) chain(t testing.TB, slug string, evs []model.Event, parent int, firstExtra map[string]string) int {
+	t.Helper()
 	for i, ev := range evs {
-		body, err := json.MarshalIndent(ev, "", " ")
-		if err != nil {
-			t.Fatal(err)
+		var extra map[string]string
+		if i == 0 {
+			extra = firstExtra
 		}
-		evMark := blobMark(string(body))
-		var extraMarks map[string]int
-		if i == 0 && len(firstExtra) > 0 {
-			extraMarks = map[string]int{}
-			for name, content := range firstExtra {
-				extraMarks[name] = blobMark(content)
-			}
-		}
-		commitMark := mark
-		mark++
-		ts, err := model.ParseTS(ev.TS)
-		if err != nil {
-			ts = time.Now().UTC()
-		}
-		fmt.Fprintf(&b, "commit refs/ledger/%s\nmark :%d\n", slug, commitMark)
-		fmt.Fprintf(&b, "author %s <author@ledger.invalid> %d +0000\n", ev.Author, ts.Unix())
-		fmt.Fprintf(&b, "committer terminal <marker@ledger.invalid> %d +0000\n", ts.Unix())
-		msg := ev.Type + ":" + ev.Key
-		fmt.Fprintf(&b, "data %d\n%s\n", len(msg), msg)
-		if prevCommitMark != 0 {
-			fmt.Fprintf(&b, "from :%d\n", prevCommitMark)
-		}
-		fmt.Fprintf(&b, "M 100644 :%d event.json\n", evMark)
-		for name, m := range extraMarks {
-			fmt.Fprintf(&b, "M 100644 :%d %s\n", m, name)
-		}
-		b.WriteString("\n")
-		prevCommitMark = commitMark
+		parent = im.commit(t, slug, ev, parent, 0, extra)
 	}
-	_, stderr, code := repo.GitRaw(b.String(), "fast-import", "--quiet")
+	return parent
+}
+
+func (im *importer) run(t testing.TB, repo gitx.Repo) {
+	t.Helper()
+	_, stderr, code := repo.GitRaw(im.b.String(), "fast-import", "--quiet")
 	if code != 0 {
 		t.Fatalf("fast-import: %s", stderr)
 	}
+}
+
+// Branch returns n events one replica wrote during a partition: repeated
+// claims by author on the same 40 keys Churn claims, so both branches race
+// the SAME (key, status) pairs. start offsets the timestamps; handing both
+// branches the same start is what makes their writes interleave in the fold
+// the way a real merge's do.
+func Branch(start, n int, author string) []model.Event {
+	evs := make([]model.Event, 0, n)
+	for i := 0; i < n; i++ {
+		evs = append(evs, Event(start+i, fmt.Sprintf("k-%d", i%40), "status", "in-progress", author))
+	}
+	return evs
 }

@@ -29,6 +29,10 @@ const (
 // oldest-first and always holds the ledger's FULL history (sync spec rev 7
 // Addition 5: guarded writes on merged history use whole-chain precondition
 // reads, unconditionally — there is no windowed mode to fall back from).
+// d is the dag.Result that same read's fold order came from — index i of
+// events is node d.Order[i] — so a check that needs the chain's SHAPE
+// rather than its flattened order (sync design Addition 3's write-heads)
+// gets it from the read already in hand, never a second one.
 // Returning an error aborts the append with that error; nothing is written.
 //
 // SCOPE, stated plainly: this re-read covers only the fresh read taken
@@ -40,7 +44,7 @@ const (
 // loaded history) runs before AppendChecked or this Precondition are ever
 // invoked. Nothing about that up-front read scales with this contract; only
 // the per-attempt precondition read does.
-type Precondition func(events []model.Event) error
+type Precondition func(events []model.Event, d dag.Result) error
 
 var (
 	ErrUnknownLedger = errors.New("unknown_ledger")
@@ -578,13 +582,13 @@ func (s Store) casLoop(slug string, mode ExpectMode, pre Precondition, build fun
 // empty read when it doesn't (a first-ever write's --expect none case).
 func (s Store) runPrecondition(slug string, ok bool, pre Precondition) error {
 	if !ok {
-		return pre(nil)
+		return pre(nil, dag.Result{})
 	}
-	events, _, err := s.Events(slug)
+	events, _, d, err := s.EventsDAG(slug)
 	if err != nil {
 		return err
 	}
-	return pre(events)
+	return pre(events, d)
 }
 
 // BuildCommit writes one event's blobs/tree/commit-tree without touching any

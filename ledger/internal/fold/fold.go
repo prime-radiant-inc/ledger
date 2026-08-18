@@ -5,6 +5,7 @@ package fold
 import (
 	"sort"
 
+	"ledger/internal/dag"
 	"ledger/internal/model"
 )
 
@@ -18,6 +19,13 @@ type Ledger struct {
 	SupersededBy string
 	ExtraLinks   []string
 	Events       []model.Event
+	// DAG is the sentinel-contracted event DAG Events' fold order came from
+	// — index i of Events is node DAG.Order[i]. Populated by the loader
+	// (cmd.Ctx.Load, off the same single read), zero when a caller folded a
+	// bare event slice. `ready`'s contested pass needs the chain's shape,
+	// and the spec pins it to ONE fold: this is how the shape rides along
+	// with the events instead of costing a second read.
+	DAG dag.Result
 	// Parent maps a child event id to the rollup id that encapsulates it —
 	// winners only. Losers holds rollup ids that lost a duel: a rollup with
 	// ANY already-taken child loses wholly (its summary line is a claim

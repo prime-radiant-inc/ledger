@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"ledger/internal/board"
+	"ledger/internal/dag"
 	"ledger/internal/gitx"
 	"ledger/internal/model"
 	"ledger/internal/scaletest"
@@ -95,6 +96,57 @@ func TestScaleReadyEnvelopeBound(t *testing.T) {
 	}
 }
 
+// TestScaleMergedReadyWithContestsBound is the sync spec's amendment
+// inventory item 2, measured: the issues spec's 140ms bound still binds
+// merge-free boards (TestScaleReadyEnvelopeBound above, untouched), and a
+// MERGED board with contested entries present is bound at 350ms median-of-3
+// — same methodology, same 5,000-event scale, the whole of what cmd/ready.go
+// runs (store read + board.Build + the board-wide cover-set pass +
+// Envelope). The fixture is the real divergence shape: a 4,000-event base,
+// two 500-event branches racing the SAME 40 keys' status field, one sync
+// sentinel joining them — which leaves 40 live contests for the pass to
+// find and the envelope to render.
+func TestScaleMergedReadyWithContestsBound(t *testing.T) {
+	if testing.Short() {
+		t.Skip("scale")
+	}
+	s := testStore(t)
+	base := scaletest.Churn(4000)
+	// Both branches start at the same timestamp offset, so their writes
+	// interleave in the fold exactly as two replicas' concurrent writes do.
+	branchA := scaletest.Branch(len(base), 500, "alice")
+	branchB := scaletest.Branch(len(base), 499, "bob")
+	scaletest.SeedMerged(t, s.Repo, "board", base, branchA, branchB, map[string]string{"meta.json": "{}"})
+	s.Repo.Git("", "gc", "--quiet")
+
+	var samples [3]time.Duration
+	var lastEnv board.Envelope
+	var evCount, contested int
+	for i := range samples {
+		start := time.Now()
+		evs, _, d, err := s.EventsDAG("board")
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := board.Build(scaletest.Meta(), evs)
+		b.ComputeContests(evs, d)
+		lastEnv = b.Envelope(time.Now(), 50, func(*board.Key) bool { return true })
+		samples[i] = time.Since(start)
+		evCount = len(evs)
+		contested = len(b.Contests)
+	}
+	if contested == 0 {
+		t.Fatal("the fixture must actually be contested, or this measures the wrong thing")
+	}
+	t.Logf("merged ready envelope @%d events, %d contested keys, 3 samples: %v (ready=%d held=%d blocked=%d attention=%d)",
+		evCount, contested, samples, len(lastEnv.Ready), len(lastEnv.Held), len(lastEnv.Blocked), lastEnv.Totals.Attention)
+
+	median := medianDuration(samples[:])
+	if median > 350*time.Millisecond {
+		t.Fatalf("merged ready envelope median took %v (samples: %v), want < 350ms (sync spec amendment inventory item 2)", median, samples)
+	}
+}
+
 // medianDuration returns the middle value of d, sorted ascending. d is
 // small (always 3 in this file's use) so an allocation-free insertion sort
 // on a local copy is simpler than pulling in sort.Slice for three elements.
@@ -135,7 +187,7 @@ func TestAppendCheckedPreconditionAlwaysWholeChain(t *testing.T) {
 	s.Repo = gitx.Repo{Dir: dir, Calls: &calls, Bytes: &byteCount}
 
 	resolved := false
-	pre := func(events []model.Event) error {
+	pre := func(events []model.Event, _ dag.Result) error {
 		for i := len(events) - 1; i >= 0; i-- {
 			if events[i].Key == "target-key" {
 				if _, ok := events[i].Fields["status"]; ok {
@@ -194,7 +246,7 @@ func TestScaleDegenerateWindowCases(t *testing.T) {
 	s.Repo = gitx.Repo{Dir: dir, Calls: &calls, Bytes: &byteCount}
 
 	start := time.Now()
-	pre := func(events []model.Event) error {
+	pre := func(events []model.Event, _ dag.Result) error {
 		for i := len(events) - 1; i >= 0; i-- {
 			if events[i].Key == "ancient-key" {
 				return nil
@@ -211,7 +263,7 @@ func TestScaleDegenerateWindowCases(t *testing.T) {
 
 	calls, byteCount = 0, 0
 	start = time.Now()
-	pre2 := func(events []model.Event) error {
+	pre2 := func(events []model.Event, _ dag.Result) error {
 		for _, e := range events {
 			if e.Key == "does-not-exist" {
 				return nil // would prove existence; never true in this fixture

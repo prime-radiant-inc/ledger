@@ -18,6 +18,10 @@ func alwaysTrue(*Key) bool { return true }
 // status=open, not human-labeled, every blocked-by edge terminal.
 // UnblockedWithoutEvidence names blockers whose terminal event carries no
 // evidence refs — a floor against omission, present only when non-empty.
+// Contested marks a key with a live contest (sync design, Addition 3):
+// membership is unchanged — a contested key keeps its ordinary list
+// placement — but the flag rides along so the race is visible at the point
+// of decision. Absent, never false: only a live contest says anything.
 type ReadyEntry struct {
 	Key                      string   `json:"key"`
 	Title                    string   `json:"title"`
@@ -25,6 +29,7 @@ type ReadyEntry struct {
 	TS                       string   `json:"ts"`
 	By                       string   `json:"by"`
 	ID                       string   `json:"id"`
+	Contested                bool     `json:"contested,omitempty"`
 	UnblockedWithoutEvidence []string `json:"unblocked_without_evidence,omitempty"`
 }
 
@@ -60,6 +65,7 @@ type HeldEntry struct {
 	Age       string      `json:"age,omitempty"`
 	ID        string      `json:"id"`
 	Stale     *bool       `json:"stale,omitempty"`
+	Contested bool        `json:"contested,omitempty"`
 	WaitingOn []WaitingOn `json:"waiting_on,omitempty"`
 }
 
@@ -75,6 +81,7 @@ type BlockedEntry struct {
 	TS        string      `json:"ts"`
 	By        string      `json:"by"`
 	ID        string      `json:"id"`
+	Contested bool        `json:"contested,omitempty"`
 	WaitingOn []WaitingOn `json:"waiting_on"`
 }
 
@@ -89,18 +96,22 @@ type BlockedEntry struct {
 // values ({open, in-progress}), the belt-and-braces catch-all for a status
 // vocab that was extended out from under board.Build's classification
 // switch (see vocab.go's rejection of exactly that on a ready-capable
-// board) or folded from an already-polluted or imported chain.
+// board) or folded from an already-polluted or imported chain;
+// "contested" carries key/title (title omitted when the key is statusless,
+// per the immutable-title law) plus Contest, the nested ticket naming the
+// racing write-heads and the CAS target that collapses them.
 type AttentionEntry struct {
-	Reason string      `json:"reason"`
-	Key    string      `json:"key,omitempty"`
-	Title  string      `json:"title,omitempty"`
-	Value  string      `json:"value,omitempty"`
-	By     string      `json:"by,omitempty"`
-	Age    string      `json:"age,omitempty"`
-	TS     string      `json:"ts,omitempty"`
-	ID     string      `json:"id,omitempty"`
-	Keys   []string    `json:"keys,omitempty"`
-	Break  *CycleBreak `json:"break,omitempty"`
+	Reason  string      `json:"reason"`
+	Key     string      `json:"key,omitempty"`
+	Title   string      `json:"title,omitempty"`
+	Value   string      `json:"value,omitempty"`
+	By      string      `json:"by,omitempty"`
+	Age     string      `json:"age,omitempty"`
+	TS      string      `json:"ts,omitempty"`
+	ID      string      `json:"id,omitempty"`
+	Keys    []string    `json:"keys,omitempty"`
+	Break   *CycleBreak `json:"break,omitempty"`
+	Contest *Contest    `json:"contest,omitempty"`
 }
 
 // CycleBreak is a "cycle" attention entry's suggested fix: among the
@@ -191,10 +202,7 @@ func (b *Board) Envelope(now time.Time, limit int, filter func(*Key) bool) Envel
 	sortReady(b, fReady)
 	sort.Slice(fHeld, func(i, j int) bool { return fHeld[i].Key < fHeld[j].Key })
 	sort.Slice(fBlocked, func(i, j int) bool { return fBlocked[i].Key < fBlocked[j].Key })
-	// SliceStable: cycle entries all share Key "" (they're keyed by Keys, not
-	// Key), so a plain sort.Slice would let their relative order flap between
-	// runs.
-	sort.SliceStable(fAttention, func(i, j int) bool { return fAttention[i].Key < fAttention[j].Key })
+	sortAttention(fAttention)
 
 	totals := Totals{Ready: len(fReady), Held: len(fHeld), Blocked: len(fBlocked), Attention: len(fAttention)}
 
@@ -205,6 +213,53 @@ func (b *Board) Envelope(now time.Time, limit int, filter func(*Key) bool) Envel
 		Blocked:   truncate(fBlocked, limit),
 		Attention: truncate(fAttention, limit),
 		Totals:    totals,
+	}
+}
+
+// sortAttention is the attention list's order, complete and TOTAL over
+// every entry kind (sync design, Addition 3, which also binds the issues
+// spec — it never defined one): entries sort on (sort_key, reason, field),
+// where sort_key is the entry's key for keyed entries and the sorted member
+// list joined by "," for cycle entries (which carry `keys`, not `key`), and
+// field is the empty string wherever there isn't one. Total by
+// construction: at most one entry exists per (key, reason) for every reason
+// but "contested", which splits by field; cycle entries are deduped by
+// their member set, which IS their sort_key. That totality is the point —
+// the envelope's byte-determinism must not rest on an implementation's
+// incidental sort stability, so this uses a PLAIN (unstable) sort.Slice and
+// the order is a property of the entries alone.
+//
+// Decorate-sort: each entry's sort_key is derived once (a cycle entry's
+// costs a copy and a string sort) rather than on every comparison.
+func sortAttention(entries []AttentionEntry) {
+	type decorated struct {
+		entry                  AttentionEntry
+		sortKey, reason, field string
+	}
+	ds := make([]decorated, len(entries))
+	for i, e := range entries {
+		d := decorated{entry: e, sortKey: e.Key, reason: e.Reason}
+		if e.Reason == "cycle" {
+			members := append([]string(nil), e.Keys...)
+			sort.Strings(members)
+			d.sortKey = strings.Join(members, ",")
+		}
+		if e.Contest != nil {
+			d.field = e.Contest.Field
+		}
+		ds[i] = d
+	}
+	sort.Slice(ds, func(i, j int) bool {
+		if ds[i].sortKey != ds[j].sortKey {
+			return ds[i].sortKey < ds[j].sortKey
+		}
+		if ds[i].reason != ds[j].reason {
+			return ds[i].reason < ds[j].reason
+		}
+		return ds[i].field < ds[j].field
+	})
+	for i := range ds {
+		entries[i] = ds[i].entry
 	}
 }
 
@@ -356,9 +411,40 @@ func (b *Board) buildLists(now time.Time) (ready []ReadyEntry, held []HeldEntry,
 	for _, cycle := range b.detectCycles(names) {
 		attention = append(attention, cycle)
 	}
+	attention = append(attention, b.contestedEntries()...)
 
 	return ready, held, blocked, attention, workAvailable
 }
+
+// contestedEntries renders one attention entry per live contest — per
+// (key, field), never per racing write. Title is the KEY's title under the
+// issues spec's unamended law (the first status event's message, immutable,
+// identical in every projection), so it is absent on a statusless key: the
+// heads are field writes carrying no title of their own, and a two-root key
+// collision genuinely holds one key's title over two seeded tasks. Doctrine
+// covers that hazard — read both heads before collapsing — since a collapse
+// adjudicates the field value, never the identity.
+func (b *Board) contestedEntries() []AttentionEntry {
+	if len(b.Contests) == 0 {
+		return nil
+	}
+	entries := make([]AttentionEntry, 0, len(b.Contests))
+	for _, name := range sortedKeyNames(b.Keys) {
+		for i := range b.Contests[name] {
+			c := b.Contests[name][i]
+			e := AttentionEntry{Reason: "contested", Key: name, Contest: &c}
+			if k := b.Keys[name]; k != nil {
+				e.Title = k.Title
+			}
+			entries = append(entries, e)
+		}
+	}
+	return entries
+}
+
+// contested reports whether k has a live contest on any guarded field —
+// the flag every ready/held/blocked entry for that key carries.
+func (b *Board) contested(k *Key) bool { return len(b.Contests[k.Name]) > 0 }
 
 // cycleSurvivesFilter reports whether any of a cycle attention entry's
 // member keys matches filter — the composition rule filterAttention applies
@@ -400,7 +486,10 @@ func frontierVerdict(ready []ReadyEntry, attention []AttentionEntry, workAvailab
 		// attention). Depends on ready's membership rule, the stale/
 		// statusless/unknown-status attention passes, and detectCycles'
 		// coverage all staying as they are — changing any of them re-opens
-		// this argument.
+		// this argument. The contested pass (sync design, Addition 3) only
+		// ADDS entries, so it can turn this arm into attention-needed but
+		// never makes it wrong: a board whose one unhandled fact is a
+		// partition race is exactly a board needing attention.
 		return "all-handled"
 	}
 }
@@ -618,7 +707,7 @@ func (b *Board) waitingOnList(k *Key, now time.Time) []WaitingOn {
 // re-walked here.
 func (b *Board) readyEntry(k *Key, unblockedWithoutEvidence []string) ReadyEntry {
 	return ReadyEntry{Key: k.Name, Title: k.Title, Note: k.Status.Note, TS: k.Status.TS, By: k.Status.Author, ID: k.Status.ID,
-		UnblockedWithoutEvidence: unblockedWithoutEvidence}
+		Contested: b.contested(k), UnblockedWithoutEvidence: unblockedWithoutEvidence}
 }
 
 // blockedEntry builds a blocked-list entry for k, which the caller has
@@ -628,7 +717,8 @@ func (b *Board) readyEntry(k *Key, unblockedWithoutEvidence []string) ReadyEntry
 func (b *Board) blockedEntry(k *Key, now time.Time) BlockedEntry {
 	return BlockedEntry{
 		Key: k.Name, Title: k.Title, Note: k.Status.Note, TS: k.Status.TS,
-		By: k.Status.Author, ID: k.Status.ID, WaitingOn: b.waitingOnList(k, now),
+		By: k.Status.Author, ID: k.Status.ID, Contested: b.contested(k),
+		WaitingOn: b.waitingOnList(k, now),
 	}
 }
 
@@ -644,7 +734,8 @@ func (b *Board) blockedEntry(k *Key, now time.Time) BlockedEntry {
 // has at least one unresolved edge — claimed-but-blocked and human-but-
 // blocked are both legal and visible.
 func (b *Board) heldEntry(k *Key, kind string, now time.Time, stale bool, age time.Duration) HeldEntry {
-	e := HeldEntry{Key: k.Name, Title: k.Title, Kind: kind, By: k.Status.Author, ID: k.Status.ID}
+	e := HeldEntry{Key: k.Name, Title: k.Title, Kind: kind, By: k.Status.Author, ID: k.Status.ID,
+		Contested: b.contested(k)}
 	if kind == "human" {
 		e.Status = k.Status.Value
 		e.TS = k.Status.TS

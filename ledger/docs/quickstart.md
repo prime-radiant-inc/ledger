@@ -74,9 +74,13 @@ claim, what needs a person (`frontier`, then `ready`/`held`/`blocked`/
 `attention`). Claim: `set <key> status=in-progress --expect <id> -m
 "claiming"`. Close: `set <key> status=closed --evidence <ref> --expect
 <own claim id> -m "done"`. Two rules to know cold: guarded fields always
-take `--expect`; `needs_override` is a stop sign, not a form to fill —
-it means a human labeled this, walk away. Full doctrine: the
-`using-ledger` skill's Issue board section.
+take `--expect`; `needs_override` names which of three signals stopped
+you — `human` is a stop sign, walk away; `claim` and `settled` mean you
+are revising a live claim or a settled outcome, so re-read it and say
+why in `-m` alongside `--override`. An `attention` entry with `"reason":
+"contested"` means two replicas raced that field — read BOTH
+`contest.ids` before collapsing with `--expect <contest.expect>`. Full
+doctrine: the `using-ledger` skill's Issue board section.
 
 ## Walkthrough — a disposable scratch ledger, start to finish
 

@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"ledger/internal/board"
+	"ledger/internal/dag"
 	"ledger/internal/model"
 	"ledger/internal/out"
 	"ledger/internal/store"
@@ -139,17 +140,26 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts, expect string
 
 	var pre store.Precondition
 	if target != "" || ready {
-		pre = setPrecondition(key, fields, target, expect, ready, led.Meta, o.m, author, override, &ev.Override)
+		pre = setPrecondition(key, fields, target, expect, ready, led.Meta, o.m, author, override,
+			&ev.Override, &ev.ContestedResolved)
 	}
 	id, err := c.Store.AppendChecked(led.Slug, &ev, pre, store.ExpectPresent)
 	if err != nil {
 		return mapStoreErr(err, led.Slug)
 	}
 	payload := map[string]any{"id": id, "ledger": led.Slug, "key": key, "fields": fields}
+	line := "[" + id + "] " + led.Slug + ": " + key + " " + renderFields(fields)
+	// The response ECHOES the resolution: a writer must be able to see they
+	// just collapsed a contest, especially the unwitting touch-base case
+	// that resolved one without ever reading the attention entry.
+	if len(ev.ContestedResolved) > 0 {
+		payload["contested_resolved"] = ev.ContestedResolved
+		line += "  " + out.ContestedResolvedMarker(ev.ContestedResolved)
+	}
 	if due, ok := dueAfter(c, led.Slug); ok {
 		payload["rollup_due"] = due
 	}
-	outEmit(c, payload, []string{"[" + id + "] " + led.Slug + ": " + key + " " + renderFields(fields)})
+	outEmit(c, payload, []string{line})
 	return nil
 }
 
@@ -221,12 +231,14 @@ func resolveExpectTarget(fields map[string]string, guard []string, slug, expect 
 // Checks run in order: rule 3/4 CAS on the target field, then (ready-capable
 // boards only) key grammar on first write, title enforcement on a first
 // status write, blocked-by existence, then rule 5's standing-signal check
-// on a guarded write. overrideOut is a pointer into the event actually
-// being built (store.AppendChecked takes ev by pointer for exactly this):
-// when a standing signal is overridden, the closure records the tool-
-// computed signal names there for the winning attempt's commit.
+// on a guarded write, and — on a guarded field — the contested write-heads
+// this write is about to collapse. overrideOut and resolvedOut are pointers
+// into the event actually being built (store.AppendChecked takes ev by
+// pointer for exactly this): the closure records the tool-computed override
+// signal names in the first and the losing write-head ids in the second,
+// for the winning attempt's commit.
 func setPrecondition(key string, fields map[string]string, target, expect string, ready bool, meta model.Meta,
-	text, author string, override bool, overrideOut *string) store.Precondition {
+	text, author string, override bool, overrideOut *string, resolvedOut *[]string) store.Precondition {
 	_, touchesStatus := fields["status"]
 	blockedByValue, touchesBlockedBy := fields["blocked-by"]
 	var blockedByTokens []string
@@ -234,16 +246,17 @@ func setPrecondition(key string, fields map[string]string, target, expect string
 		blockedByTokens = board.SplitTokens(blockedByValue)
 	}
 
-	return func(events []model.Event) error {
-		// Reset unconditionally at the top of every attempt: overrideOut
-		// points into the event AppendChecked actually builds from, and
-		// that same event is reused across every CAS retry (never
-		// recreated per attempt). Without this reset, a losing attempt
-		// that recorded an override would leave it stuck on *overrideOut
-		// for a later, winning attempt whose own fresh signal computation
-		// found nothing to override — a stale attribution that never
-		// existed on the state that actually landed.
+	return func(events []model.Event, d dag.Result) error {
+		// Reset unconditionally at the top of every attempt: both pointers
+		// point into the event AppendChecked actually builds from, and that
+		// same event is reused across every CAS retry (never recreated per
+		// attempt). Without these resets, a losing attempt that recorded an
+		// override — or a contest resolution — would leave it stuck for a
+		// later, winning attempt whose own fresh computation found nothing:
+		// a tool-computed attribution that never existed on the state that
+		// actually landed.
 		*overrideOut = ""
+		*resolvedOut = nil
 
 		if target != "" {
 			latestTarget := latestFieldEvent(events, key, target)
@@ -275,6 +288,14 @@ func setPrecondition(key string, fields map[string]string, target, expect string
 			}
 		}
 		if model.Contains(meta.Guard, target) {
+			// Sync design, Addition 3: this write descends from every current
+			// head of (key, target) — the ref tip it is parented on does — so
+			// it collapses the antichain, and the heads it beats are recorded
+			// on it, greppable forever, whether the writer knew of the contest
+			// or not. Single-pair form: a conditional set touches exactly one
+			// guarded field, computed off THIS attempt's fresh read.
+			*resolvedOut = board.ResolvedHeads(events, d, key, target)
+
 			signals := b.Signals(b.Keys[key], touchesStatus, author, time.Now())
 			if len(signals) > 0 {
 				if !override {

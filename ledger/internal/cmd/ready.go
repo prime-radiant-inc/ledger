@@ -44,6 +44,10 @@ func runReady(c *Ctx, ledgerFlag string, whereRaw []string, limit int) error {
 	}
 
 	b := board.Build(led.Meta, led.Events)
+	// The board-wide cover-set pass runs once, here, off the SAME read the
+	// fold came from (Ctx.Load carries the chain's DAG alongside its
+	// events) — never a second fold to recover the shape.
+	b.ComputeContests(led.Events, led.DAG)
 	filter := func(k *board.Key) bool { return matchWhere(k, clauses) }
 	env := b.Envelope(time.Now(), limit, filter)
 
@@ -69,7 +73,7 @@ func readyLines(slug string, env board.Envelope) []string {
 		if len(e.UnblockedWithoutEvidence) > 0 {
 			l += "  unblocked_without_evidence=" + strings.Join(e.UnblockedWithoutEvidence, ",")
 		}
-		lines = append(lines, l)
+		lines = append(lines, l+contestedMark(e.Contested))
 	}
 	for _, e := range env.Held {
 		l := fmt.Sprintf("  held     %-20s %-6s by %-12s [%s]  %q", out.EscapeControls(e.Key), e.Kind, out.EscapeControls(e.By), e.ID, out.EscapeControls(e.Title))
@@ -79,11 +83,11 @@ func readyLines(slug string, env board.Envelope) []string {
 		if len(e.WaitingOn) > 0 {
 			l += "  waiting_on=" + waitingOnLine(e.WaitingOn)
 		}
-		lines = append(lines, l)
+		lines = append(lines, l+contestedMark(e.Contested))
 	}
 	for _, e := range env.Blocked {
 		l := fmt.Sprintf("  blocked  %-20s by %-12s [%s]  waiting_on=%s", out.EscapeControls(e.Key), out.EscapeControls(e.By), e.ID, waitingOnLine(e.WaitingOn))
-		lines = append(lines, l)
+		lines = append(lines, l+contestedMark(e.Contested))
 	}
 	for _, e := range env.Attention {
 		switch e.Reason {
@@ -107,9 +111,39 @@ func readyLines(slug string, env board.Envelope) []string {
 				}
 			}
 			lines = append(lines, l)
+		case "contested":
+			c := e.Contest
+			if c == nil {
+				break
+			}
+			heads := make([]string, len(c.IDs))
+			for i, id := range c.IDs {
+				heads[i] = id + "(" + out.EscapeControls(c.Authors[i]) + ")"
+			}
+			// The ticket hands out bare event ids on purpose: a collapse
+			// adjudicates the field's VALUE, never the key's identity, so the
+			// caller is told to read both heads first — two seeds can collide
+			// under one key and hide two genuinely different tasks.
+			l := fmt.Sprintf("  attn     contested    %-20s field=%s heads=%s expect=%s",
+				out.EscapeControls(e.Key), out.EscapeControls(c.Field), strings.Join(heads, ","), c.Expect)
+			l += "  read both heads before collapsing"
+			if c.Human {
+				l += " (human-labeled: the collapsing write needs --override)"
+			}
+			lines = append(lines, l)
 		}
 	}
 	return lines
+}
+
+// contestedMark labels a ready/held/blocked line whose key carries a live
+// contest — membership is unchanged, so the race has to be visible right
+// where the entry is read and acted on.
+func contestedMark(contested bool) string {
+	if contested {
+		return "  contested"
+	}
+	return ""
 }
 
 func waitingOnLine(wo []board.WaitingOn) string {

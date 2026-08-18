@@ -65,6 +65,7 @@ type Event struct {
 	Origin            Origin            `json:"origin"`
 	IdempotencyKey    string            `json:"idempotency_key,omitempty"`
 	Override          string            `json:"override,omitempty"`
+	ContestedResolved []string          `json:"contested_resolved,omitempty"`
 	ImportedFrom      string            `json:"imported_from,omitempty"`
 	ID                string            `json:"-"`
 	CommitterOverride string            `json:"-"`

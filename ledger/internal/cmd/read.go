@@ -181,8 +181,15 @@ func eventsJSON(evs []model.Event) []map[string]any {
 	return docs
 }
 
+// eventLine is the raw chain's per-event TTY render. A contest resolution
+// is labeled here, never left JSON-only: the durable record exists to be
+// read back off the chain.
 func eventLine(ev model.Event) string {
-	return "[" + ev.ID + "] " + ev.TS + " " + ev.Type + " " + out.EscapeControls(ev.Author)
+	line := "[" + ev.ID + "] " + ev.TS + " " + ev.Type + " " + out.EscapeControls(ev.Author)
+	if m := out.ContestedResolvedMarker(ev.ContestedResolved); m != "" {
+		line += "  " + m
+	}
+	return line
 }
 
 // nonSyncEvents drops sync sentinels — invisible to fold's schema/spine/state

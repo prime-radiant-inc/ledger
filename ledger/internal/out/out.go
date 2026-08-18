@@ -78,6 +78,20 @@ func Age(ts string) string {
 	}
 }
 
+// ContestedResolvedMarker renders an event's tool-computed contest
+// resolution for a TTY (sync design, Addition 3): the losing write-heads
+// this event collapsed. Mandatory labeling, the same class as `override:` —
+// a JSON-only record fails the reader it exists for, whether that reader is
+// the writer seeing their own unwitting touch-base resolve a race or
+// somebody reading the chain back later. Empty for the overwhelmingly
+// common event that resolved nothing.
+func ContestedResolvedMarker(losers []string) string {
+	if len(losers) == 0 {
+		return ""
+	}
+	return "contested_resolved: " + strings.Join(losers, ",")
+}
+
 // EscapeControls neutralizes C0 controls and ESC so a note body can never
 // visually overwrite the render on a TTY (counterfeit-provenance attack).
 func EscapeControls(s string) string {

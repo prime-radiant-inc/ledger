@@ -243,7 +243,7 @@ func TestSetPreconditionWholeChainCost(t *testing.T) {
 		fields := map[string]string{"status": "in-progress"}
 		ev := model.NewEvent("set", "alice", counted.Repo)
 		ev.Key, ev.Fields, ev.Text = "target-key", fields, "still on it"
-		pre := setPrecondition("target-key", fields, "status", claimID, true, led.Meta, ev.Text, "alice", false, &ev.Override)
+		pre := setPrecondition("target-key", fields, "status", claimID, true, led.Meta, ev.Text, "alice", false, &ev.Override, &ev.ContestedResolved)
 		if _, err := counted.AppendChecked("board", &ev, pre, store.ExpectPresent); err != nil {
 			t.Fatalf("AppendChecked: %v", err)
 		}
@@ -273,7 +273,7 @@ func TestSetPreconditionWholeChainCost(t *testing.T) {
 		fields := map[string]string{"status": "in-progress"}
 		ev := model.NewEvent("set", "alice", counted.Repo)
 		ev.Key, ev.Fields, ev.Text = "target-key2", fields, "still on it"
-		pre := setPrecondition("target-key2", fields, "status", claimID, true, led.Meta, ev.Text, "alice", false, &ev.Override)
+		pre := setPrecondition("target-key2", fields, "status", claimID, true, led.Meta, ev.Text, "alice", false, &ev.Override, &ev.ContestedResolved)
 		if _, err := counted.AppendChecked("board", &ev, pre, store.ExpectPresent); err != nil {
 			t.Fatalf("AppendChecked: %v", err)
 		}

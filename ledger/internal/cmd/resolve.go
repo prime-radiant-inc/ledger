@@ -25,13 +25,19 @@ type Ctx struct {
 	Shadowed string
 }
 
+// Load reads and folds one ledger, ONCE: the same read that produces the
+// event slice produces the sentinel-contracted DAG the fold order came
+// from, so a verb needing the chain's shape (ready's contested pass) reads
+// it off the ledger rather than folding the chain a second time.
 func (c *Ctx) Load(slug string) (*fold.Ledger, error) {
-	evs, meta, err := c.Store.Events(slug)
+	evs, meta, d, err := c.Store.EventsDAG(slug)
 	if err != nil {
 		return nil, out.Errf("unknown_ledger", c.shadowHint("ledger ls --all  (lists every ledger here)"),
 			4, "no ledger '%s' here", slug)
 	}
-	return fold.Fold(slug, evs, meta), nil
+	led := fold.Fold(slug, evs, meta)
+	led.DAG = d
+	return led, nil
 }
 
 // shadowHint extends a "there's nothing here" hint with the other store in
