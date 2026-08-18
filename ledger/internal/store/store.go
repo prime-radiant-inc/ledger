@@ -157,11 +157,63 @@ func (s Store) head(slug string) (string, bool) {
 }
 
 func (s Store) HeadID(slug string) (string, error) {
+	h, err := s.HeadSHA(slug)
+	if err != nil {
+		return "", err
+	}
+	return h[:10], nil
+}
+
+// HeadSHA is the ledger ref's tip commit, full 40 chars — what the cursor
+// contract (sync spec rev 7, Addition 2) measures reachability against and
+// what every drain emits as its cursor.
+func (s Store) HeadSHA(slug string) (string, error) {
 	h, ok := s.head(slug)
 	if !ok {
 		return "", fmt.Errorf("%w: %s", ErrUnknownLedger, slug)
 	}
-	return h[:10], nil
+	return h, nil
+}
+
+// IsAncestor reports whether commit a is an ancestor of (or equal to)
+// commit b. This is the whole of cursor validity: a cursor is a reachability
+// token against the ref, never a fold position. git's --is-ancestor is
+// reflexive, so a cursor that IS the tip is valid and drains empty. A rev git
+// cannot resolve at all — a foreign or invented cursor — answers false rather
+// than erroring: to a reachability question, "not in this history" and "not
+// an ancestor" are the same answer, and both are reset_required.
+func (s Store) IsAncestor(a, b string) bool {
+	_, _, code := s.Repo.Git("", "merge-base", "--is-ancestor", a, b)
+	return code == 0
+}
+
+// RangeNodes lists the commits of `cursor..tip` — every commit reachable from
+// tip when cursor is empty — as dag.Nodes carrying SHA and Parents. Parents
+// naming commits outside the range are kept as read and ignored by dag.Sort,
+// which is what makes the range's sub-DAG *contracted*: an ancestor left
+// outside the range stops constraining the events inside it.
+//
+// TS and IsSentinel are the caller's to fill from the events it already
+// holds: knowing them here would mean re-reading every commit's event.json,
+// which the caller's whole-chain read has already done.
+func (s Store) RangeNodes(cursor, tip string) ([]dag.Node, error) {
+	rev := tip
+	if cursor != "" {
+		rev = cursor + ".." + tip
+	}
+	out, stderr, code := s.Repo.Git("", "rev-list", "--parents", rev)
+	if code != 0 {
+		return nil, fmt.Errorf("git_failed: %s", stderr)
+	}
+	var nodes []dag.Node
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) == 0 {
+			continue
+		}
+		nodes = append(nodes, dag.Node{SHA: f[0], Parents: f[1:]})
+	}
+	return nodes, nil
 }
 
 // Events reads the whole chain in the spec's pinned fold order (Addition

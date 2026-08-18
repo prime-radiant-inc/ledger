@@ -7,25 +7,107 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"ledger/internal/dag"
 	"ledger/internal/fold"
 	"ledger/internal/model"
 	"ledger/internal/out"
 )
 
-// indexOf finds an event by id in the raw (sync-inclusive) chain. Cursor
-// validity and cursor advance always check this chain, even though
-// since/watch's delivery and filtering below only ever look at non-sync
-// events — a cursor may legitimately land on a sync sentinel once merge
-// lands (Plan 2). The linear local case makes membership the whole test;
-// the merge-aware form is `git merge-base --is-ancestor`, which arrives
-// with sync.
-func indexOf(evs []model.Event, id string) int {
-	for i, ev := range evs {
-		if ev.ID == id {
-			return i
+// deliverRange is the whole cursor contract (sync spec rev 7, Addition 2),
+// shared by `since` and `watch`. It returns the events to deliver, in batch
+// order, and the cursor to emit.
+//
+//   - Validity: the cursor is a reachability token against the ref — valid
+//     iff it is an ancestor of, or equal to, the tip. Anything else is
+//     reset_required (resetHint is the caller's recovery advice; the two
+//     verbs recover differently).
+//   - Delivery: the non-sentinel commits of `cursor..tip`. Set-based, so
+//     after a merge the merged-in events sitting fold-BELOW a consumed
+//     cursor are delivered exactly once, which positional slice arithmetic
+//     silently dropped.
+//   - Batch order: Addition 1's Kahn fold, run on the RANGE's contracted
+//     sub-DAG — the same algorithm as the global fold, never a second
+//     comparator. Stated consequence: a range can order two events
+//     concurrent with the cursor differently than `tail` renders them.
+//   - Cursor emission: an unpaged drain emits the tip, sentinel included. A
+//     --limit drain stops at the first delivered event C that dominates
+//     everything delivered so far AND descends from the incoming cursor,
+//     which makes `cursor..C` exactly the delivered set; if the range
+//     exhausts before such a C exists, it emits the tip, same as unpaged.
+//     --limit is therefore a floor, not a ceiling.
+func deliverRange(c *Ctx, led *fold.Ledger, cursor string, limit int, resetHint string) ([]model.Event, string, error) {
+	// The tip is read BEFORE the events, and that order is load-bearing: the
+	// event read must cover every commit in the range, or a commit that
+	// landed between the two reads would look like a sentinel (contracted
+	// out, never delivered) while the cursor advanced past it. Reading the
+	// tip first bounds the range by the older read; anything newer is simply
+	// left for the next call.
+	tip, err := c.Store.HeadSHA(led.Slug)
+	if err != nil {
+		return nil, "", mapStoreErr(err, led.Slug)
+	}
+	if cursor != "" && !c.Store.IsAncestor(cursor, tip) {
+		return nil, "", out.Errf("reset_required", resetHint, 4,
+			"cursor '%s' is not on ledger '%s'", cursor, led.Slug)
+	}
+	evs, _, err := c.Store.Events(led.Slug)
+	if err != nil {
+		return nil, "", mapStoreErr(err, led.Slug)
+	}
+	byID := make(map[string]model.Event, len(evs))
+	for _, ev := range evs {
+		byID[ev.ID] = ev
+	}
+	nodes, err := c.Store.RangeNodes(cursor, tip)
+	if err != nil {
+		return nil, "", out.Errf("git_failed", "", 1, "%s", err)
+	}
+	for i := range nodes {
+		ev, ok := byID[nodes[i].SHA[:10]]
+		if !ok {
+			// no readable event here: a sync merge, or a torn/foreign commit.
+			// Contracted out of the batch order, never delivered — the same
+			// invisibility every other read gives them.
+			nodes[i].IsSentinel = true
+			continue
+		}
+		nodes[i].TS = ev.TS
+	}
+	res := dag.Sort(nodes)
+
+	// Condition (ii) bookkeeping: the delivered set's maximal elements on the
+	// range's contracted DAG. A node joins the frontier when delivered (its
+	// children can only come later in topological order) and leaves it the
+	// moment one of its children is delivered. A frontier of exactly one is
+	// precisely "some delivered C has every delivered event as an
+	// ancestor-or-equal" — and that C is always the event just delivered.
+	parents := map[string][]string{}
+	for p, kids := range res.Children {
+		for _, k := range kids {
+			parents[k] = append(parents[k], p)
 		}
 	}
-	return -1
+	frontier := map[string]bool{}
+	delivered := make([]model.Event, 0, len(res.Order))
+	for _, sha := range res.Order {
+		delivered = append(delivered, byID[sha[:10]])
+		frontier[sha] = true
+		for _, p := range parents[sha] {
+			delete(frontier, p)
+		}
+		if limit <= 0 || len(delivered) < limit || len(frontier) != 1 {
+			continue
+		}
+		// Condition (i), one subprocess per candidate stop-point (never per
+		// event): C must descend from the incoming cursor, or `cursor..C`
+		// would not be the delivered set and the pager would re-deliver the
+		// consumer's own branch forever. A cursorless drain has nothing to
+		// descend from, so (i) is vacuous.
+		if cursor == "" || c.Store.IsAncestor(cursor, sha) {
+			return delivered, sha[:10], nil
+		}
+	}
+	return delivered, tip[:10], nil
 }
 
 // ---- since ----
@@ -54,22 +136,10 @@ func runSince(c *Ctx, cursor string, limit int, ledgerFlag string) error {
 	if err != nil {
 		return err
 	}
-	idx := -1
-	if cursor != "" {
-		idx = indexOf(led.Events, cursor)
-		if idx < 0 {
-			return out.Errf("reset_required",
-				"ledger status refolds current state; ledger tail -n 50 shows recent events", 4,
-				"cursor '%s' is not on ledger '%s'", cursor, led.Slug)
-		}
-	}
-	evs := nonSyncEvents(led.Events[idx+1:])
-	if limit > 0 && len(evs) > limit {
-		evs = evs[:limit]
-	}
-	next := cursor
-	if len(evs) > 0 {
-		next = evs[len(evs)-1].ID
+	evs, next, err := deliverRange(c, led, cursor, limit,
+		"ledger status refolds current state; ledger tail -n 50 shows recent events")
+	if err != nil {
+		return err
 	}
 	lines := make([]string, 0, len(evs))
 	for _, ev := range evs {
@@ -158,17 +228,17 @@ func runWatch(c *Ctx, o watchOpts) error {
 	deadline := time.Now().Add(time.Duration(o.timeout * float64(time.Second)))
 
 	for {
-		led, err = c.Load(led.Slug) // refold; cheap (batched) and correct
+		// Unbounded by design: watch has no --limit in v1, so every batch is
+		// the whole `cur..tip` range and every batch emits the tip (spec
+		// Addition 2, the one amendment this design makes to the parent's
+		// "same bound applies to watch"). deliverRange re-reads the ref and
+		// the chain per poll, which is what makes this loop see new events.
+		evs, next, err := deliverRange(c, led, cur, 0,
+			"restart with `ledger watch` (no --since) to watch from now")
 		if err != nil {
 			return err
 		}
-		idx := indexOf(led.Events, cur)
-		if idx < 0 {
-			return out.Errf("reset_required", "restart with `ledger watch` (no --since) to watch from now", 4,
-				"cursor '%s' is not on ledger '%s'", cur, led.Slug)
-		}
-		newRaw := led.Events[idx+1:]
-		hits := filterHits(nonSyncEvents(newRaw), o)
+		hits := filterHits(evs, o)
 
 		// --follow never returns: each poll streams any new hits as one JSON
 		// line apiece, then keeps waiting. Not covered by an automated test —
@@ -179,24 +249,20 @@ func runWatch(c *Ctx, o watchOpts) error {
 				line, _ := json.Marshal(followDoc(h))
 				fmt.Fprintln(c.Stdout, string(line))
 			}
-			if len(newRaw) > 0 {
-				cur = newRaw[len(newRaw)-1].ID
-			}
+			cur = next
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
 
 		if len(hits) > 0 {
-			payload := map[string]any{"ledger": led.Slug, "events": eventsJSON(hits), "cursor": newRaw[len(newRaw)-1].ID}
+			payload := map[string]any{"ledger": led.Slug, "events": eventsJSON(hits), "cursor": next}
 			for k, v := range start {
 				payload[k] = v
 			}
 			outEmit(c, payload, watchLines(hits))
 			return nil
 		}
-		if len(newRaw) > 0 {
-			cur = newRaw[len(newRaw)-1].ID // advance past non-matching events so a re-poll doesn't re-scan them
-		}
+		cur = next // advance past non-matching events so a re-poll doesn't re-scan them
 		if hasDeadline && time.Now().After(deadline) {
 			payload := map[string]any{"ledger": led.Slug, "timeout": true, "events": []any{}, "cursor": cur}
 			for k, v := range start {
