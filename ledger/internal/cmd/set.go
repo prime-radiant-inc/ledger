@@ -247,14 +247,22 @@ func setPrecondition(key string, fields map[string]string, target, expect string
 	}
 
 	return func(events []model.Event, d dag.Result) error {
-		// Reset unconditionally at the top of every attempt: both pointers
-		// point into the event AppendChecked actually builds from, and that
-		// same event is reused across every CAS retry (never recreated per
-		// attempt). Without these resets, a losing attempt that recorded an
-		// override — or a contest resolution — would leave it stuck for a
-		// later, winning attempt whose own fresh computation found nothing:
-		// a tool-computed attribution that never existed on the state that
-		// actually landed.
+		// Both pointers point into the event AppendChecked actually builds
+		// from, and that same event is reused across every CAS retry (never
+		// recreated per attempt). So every tool-computed field must be
+		// written on EVERY invocation, "nothing to record" included —
+		// otherwise a losing attempt's value survives into a winning
+		// attempt's commit as an attribution that never existed on the state
+		// that actually landed.
+		//
+		// The two fields satisfy that differently, and it is worth being
+		// precise. *overrideOut is assigned only inside the has-signals
+		// branch below, so this reset is what covers the no-signals case and
+		// is load-bearing on its own. *resolvedOut is assigned
+		// unconditionally on the guarded path, which already covers the
+		// nothing-to-resolve case — this reset is belt-and-braces there, and
+		// deliberately kept so that making that assignment conditional (the
+		// shape override's has) cannot silently reintroduce the carryover.
 		*overrideOut = ""
 		*resolvedOut = nil
 

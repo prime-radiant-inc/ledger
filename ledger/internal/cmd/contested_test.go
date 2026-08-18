@@ -3,10 +3,14 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
+	"ledger/internal/dag"
 	"ledger/internal/gitx"
+	"ledger/internal/model"
 	"ledger/internal/store"
 )
 
@@ -304,24 +308,158 @@ func TestContestedEntriesByteIdenticalAcrossMergeOrders(t *testing.T) {
 	}
 }
 
-// TestContestedResolvedResetsPerCASAttempt is the override-carryover lesson
-// applied to the second tool-computed field on the event: *ev is reused
-// across every CAS retry, so a losing attempt that computed a resolution
-// must never leave it stuck on a later, winning attempt whose own fresh
-// read found nothing to resolve. The collapse below lands on attempt 1 and
-// is then re-run against a chain that already holds it.
-func TestContestedResolvedResetsPerCASAttempt(t *testing.T) {
+// TestContestedResolvedRecomputedPerCASAttempt is the override-carryover
+// lesson applied to the second tool-computed field on the event: *ev is the
+// SAME struct across every CAS retry (AppendChecked never recreates it), so
+// the commit that lands must carry the WINNING attempt's own computation —
+// never a value left behind by a losing one.
+//
+// It drives the real setPrecondition closure and the real
+// store.AppendChecked through an actual two-attempt retry, on
+// override_test.go's TestOverrideResetsAcrossLosingCASAttempt harness: a
+// sync.Once inside the wrapped precondition moves the ref out from under
+// attempt 1's update-ref, so attempt 2 is a genuine second run of the same
+// closure against a fresh read.
+//
+// The competing event is a real `ledger sync` bringing in a THIRD replica's
+// concurrent claim, and its timestamp is the whole design of this fixture.
+// A collapsing write to (task-1, status) would fail the CAS and abort the
+// append, so it cannot be the thing that changes the answer. A third
+// concurrent claim OLDER than the current winner can: it joins the
+// antichain without displacing the fold-order-last head, so the CAS target
+// is untouched while the LOSING set grows from [alice] to [alice, dave].
+// Attempt 1 and attempt 2 therefore have different correct answers, and the
+// commit must carry attempt 2's — a computation hoisted out of the closure,
+// or reused from the losing attempt, lands [alice] and fails here.
+func TestContestedResolvedRecomputedPerCASAttempt(t *testing.T) {
+	remote, a, b := twoReplicas(t)
+	seedBoard(t, a, "board")
+	mustRun(t, a, "set", "task-1", "status=open", "--expect", "none", "-m", "the task", "--as", "seeder")
+	pushLedgerRef(t, a, "board")
+	mustRun(t, b, "sync")
+
+	// A third replica, partitioned off the same seed as the other two.
+	c := t.TempDir() + "/c"
+	git(t, "", "clone", "-q", remote, c)
+	git(t, c, "config", "user.name", "t")
+	git(t, c, "config", "user.email", "t@t")
+	mustRun(t, c, "init")
+	mustRun(t, c, "sync")
+
+	// Three concurrent claims off one open event, in ascending timestamp
+	// order: alice, then dave, then bob. bob is the fold-order-last head and
+	// so the winner; dave sorts BETWEEN the two, which is what lets him join
+	// the antichain later without moving the CAS target.
+	openID := statusID(t, a, "board", "task-1")
+	mustRun(t, a, "set", "task-1", "status=in-progress", "--expect", openID, "-m", "alice claims", "--as", "alice")
+	mustRun(t, c, "set", "task-1", "status=in-progress", "--expect", openID, "-m", "dave claims", "--as", "dave")
+	mustRun(t, b, "set", "task-1", "status=in-progress", "--expect", openID, "-m", "bob claims", "--as", "bob")
+	cPreMerge := git(t, c, "rev-parse", "refs/ledger/board")
+
+	pushLedgerRef(t, a, "board")
+	mustRun(t, b, "sync") // b now holds {alice, bob}; winner bob
+	// Prime the remote with c's chain so the mid-retry sync brings dave in.
+	git(t, c, "push", "-q", "-f", "origin", cPreMerge+":refs/ledger/board")
+
+	entries := contestedEntries(t, mustRun(t, b, "ready", "--ledger", "board"))
+	if len(entries) != 1 {
+		t.Fatalf("want one contest before the retry: %+v", entries)
+	}
+	ct := entries[0]["contest"].(map[string]any)
+	ids := ct["ids"].([]any)
+	if len(ids) != 2 || ct["authors"].([]any)[1] != "bob" {
+		t.Fatalf("fixture must start as a two-head race won by bob: %+v", ct)
+	}
+	expect := ct["expect"].(string)
+	aliceID := ids[0].(string)
+
+	res, err := store.Resolve(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := res.Store
+	led, err := (&Ctx{Store: s}).Load("board")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// bob collapses his own contest: a claimant's own claim is never a
+	// signal against them, so this needs no --override and the closure runs
+	// its guarded-field path clean on every attempt.
+	fields := map[string]string{"status": "in-progress"}
+	evt := model.NewEvent("set", "bob", s.Repo)
+	evt.Key, evt.Fields, evt.Text = "task-1", fields, "collapsing"
+	realPre := setPrecondition("task-1", fields, "status", expect, true, led.Meta, evt.Text, "bob", false,
+		&evt.Override, &evt.ContestedResolved)
+
+	var (
+		once      sync.Once
+		attempts  int
+		firstSeen []string
+	)
+	pre := func(events []model.Event, d dag.Result) error {
+		attempts++
+		err := realPre(events, d)
+		once.Do(func() {
+			firstSeen = append([]string(nil), evt.ContestedResolved...)
+			// Land the third replica's claim under attempt 1's feet: the ref
+			// moves (so update-ref loses and the loop retries) and the
+			// antichain grows, without touching the CAS target.
+			mustRun(t, b, "sync")
+		})
+		return err
+	}
+
+	id, err := s.AppendChecked("board", &evt, pre, store.ExpectPresent)
+	if err != nil {
+		t.Fatalf("AppendChecked: %v", err)
+	}
+	if attempts < 2 {
+		t.Fatalf("pre ran %d time(s), want >=2 (the mid-retry sync must force a real retry)", attempts)
+	}
+	if len(firstSeen) != 1 || firstSeen[0] != aliceID {
+		t.Fatalf("attempt 1 must have computed the two-head answer [%s], got %v", aliceID, firstSeen)
+	}
+
+	evs, _, err := s.Events("board")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var landed *model.Event
+	var daveID string
+	for i := range evs {
+		if evs[i].ID == id {
+			landed = &evs[i]
+		}
+		if evs[i].Author == "dave" && evs[i].Fields["status"] == "in-progress" {
+			daveID = evs[i].ID
+		}
+	}
+	if landed == nil || daveID == "" {
+		t.Fatalf("chain must hold both the collapsing write %s and dave's claim (%q)", id, daveID)
+	}
+	// Attempt 2's own answer, not attempt 1's: three heads now, so both
+	// losers are named. Fold order is (ts, sha), so alice precedes dave.
+	want := []string{aliceID, daveID}
+	if !reflect.DeepEqual(landed.ContestedResolved, want) {
+		t.Fatalf("the landed commit must carry the WINNING attempt's own computation %v, got %v (attempt 1 saw %v)",
+			want, landed.ContestedResolved, firstSeen)
+	}
+}
+
+// TestContestedResolvedAbsentOnceCollapsed: a second write against the
+// post-collapse state has nothing left to resolve, so it records nothing —
+// the value is a function of the state each write sees, never inherited
+// from the ledger's past.
+func TestContestedResolvedAbsentOnceCollapsed(t *testing.T) {
 	_, b, _ := contestedReplicas(t)
 	entries := contestedEntries(t, mustRun(t, b, "ready", "--ledger", "board"))
 	c := entries[0]["contest"].(map[string]any)
 
-	// First write collapses the contest and records it.
 	first := mustRun(t, b, "set", "task-1", "status=in-progress", "--expect", c["expect"].(string),
 		"-m", "collapsing", "--as", "bob")
 	firstID := mustJSON(t, first)["id"].(string)
 
-	// Second write, against the post-collapse state: there is nothing left
-	// to resolve, so the record must be absent — not inherited.
 	second := mustRun(t, b, "set", "task-1", "status=done", "--expect", firstID,
 		"--override", "-m", "done", "--as", "bob")
 	if _, present := mustJSON(t, second)["contested_resolved"]; present {
