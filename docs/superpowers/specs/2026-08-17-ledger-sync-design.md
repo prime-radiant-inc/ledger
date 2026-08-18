@@ -1,6 +1,6 @@
 # Ledger sync: activation and the partition contract (design)
 
-2026-08-17, revision 7 — a second simplification round falsified rev
+2026-08-17, revision 8 — one clause: the standing determinism test, on its first execution, caught a collision between the pager law (tip-at-drain, sentinel included) and since's byte-diff promise — the emitted resume cursor names replica-local sentinel structure and is excluded from the projection; the delivered events are the promise. Below, revision 7 — a second simplification round falsified rev
 6's pager law twice (a sentinel tip has no single maximal delivered
 element; a branch-local cursor is incomparable with the candidate) and
 found the document's structure itself failing its "simple to
@@ -320,9 +320,15 @@ identically. One closed list. Covered: `show`, `status`, `tail`,
 hold different stores), `export` and bare `rollup` (dumps and
 indexes, not projections; their determinism is untested in v1). The
 projection also excludes: store-resolution breadcrumbs, freshness
-warnings (parent law), TTY chrome, and cross-slug presence lines
+warnings (parent law), TTY chrome, cross-slug presence lines
 (`show`'s superseded-by resolution reads other slugs — probed; it
-stays outside the guarantee).
+stays outside the guarantee), and **`since`'s emitted resume
+`cursor` field** (rev 8 — the standing test caught the collision on
+its first run: the emitted cursor is the ref tip by the pager law, a
+SENTINEL SHA after any divergence, and sentinel structure is
+replica-local by this section's own definition of chain; the cursor
+is a replica-local resume token, and `since`'s promise is the
+delivered events, byte-identical for the same chain and cursor).
 
 - **`--at <ts>`** (millisecond UTC layout; the legacy layout
   accepted): fixes the evaluation clock for age/staleness rendering.
