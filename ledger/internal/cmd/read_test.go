@@ -10,6 +10,7 @@ import (
 
 	"ledger/internal/gitx"
 	"ledger/internal/model"
+	"ledger/internal/out"
 	"ledger/internal/store"
 )
 
@@ -344,6 +345,30 @@ func TestShowIDUnknown(t *testing.T) {
 	_, se, code := run(t, dir, "show", "--id", "0000000000")
 	if code != 4 || !strings.Contains(se, "bad_value") || !strings.Contains(se, "0000000000") {
 		t.Fatalf("unknown id must be bad_value naming it: code=%d se=%s", code, se)
+	}
+}
+
+// TestFindByIDAmbiguousPrefix: ids are 10-hex truncated shas, so a short
+// --id prefix genuinely can match more than one event (not a hypothetical —
+// git abbreviation collisions are exactly this shape). show --id and
+// notes --id must both refuse to guess.
+func TestFindByIDAmbiguousPrefix(t *testing.T) {
+	evs := []model.Event{{ID: "aaaa000001", Type: "set"}, {ID: "aaaa000002", Type: "note"}}
+	if _, matches := findByID(evs, "aaaa"); matches != 2 {
+		t.Fatalf("expected 2 matches on the shared prefix, got %d", matches)
+	}
+
+	showErr, ok := idReadErr("demo", "aaaa", 2).(*out.CLIError)
+	if !ok || showErr.Code != "bad_value" || !strings.Contains(showErr.Message, "ambiguous") {
+		t.Fatalf("show --id's ambiguous-prefix error must be bad_value naming the ambiguity: %+v", showErr)
+	}
+
+	notesErr, ok := notesIDErr("demo", "aaaa", model.Event{}, 2).(*out.CLIError)
+	if !ok || notesErr.Code != "bad_value" || !strings.Contains(notesErr.Message, "ambiguous") {
+		t.Fatalf("notes --id's ambiguous-prefix error must be bad_value naming the ambiguity: %+v", notesErr)
+	}
+	if !strings.Contains(notesErr.Hint, "show --id") {
+		t.Fatalf("notes --id's ambiguous-prefix error must still hint at show --id: %+v", notesErr)
 	}
 }
 

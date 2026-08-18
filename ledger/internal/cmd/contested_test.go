@@ -493,6 +493,9 @@ func TestContestedTTYLines(t *testing.T) {
 	if !strings.Contains(so, "field=status") || !strings.Contains(so, "expect=") {
 		t.Fatalf("the contested line must carry the ticket:\n%s", so)
 	}
+	if !strings.Contains(so, "(show --id") {
+		t.Fatalf("the contested line must point a loser-id holder at show --id:\n%s", so)
+	}
 	held := ""
 	for _, l := range strings.Split(so, "\n") {
 		if strings.Contains(l, "held") && strings.Contains(l, "task-1") {
