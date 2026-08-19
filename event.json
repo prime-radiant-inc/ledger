@@ -1,16 +1,16 @@
 {
- "ts": "2026-08-19T17:57:09",
+ "ts": "2026-08-19T18:24:39",
  "type": "note",
  "key": "github-bridge",
  "kind": "status-update",
- "text": "jesse ruled: rename (Part A) ships now via dedicated build (branch feat/rename, opus implementer, brief frozen from rev 6); spec restructured to rev 7 (143a1f3, semantics-preserving; stale test-plan override lines + duplicate numbering fixed, gauntlet-3 entry added to validation record); gauntlet round 4 (three competing reviewers, probe mandate, clarity-grade question) running on rev 7. Part B build gates on that round.",
+ "text": "gauntlet round 4 (three reviewers on the rev-7 restructure): 34 findings, unanimous NOT clarity-grade — but the restructure itself held (only 2 rewrite-introduced defects); the Criticals are pre-existing Part B holes newly visible: unbounded terminal set (probed board corruption), unspecified reopen trigger (fabricated overrides), reclassification flip-flop, Law6/Law2 axis contradiction, ASPECT record collision. rev 8 (f7d67f4) applies all rulings incl. startup terminal-set refusal, convergence axis = terminality+close-reason, CLASS coordinate on divergence records, --state all pinned, Title mapping + issue-creation added. rename build amended mid-flight (guard-free fixture unbuildable, probed+verified). Part B build gate stays with jesse.",
  "author": "claude-code",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 32639,
+  "pid": 48694,
   "branch": "main",
-  "head": "143a1f3",
+  "head": "f7d67f4",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
   "session_source": "CLAUDE_CODE_SESSION_ID"
  }
