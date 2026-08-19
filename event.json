@@ -1,15 +1,15 @@
 {
- "ts": "2026-08-19T07:13:29.994",
+ "ts": "2026-08-19T07:36:34.259",
  "type": "note",
  "key": "github-bridge",
- "text": "spike v3 DONE (28-injection sweep, live trial full pass, concurrency claim falsified with real processes); spec rev 5 committed; three-reviewer gauntlet next — clarity-grade round gates the build, Criticals escalate to jesse",
+ "text": "gauntlet round 3 (three reviewers): 35 findings, 5 Criticals — NOT clarity-grade; rev 6 committed (f75d438) with all rulings; per the gate this escalates to jesse before any build; structural rewrite also pending his call",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 16510,
+  "pid": 66987,
   "branch": "main",
-  "head": "03a6d73",
+  "head": "f75d438",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
   "session_source": "CLAUDE_CODE_SESSION_ID"
  }
