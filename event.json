@@ -1,16 +1,13 @@
 {
- "ts": "2026-08-19T00:13:42.386",
- "type": "set",
+ "ts": "2026-08-19T00:13:42.530",
+ "type": "note",
  "key": "remote-edges",
- "fields": {
-  "status": "open"
- },
- "text": "remote-resolution edge cases: slashed remote names, config scopes, breadcrumb test",
+ "text": "migrated from https://github.com/prime-radiant-inc/ledger/issues/4",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 6861,
+  "pid": 6877,
   "branch": "main",
   "head": "cb04ecd",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
