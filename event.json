@@ -1,13 +1,16 @@
 {
- "ts": "2026-08-19T00:13:45.260",
- "type": "note",
- "key": "pty-dep",
- "text": "migrated from https://github.com/prime-radiant-inc/ledger/issues/10",
+ "ts": "2026-08-19T00:14:05.483",
+ "type": "set",
+ "key": "probe-key",
+ "fields": {
+  "labels": "human"
+ },
+ "text": "reserve",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 7196,
+  "pid": 7519,
   "branch": "main",
   "head": "cb04ecd",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
