@@ -1,16 +1,16 @@
 {
- "ts": "2026-08-19T02:32:08.599",
+ "ts": "2026-08-19T02:32:08.853",
  "type": "set",
  "key": "github-bridge",
  "fields": {
-  "status": "open"
+  "status": "in-progress"
  },
- "text": "GitHub bridge: rename events + Level 1/2 sync (spike, then spec, then gauntlet)",
+ "text": "claiming: spike phase",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 65379,
+  "pid": 65435,
   "branch": "main",
   "head": "46bc965",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
