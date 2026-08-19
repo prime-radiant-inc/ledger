@@ -1,237 +1,355 @@
 # Ledger GitHub bridge: rename events and the additive sync (design)
 
-2026-08-18, revision 1 — written FROM a completed spike (branch
-`spike/bridge`, all five trial steps green against a real repo), not ahead
-of one. Two of this spec's laws exist because the spike falsified their
-naive forms live: the bridge ordering law (intake-first produced a
-fabricated human edit and two sides disagreeing in opposite directions
-within one run) and the state-persistence law (an unconditional cursor
-note can never converge). Validation record at bottom.
+2026-08-18, revision 2 — revision 1's gauntlet (two reviewers, a
+stateful fixture transport, live probes against the spike's bridged
+repo) produced the project's heaviest single-round result: ~28 distinct
+legitimate findings, six Criticals between the two slates, and nine
+independent convergences. Rev 2 rebuilds Part B around six explicit
+laws, patches Part A's contradictions, and grows the amendment
+inventory from one entry to six. The architecture (rename as a
+set-field event; an additive bridge over the public CLI) survived; the
+sentences did not. Validation record at bottom.
 
-**Scope**: (A) a first-class RENAME event in the core tool — tool rev 16,
-amending the issues spec's immutable-title law; (B) `ledger-gh`, a
-companion bridge command — Levels 1 (ledger→GitHub mirror) and 2
-(GitHub→ledger additive intake) ONLY. Level 3 (label/assignee state sync)
-is explicitly out of scope, unproven demand. **This spec resolves the
-coexistence decision: the board is canonical; GitHub is the intake and
-display window.**
+**Scope**: (A) a first-class RENAME event in the core tool — tool rev
+16; (B) `ledger-gh`, a companion bridge — Level 1 (ledger→GitHub
+mirror) and Level 2 (GitHub→ledger additive intake) ONLY. Level 3
+(label/assignee state sync) stays out: unproven demand. **Coexistence
+resolved: the board is canonical; GitHub is the intake and display
+window.**
 
-Operator requirements: the bridge is one idempotent command, safe to
-re-run, host-portable; every cross-system write is attributed and
-greppable; the board's doctrine (CAS, standing signals, evidence) applies
-to the bridge exactly as to any agent.
+Operator requirements: one idempotent command, safe to re-run, safe to
+crash anywhere, host-portable; every cross-system write attributed and
+greppable; board doctrine (CAS, standing signals, evidence) binds the
+bridge exactly as it binds any agent.
 
 ## Part A — the rename event (core tool, rev 16)
 
 **Write**: `ledger set <key> --rename "<new title>"`.
 
-- **Encoding, pinned**: a top-level `"rename"` field on a `type:"set"`
-  event — NOT a sixth event type. Every existing consumer (cursors, watch
-  filters, idempotency dedupe, rollup coverage, sync) keeps treating it as
-  the ordinary keyed write it is; the fold sees it with one string test.
-- **One assertion per event**: `--rename` combined with `field=value`,
-  `-m`, `--evidence`, or `--override`… `--override` IS legal (see the
-  gate below); the others are `bad_usage` — one commit never asserts two
-  things. `--idempotency-key` is allowed and scoped to rename events (a
-  rename can never dedupe against a field write sharing its key).
+- **Encoding**: a top-level `"rename"` field on a `type:"set"` event —
+  not a sixth event type. Cursors deliver it, `watch --key` matches it,
+  idempotency dedupes it, rollup coverage counts it, sync merges it;
+  the fold sees it with one string test.
+- **One assertion per event, the `-m` rule stated once**: `--rename`
+  with `field=value` or `--evidence` is `bad_usage`. `-m` is
+  `bad_usage` on a bare rename and REQUIRED with `--override`, where it
+  is the override justification — it renders wherever override messages
+  render and is never a title. `--override` without a standing signal
+  is `bad_usage` (nothing to override). `--idempotency-key` is allowed,
+  scoped to rename events (a rename never dedupes against a field
+  write sharing its key).
 - **Fold rule**: a key's title = the latest rename event's text in fold
-  order, else the first status event's `-m` (the existing law, untouched
-  for never-renamed keys). Concurrent renames across replicas resolve
-  last-in-fold-order; losers persist in the chain as prior titles.
-- **The gate, decided** (the spike pinned "fully unguarded" and flagged it
-  as the ruling most worth re-litigating; this spec re-litigates it):
-  `claim` and `settled` do NOT gate a rename — a title is not an outcome.
-  **`human` DOES gate it**: retitling a person's reserved issue under them
-  is exactly the friction the label exists to create, so a rename on a
-  human-labeled key is `needs_override`, satisfied by `--override -m
-  "<why>"` like any standing-signal write (this is the one flag
-  combination `--rename` accepts). `--expect` stays optional; when passed
-  it is CAS against the key's latest rename event (`--expect none` = never
-  renamed).
-- **Existence**: rename requires an existing titled key locally
-  (`unknown_key`, hint = the seed command). The fold stays total: a rename
-  arriving BY SYNC ahead of its seed titles the key, with no seed entry in
-  its prior list — write-time checks are local, like `blocked-by`
-  existence checks. Ready-capable boards only (`bad_usage` elsewhere —
-  plain boards have no titles).
-- **Render, mandatory labeling**: everywhere a title-bearing row renders,
-  a renamed title is visibly a renamed title with attribution reachable —
-  JSON rows carry `renamed: {by, ts, id, prior[]}` (prior = every earlier
-  title oldest first, seed included); TTY title lines carry
-  `(renamed by <author>)`; `show`/`render`'s identity header lists one
-  line per renamed key with prior → now and the event id. ABSENT (never
-  false/placeholder) on unrenamed keys, so unrenamed boards render
-  byte-identically to rev 15. Two render repairs ride along, both pinned:
-  `ready`'s TTY blocked line gains the title it already carried in JSON,
-  and `status <key>`'s drill-down — previously the one title-free per-key
-  view — gains the title with its rename info.
-- **Determinism**: title derivation is pure fold; the standing determinism
-  test covers it unchanged (spike-verified).
+  order, else the first status event's `-m`. Concurrent renames resolve
+  last-in-fold-order; losers persist as fold-path history.
+- **The gate**: `claim` and `settled` do NOT gate a rename — a title is
+  not an outcome. **`human` DOES**: `needs_override`, satisfied by
+  `--override -m "<why>"`, recorded as `override: human` — retitling a
+  person's reserved issue under them is the friction the label exists
+  to create. Cost, priced: the gate needs the key's labels, so a rename
+  pays the same whole-chain read class as every rule-5 check (sync spec
+  Addition 5) — acceptable; renames are rare. `--expect` stays
+  optional; when passed it is CAS against the key's latest RENAME event
+  (`--expect none` = never renamed) — a new `--expect` stream, named in
+  the amendment inventory.
+- **Existence**: rename requires a locally existing titled key
+  (`unknown_key`, hint = the seed command); ready-capable boards only.
+  Fold totality, two distinct cases (rev 2 splits them): (a) reachable
+  and testable — a rename PRECEDING a colliding seed in fold order
+  (two-root merge) titles the key, and its `prior` carries the
+  fold-path seed; (b) hand-built only — a rename with NO seed anywhere
+  in the chain still titles the key (totality; fixture-crafted, since
+  sync merges whole chains and cannot ship a rename without its seed).
+- **`prior` is fold-path history, not a complete inventory** (rev 2):
+  `renamed: {by, ts, id, prior[]}` lists earlier titles ON THE FOLD
+  PATH, oldest first, fold-path seed included. Under a two-root
+  collision the losing root's seed title appears in no rename structure
+  — the read-both-heads doctrine remains the way to see a collided
+  key's whole story, and the skill says so.
+- **Render, mandatory labeling**: every title-bearing surface shows a
+  renamed title as renamed with attribution reachable — JSON rows carry
+  `renamed`; TTY title lines carry `(renamed by <author>)`; the
+  identity header lists prior → now per renamed key; **contested and
+  stale-claim attention entries carry the current title with `renamed`
+  info** (they are title-bearing rows; this supersedes the sync spec's
+  title clause — amendment inventory). The `renamed` structure is
+  ABSENT on unrenamed keys. **Byte-compatibility claim, scoped
+  honestly** (rev 1's blanket claim was false by its own next
+  sentence): rename-LABELING adds nothing to unrenamed output, but
+  rev 16 makes two deliberate output changes on ALL boards — `ready`'s
+  TTY blocked line gains the title, and `status <key>`'s drill-down
+  gains title + rename info — each with its own fixture, not a
+  byte-identity test.
+- **Determinism**: pure fold; the standing determinism test gains a
+  renamed key in its fixture.
 
-Amendment to the issues spec, explicit: the immutable-title law becomes
-**"stable by default: a title changes only by explicit, labeled rename
-events."** The `ledger-issues` skill's title doctrine is rewritten to
-match (the seed's `-m` is still the title to write well — renames are
-corrections, not a workflow).
+### Amendment inventory (complete — rev 1 named only the first)
+
+1. **Issues spec, title law**: "immutable" becomes "stable by default:
+   changed only by explicit, labeled rename events."
+2. **Sync spec Addition 3's title clause** ("the KEY's title under the
+   issues spec's unamended law … immutable") is superseded: a contested
+   entry's `title` is the key's CURRENT title (fold rule above) with
+   `renamed` info attached. The entry's `expect`/ids machinery is
+   untouched.
+3. **Issues rule 5's scope** ("gates every guarded write"): the human
+   signal additionally gates renames — a named exception class outside
+   guarded-field writes, with the same `override:` recording.
+4. **Issues rules 2–4's `--expect` semantics**: a second, rename-scoped
+   CAS stream exists alongside field-scoped CAS.
+5. **Parent tool spec, Retries**: dedupe gains the rename dimension
+   (rename events dedupe only against rename events).
+6. **`skills/ledger-issues/SKILL.md`**: the Titles doctrine (seed `-m`
+   is still the title to write well; renames are corrections with
+   attribution, not a workflow) AND the Override-ethics paragraph —
+   its "never to decorate (wording, titles…)" sentence is rewritten:
+   the rename event is now the legitimate title correction; the
+   prohibition that survives is overriding STATE for cosmetic reasons.
 
 ## Part B — `ledger-gh`, the bridge
 
-A companion command living at `ledger/bridge/` (own main package, built
-separately), one verb:
+One verb: `ledger-gh sync --repo <owner/repo> --ledger <slug>
+[--store <path>] [--done <value>=closed] [--not-planned <value>=wontfix]`.
+Transport: the `gh` CLI, subprocess-only (v1). Board access: the
+`ledger` CLI, subprocess-only. Report: `{ok, repo, ledger,
+gh_mutations, board_writes, cursor, divergences, suppressed_authors,
+actions[], warnings[]}` — `cursor` is the PERSISTED cursor (a no-op
+run reports the stored one), `divergences` counts standing refusals,
+`suppressed_authors` counts outbound events skipped per `github:@*`
+author (poisoning is visible even though the namespace is unenforced —
+author enforcement rides the existing owner-enforcement v2 item, not a
+one-prefix carve-out).
 
-```
-ledger-gh sync --repo <owner/repo> --ledger <slug> [--store <path>]
-```
+**Vocabulary is configured, not assumed** (a legal ready-capable board
+can use `done`/`dropped`): `--done` and `--not-planned` name the
+terminal values the bridge writes and recognizes; at startup the bridge
+reads the board's declared vocabulary and REFUSES a board that lacks
+them, naming the fix. Outbound: done-value ⇒ close (completed),
+not-planned-value ⇒ close (not planned). Inbound: GitHub close
+completed ⇒ done-value with evidence `gh:<owner>/<repo>#<n>`; close
+NOT_PLANNED ⇒ not-planned-value with NO evidence (the issues spec
+calls evidence on wontfix "pasted-string theater"); reopen ⇒ open.
 
-Transport: the authenticated `gh` CLI, subprocess-only, v1 (token
-plumbing and a direct API client are v2 concerns). Board access: the
-`ledger` CLI, subprocess-only — spike-proven sufficient, and keeping the
-bridge on the public surface keeps the CLI honest. Output: one JSON
-report `{ok, repo, ledger, gh_mutations, board_writes, cursor, actions[],
-warnings[]}`; the `cursor` field is the PERSISTED cursor (a no-op run
-reports the stored one, not the drain tip — spike cosmetic finding,
-fixed by pin).
+**Identity, three pins**:
 
-**Identity map**: board key ↔ issue number. Ledger side: a note, kind
-`github-link`, body `github: issues/<n>`, authored `github-bridge`. GitHub
-side: first line of the issue body, `ledger-key: <key>` (first-line-only,
-CRLF-tolerant).
+- **A dedicated bridge identity is an operating REQUIREMENT.** At
+  startup the bridge resolves its GitHub login (`gh api user`) and
+  REFUSES to run if it equals any `github:@<login>` author already on
+  the board — the bridge must never share a login with a human
+  participant, because echo suppression keys on it. (Rev 1's
+  operator-token model was probed dropping the operator's own
+  comments.)
+- **The board's `github-link` note is THE authority** for key↔issue.
+  The issue-body `ledger-key:` line is a HINT: honored only when the
+  board's link note for that key names this issue number. An unlinked
+  issue claiming an existing key is warned and never intaken, never
+  seeded over (rev 1's body-line authority was probed as a hijack: any
+  GitHub user could bind their issue to any key and drive it). Two
+  issues claiming one key: the linked one wins, the other is warned
+  every run until a human resolves it.
+- **The reserved state key defends itself**: intake never mints a key
+  named `github-bridge-state` (collision-suffixed like any other), and
+  a link hint naming it is refused (probed live: rev 1's bridge seeded
+  its own bookkeeping key as pickable work from a GitHub issue titled
+  "GitHub bridge state").
 
-**Bridge state**: one note, kind `bridge-state`, under the reserved NOTE
-key `github-bridge-state` — a note key, never a `set` key (a set key
-would put a permanent statusless attention entry on every bridged board;
-spike finding). Body carries the drain cursor and per-issue
-comment-import high-water marks by REST comment id (monotonic per repo —
-bounded state, replacing the spike's unbounded node-id sets).
-**Persistence law (spike-falsified naive form): state persists ONLY when
-the run changed something.** An unconditional write can never converge —
-the state note lands after the cursor it records, so every run drains it,
-forever. A no-op run leaves the cursor stale at the cost of one
-suppressed event on the next drain.
+**Bridge state**: one note, kind `bridge-state`, under reserved NOTE
+key `github-bridge-state` (a note key: no board key, no attention
+noise). Body: repo, cursor, standing-refusal records. **No comment
+high-water marks** — deleted by the idempotence law below (both
+reviewers independently derived this simplification; the map was also
+unmergeable across replicas, being last-write-wins). One board ↔ one
+repo: the bridge refuses a run whose state note names a different
+repo; multi-repo bridging is v2.
 
-**The ordering law (spike-falsified naive form, stated as law)**: *a
-bridge run reads its outbound drain before it writes anything, and treats
-the remote's view of any aspect it is about to push as stale, never
-authoritative.* Concretely: (1) `ledger sync`; (2) READ the outbound
-drain (`since <cursor>`); (3) intake GitHub→board, with every key that
-carries an un-mirrored `status` or `rename` event off-limits to intake
-FOR THAT ASPECT (per-aspect, not per-key — a pending rename must not
-suppress a genuine GitHub close); (4) mirror board→GitHub; (5) `ledger
-push` if intake wrote; (6) persist state if anything changed. Step (1)
-is itself a law: **the bridge syncs first** — two drifted replicas
-running unsynced bridges would each duplicate the other's keys as new
-issues because the link notes haven't merged (spike finding 13); syncing
-first makes the bridge host-portable (spike-verified: the cursor, links,
-and import marks all travel on the chain).
+**Law 1 — ordering** (v1 falsified live at the spike; v2 closes the
+push hole G1 probed):
+(1) `ledger sync <slug>` — sync FIRST, always (unsynced replicas mint
+duplicate issues; failure aborts the run);
+(2) READ the outbound drain (`since <cursor>`);
+(3) intake GitHub→board, per-aspect pending suppression: a key with an
+un-mirrored status/rename event is off-limits to intake for THAT
+aspect — and **whenever suppression fires AND the remote value differs
+from the value about to be pushed, the bridge warns and leaves a board
+note**: that difference is a genuine concurrent GitHub edit being
+discarded, and silence would erase a human's action (probed: rev 1
+suppressed silently);
+(4) mirror board→GitHub;
+(5) persist state if anything changed;
+(6) **`ledger push <slug>` — always, selectively, LAST.** Always:
+link notes and bridge state must reach the remote or the sync-first
+law protects nothing (probed: rev 1's push-if-intake-wrote left
+bookkeeping local and minted duplicate issues WITH sync-first obeyed).
+Selectively: bare `push` publishes every local slug — the skill's
+privacy lever — so the bridge names its board, only. Push/sync
+`partial_failure` (exit 3): sync ⇒ abort; push ⇒ warn, retry next run
+(everything is idempotent below).
 
-**Echo suppression, three rules, deliberately independent**: the outbound
-mirror skips events authored `github:@*` (everything intake writes) and
-notes of kind `bridge-state`/`github-link` (bookkeeping, matched by KIND,
-never author); inbound intake skips comments whose GitHub author login is
-the bridge's own `gh` identity (primary check — the spike's body-prefix
-marker `**<author>** (via ledger):` demotes to a secondary heuristic,
-because a human typing the prefix must not be silently dropped).
+**Law 2 — idempotence by construction, not by cursor** (crash
+anywhere, re-run safely):
+- Intake comments: `note -k comment --idempotency-key
+  gh-comment-<rest-id>` — the REST id parsed from the comment `url`'s
+  `#issuecomment-<id>` fragment (free in the bulk read; the `--json`
+  `id` field is a GraphQL node id and is NOT ordered — pinned so
+  nobody re-derives it). Re-import after any crash is a dedupe no-op.
+- Mirrored comments carry the source event id in their marker:
+  `**<author>** (via ledger, <event-id>):`. Before posting, the mirror
+  checks the issue's already-fetched comments for that id — a mid-run
+  failure re-run never double-posts (probed against rev 1).
+- Issue creation: before `gh issue create`, search the repo for an
+  existing issue whose body hint names the key AND whose creation the
+  bridge recognizes as its own; one search, closes both the crash
+  window and the concurrent-run window.
+- Handoff and suppression notes carry idempotency keys derived from
+  (issue, aspect, observed state).
+- `reset_required` on the stored cursor (export/import re-mint, ref
+  surgery): warn and re-drain from empty — safe, because every mirror
+  action above is idempotent.
+- Concurrency: single-instance operation is a stated constraint (no
+  lock machinery in v1); the searches above make the overlap window
+  merely wasteful, not corrupting.
 
-**Level 1 — mirror out** (drained via `since`, idempotent by event id):
-new keys → `gh issue create` (title, `ledger-key:` body line) + link
-note; status closed/wontfix → close (wontfix = "not planned"), reopen →
-reopen; renames → retitle; notes → comments prefixed
-`**<author>** (via ledger):`. **Close fidelity, pinned** (the spike's
-most visible information loss): a close mirrors as a comment carrying the
-close message and evidence ref, THEN the close — a GitHub reader must
-never see a bare unexplained closure. `blocked-by` edges have no GitHub
-representation and are not mirrored — stated, not silent.
+**Law 3 — refusals converge** (rev 1's human-refusal path spammed a
+note and a GitHub comment per run, forever): a refusal (human-labeled
+key, unresolvable divergence) is recorded in bridge state as (issue,
+aspect, observed-state); while unchanged on both sides it is silently
+skipped, counted in `divergences`. The handoff note and the one
+GitHub comment ("reserved on the board; a maintainer must apply this
+there") are written ONCE per distinct divergence.
 
-**Level 2 — intake, additive only**: new GitHub issues (no `ledger-key`
-line, not bridge-created) → seed, key = slugified title
-(collision-suffixed), author `github:@<login>`, links written both ways;
-new comments by others → notes authored `github:@<login>`; title edits on
-linked issues → `set --rename` authored `github:@<login>`; close/reopen →
-the matching guarded write. **Attribution is real**: GitHub's issue JSON
-names the resulting state, not the actor, so intake pays one timeline
-call per changed issue for the true `closed`/`reopened`/`renamed` actor
-(fallback: issue author, with a warning). Closes carry evidence
-`gh:<owner>/<repo>#<n>`, satisfying `--require-evidence`.
+**Law 4 — attribution is paginated or absent**: the actor for a
+close/reopen/rename comes from the issue timeline read to its LAST
+page (`--paginate` or rel=last walk — the timeline is oldest-first,
+30/page, and includes comments; rev 1's single call was probed
+attributing to stale actors on busy issues and to nobody past 30
+events). The match is the NEWEST event of the type. "No matching
+event found" is the only fallback: issue author + a warning. Cost:
+two calls per changed issue, priced and accepted.
 
-**Guarded writes follow the doctrine verbatim**: `--expect` from a fresh
-read; on `claim_lost` re-read once and retry; on failure after retry,
-write a `handoff` note naming what could not be applied and warn in the
-report — never a blind re-write. **The override ruling, decided** (spike
-flagged auto-override of every standing signal): the bridge auto-passes
-`--override` for `claim` and `settled` signals — a GitHub actor's state
-change is a real decision by a real person, and the override is
-tool-recorded and attributed to `github:@<login>` for later triage. For
-a **`human`-labeled key the bridge never overrides**: it leaves the
-handoff note AND posts a GitHub comment ("this issue is reserved on the
-board; a maintainer must apply this change there") — the bridge cannot
-know whether the GitHub actor IS the reserving human (login↔author
-identity mapping is v2), and eroding the one label that means "a person
-owns this" at machine speed is the exact failure the issues spec warns
-about. Same rule for human-gated renames arriving from GitHub.
+**Law 5 — guarded writes follow the doctrine, including its terminal
+exception**: `--expect` from a fresh read; intake renames pass
+`--expect` from the rename stream (Part A's CAS — a board rename
+racing an intake rename loses loudly, not silently). On
+`needs_override` from `claim`/`settled`: auto-`--override`, attributed
+`github:@<login>` — a real person's decision, tool-recorded for
+triage. On `needs_override` from `human`: never — Law 3's refusal
+path (login↔label identity mapping is v2). On `claim_lost` for a
+TERMINAL value: straight to the handoff note — "never re-close blind"
+is the doctrine's own exception (rev 1's "retry once" contradicted
+it); non-terminal `claim_lost`: one re-read retry.
 
-**Out of scope, named**: Level 3 state sync (labels/assignees — the
-`github:@name` author namespace is the only assignee-shaped thing in v1);
-issue deletion/transfer (detected as a broken link at sync time → warning
-+ handoff note, no tombstone machinery); webhooks (polling only — the
-bridge runs when someone runs it, offline-first); pagination beyond the
-first 200 issues per run; rate-limit backoff. CLI rough edges the spike
-surfaced go to the tool's backlog, not this spec: a latest-event-of-kind
-read, and write-then-fold in one call.
+**Law 6 — mirror fidelity**: a close mirrors as a comment carrying the
+close message and evidence, THEN the close — never a bare unexplained
+closure. Notes on keys with no linked issue: the mirror defers
+nothing; at ISSUE-CREATION time the bridge backfills the key's
+existing non-bookkeeping notes (the statusless-seed window), and a
+note whose key never gains an issue is dropped WITH a warning naming
+the event id. `blocked-by` edges have no GitHub representation and
+are not mirrored — stated. Bridge-authored board writes are pinned:
+intake events `--as github:@<login>`; bookkeeping and handoff notes
+`--as github-bridge` with kinds `bridge-state`/`github-link`/`handoff`
+— and ALL THREE kinds are outbound-suppressed (rev 1 suppressed two;
+its handoff notes echoed to GitHub as comments).
+
+**Slugification, pinned**: lowercase, non-grammar characters → `-`,
+collapsed, 48-char truncate; empty result → `issue-<n>`; collision →
+`-<n>` suffix computed locally (two replicas intaking concurrently can
+still collide or diverge — the board's own two-root machinery is the
+net, stated).
+
+**Out of scope, named**: Level 3 state sync; issue deletion/transfer
+(broken link at read time ⇒ warning + one-time handoff note);
+webhooks; pagination beyond 200 issues/run; rate-limit backoff
+(transient failures are safe by Law 2); multi-repo boards; author
+namespace enforcement (owner-enforcement v2 carries it). CLI wishes
+go to the tool backlog: latest-event-of-kind read; write-then-fold in
+one call.
 
 ## Test plan
 
-1. Rename fold: none/one/several; concurrent across replicas via real
-   sync (converge + loser greppable); title survives claim/close; seed
-   message never resurrected; sync-arrival-before-seed titles the key.
-2. Rename gates: human-labeled key ⇒ `needs_override`, satisfied by
-   `--override`; claim/settled do NOT gate; all bad_usage combos;
-   `--expect` CAS both ways; plain-board and unknown-key refusals.
-3. Render: every title-bearing surface labeled (JSON renamed info, TTY
-   marker, identity header, blocked-line title, status drill-down title);
-   unrenamed boards byte-identical to rev 15; determinism test extended
-   with a renamed key in its fixture.
-4. Bridge ordering: the spike's falsification as a regression fixture —
-   close a key, run the bridge once, assert exactly one GH close, zero
-   board writes, and no fabricated attribution.
-5. Idempotence: double-run is 0/0 with byte-identical board head; state
-   persists only on change.
-6. Echo: `github:@*` events never mirror; bookkeeping notes never mirror;
-   bridge-authored comments never intake (author-login check primary).
-7. Guarded intake: close against a claimed key retries once then leaves a
-   handoff note; human-labeled key ⇒ no write, handoff note + GH comment.
-8. Close fidelity: mirrored close carries message + evidence comment.
-9. High-water marks: comment import survives re-runs bounded; a new
-   comment below an imported id is not re-imported.
-10. Host portability: bridge state rides the chain; post-sync bridge run
-    from a second replica is 0/0 (spike-verified, kept as regression).
-11. Bridge tests run against a FIXTURE transport (recorded gh JSON), plus
-    one live smoke against the scratch repo — the live trial is the
-    acceptance gate, not CI.
+1. Rename fold: none/one/several; concurrent via real sync (converge,
+   loser greppable); title survives claim/close; seed message never
+   resurrected; fold-order-precedence case (two-root + rename, `prior`
+   carries fold-path seed); hand-built no-seed totality case.
+2. Rename gates and flags: human ⇒ `needs_override` ⇒
+   `--override -m` lands with `override: human` and the message
+   rendering as override text; claim/settled do NOT gate; `--override`
+   without signal ⇒ `bad_usage`; the full bad_usage matrix; rename
+   `--expect` CAS both ways; `--idempotency-key` dedupes rename-vs-
+   rename only; plain-board and unknown-key refusals.
+3. Rename ecosystem: `since`/`watch` deliver renames; rollup coverage
+   counts them; export/import round-trips them; determinism fixture
+   includes a renamed key; contested and stale-claim entries carry
+   renamed titles; the two deliberate render changes have their own
+   fixtures (no byte-identity claim).
+4. Ordering: the spike falsification as regression (close → one run →
+   one GH close, zero board writes, no fabricated attribution); the
+   suppressed-genuine-edit case warns and notes; the push-hole
+   regression (fixture transport: mirror-only run on replica A, then
+   synced replica B run ⇒ ZERO duplicate issues).
+5. Idempotence: crash injected after every phase (fixture transport
+   fails at each call site in turn) ⇒ re-run converges with no
+   duplicate comments, notes, or issues; double-run 0/0 on a converged
+   board; state persists only on change; report's `cursor` = persisted
+   cursor on no-op runs.
+6. Identity: hijack regression (unlinked issue claiming an existing
+   key ⇒ warned, untouched); two-issues-one-key ⇒ linked wins;
+   reserved-key seizure regression (issue titled to slugify into the
+   state key ⇒ suffixed); dedicated-identity startup refusal.
+7. Refusal convergence: human-labeled divergence ⇒ exactly one note +
+   one GH comment across N runs; `divergences` counted; cleared when
+   either side changes.
+8. Guarded intake: claim/settled auto-override lands attributed;
+   terminal `claim_lost` ⇒ handoff, no retry; non-terminal ⇒ one
+   retry; rename race loses loudly via rename-CAS.
+9. Attribution: fixture timeline >30 events with a stale close cycle
+   ⇒ newest actor found via pagination; no-event ⇒ author + warning.
+10. Vocabulary: `done`/`dropped` board bridged with flags; missing
+    vocab refused naming the fix; NOT_PLANNED maps in with no
+    evidence.
+11. Mirror fidelity: close comment precedes close; issue-creation
+    backfills pre-link notes; never-linked note drop warns; handoff
+    notes never mirror; `suppressed_authors` counts a poisoned
+    `--as github:@x` event.
+12. Bridge tests run against a FIXTURE transport; ONE live acceptance
+    trial against a scratch repo (below). Skill/doctrine harness
+    re-runs over the amended SKILL.md lines.
 
 ## Trial plan (acceptance, live)
 
-Re-run the spike's five steps against a scratch repo with the production
-binaries, PLUS: the human-labeled refusal path (reserve a key, close its
-issue on GitHub, verify handoff note + GH comment + no board write); a
-rename needing `--override` from both directions; and the previously
-unexercised override-on-intake path (claimed key closed on GitHub).
+The spike's five steps with production binaries, PLUS: the hijack
+attempt; the reserved-key seizure attempt; the human-labeled refusal
+(one note + one comment, then silence); a >30-event issue attribution;
+a `done`/`dropped` vocabulary board; a crash-resume (kill the bridge
+mid-mirror, re-run, audit zero duplicates); and the unsynced-replica
+duplicate-issue hazard demonstrated once against the fixture
+transport, never live.
 
 ## Validation record
 
-- Spike (branch `spike/bridge`, report in the session workspace; trial
-  against prime-radiant-inc/ledger-bridge-spike, all five steps green;
-  rename ≈190 LOC + 318 test, bridge ≈1034 LOC + 139 test; full suite
-  green with the standing determinism test). Falsified live and fixed:
-  intake-first ordering (fabricated `override: settled` attributed to a
-  human who did nothing, then opposite-direction disagreement in one
-  run); unconditional state persistence (cursor chases its own tail —
-  idempotence false by construction). Spike-pinned and spec-adopted:
-  rename as a set-field; note-key bridge state; kind-based bookkeeping
-  suppression; drain-before-write; doctrine-path guarded writes; real
-  actor attribution via timeline. Spec-overridden from the spike: renames
-  now human-gated (spike: fully unguarded, flagged by its own builder);
-  bridge never auto-overrides `human` (spike: overrode everything with
-  attribution); comment tracking by bounded high-water (spike: unbounded
-  node-id sets); bridge-comment recognition by author login (spike: body
-  prefix); close mirrors carry message+evidence (spike: bare close);
-  bridge syncs first (spike: documented hazard only).
+- Spike (branch `spike/bridge`): all five trial steps green live;
+  falsified intake-first ordering and unconditional state persistence;
+  pinned rename-as-set-field, note-key state, kind-based suppression,
+  doctrine-path writes, timeline attribution. Rev 1 was written from
+  it, overriding six spike behaviors deliberately.
+- Rev 1 gauntlet (two reviewers, stateful fixture transport + live
+  probes; 19 findings each, six Criticals, nine convergences; G1 took
+  the round on severity weight). Probed: the push-if-intake-wrote rule
+  left bookkeeping unpublished and minted duplicate issues WITH
+  sync-first obeyed; the `ledger-key:` body line was hijackable
+  authority (existing key retitled/settled by a stranger's issue, then
+  flip-flopped with fabricated overrides every run); the human-refusal
+  path spammed a note + comment per run forever; the operator-token
+  echo check dropped the operator's own comments (same login, probed
+  live); single-call timeline attribution named stale actors (>30
+  events, close/reopen cycles); bare `ledger push` published private
+  slugs; the byte-identity render claim was contradicted by its own
+  next sentence; test 7 asserted the opposite of the override ruling
+  via an unreachable path; the "reserved" state key was seized from a
+  GitHub issue title; a legal `done`/`dropped` board hard-errored;
+  suppression discarded genuine concurrent GitHub edits silently;
+  handoff notes echoed out as comments; state-note LWW lost high-water
+  marks on merge — resolved by BOTH reviewers' convergent
+  simplification: idempotency-keyed imports, marks deleted. Rev 2 is
+  the corrective: the six laws, the six-entry amendment inventory, the
+  configured vocabulary, the dedicated identity requirement, and a
+  test plan whose items map one-to-one onto the laws.
