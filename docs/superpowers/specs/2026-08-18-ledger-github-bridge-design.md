@@ -1,17 +1,28 @@
 # Ledger GitHub bridge: rename events and the additive sync (design)
 
-2026-08-19, revision 7 — the structural rewrite agreed at rev 6:
-narration moved to the validation record (bottom), vocabulary
-front-loaded, every law restated whole with rev 6's consolidated
-rulings folded into the law text. **No semantic change from rev 6**,
-with three named exceptions, all corrections toward text that was
-already binding: (1) two stale test-plan lines claimed rename
-`--override` without a signal is `bad_usage` — they now match
-amendment 7's completed retraction (legal no-op on every write verb);
-(2) the test plan's duplicate item-12 numbering is fixed; (3) the
-missing gauntlet-3 entry is added to the validation record. The build
-gate remains as ruled: Part A (rename) is in production build;
-Part B builds after this document passes a reviewer round.
+2026-08-19, revision 8 — the round-4 corrective. Three reviewers on
+rev 7 (the structural rewrite) returned 34 findings, unanimous NOT
+clarity-grade. The Criticals, all probed: the tool does not bound the
+TERMINAL set (a legal board declares three terminals; the third
+mirrored to nothing forever, then intake overwrote the maintainer's
+value — now a startup refusal); the inbound reopen trigger was
+unspecified (the literal convergence reading fabricated overrides
+un-claiming keys every run — now a stated trigger rule); a
+done↔not-planned reclassification never reached GitHub and was
+reverted with a fabricated `override: settled` and fabricated
+evidence (GitHub-side "current value" now defined via the Status
+mapping, terminality + close reason); Law 6's "non-terminal mirrors
+to NOTHING" contradicted Law 2's convergence (probed publishing a
+claim message to a public issue — both now scoped to the terminality
+axis). Also ruled: divergence records gain a CLASS coordinate (a
+suppression record silently swallowed a refusal's note AND comment,
+probed); the guard-free ready-capable scale fixture is UNBUILDABLE
+(the tool requires `--guard status` on ready-capable boards — deleted);
+the listing call is pinned `--state all` (the open-only default left
+the spike's whole suite green, probed); a Title mapping and an
+issue-creation rule now exist in Part B; the terminality oracle the
+rewrite dropped is restored. Part A (rename) is in production build;
+Part B's build gate remains with Jesse. Validation record at bottom.
 
 **Scope**: (A) a first-class RENAME event in the core tool — tool rev
 16; (B) `ledger-gh`, a companion bridge — Level 1 (ledger→GitHub
@@ -27,8 +38,9 @@ evidence) binds the bridge exactly as it binds any agent.
 
 ## Vocabulary
 
-- **ASPECT** ∈ {status, title} — the closed list every
-  refusal/suppression record key and Law 4 cost count uses.
+- **ASPECT** ∈ {status, title} — the closed list for the aspect
+  coordinate of divergence records and for Law 4's cost count.
+  Records also carry a CLASS coordinate — see Law 3.
 - **DRAIN** — the outbound event stream `ledger since <cursor>`:
   the EDGES since the last persisted cursor.
 - **LEVEL** — the board's current FOLDED value for a key: the thing
@@ -44,14 +56,20 @@ evidence) binds the bridge exactly as it binds any agent.
 - **STAMP** — `<!-- ledger-bridge -->` in an issue body the bridge
   created: the adoption credential and the second, independent copy
   of the identity map.
-- **ESTABLISHED LINK** — for a key, the oldest non-retracted
-  `github-bridge`-authored `github-link` note: the one issue that is
-  that key's link, in both directions.
+- **ESTABLISHED LINK** — for a key, the oldest IN FOLD ORDER
+  non-retracted `github-bridge`-authored `github-link` note (never by
+  timestamp — a skewed clock must not move the link): the one issue
+  that is that key's link, in both directions.
 - **ORACLE** — the id-resolution test behind the marker: does this
   event id resolve on the board's chain? Domain
   `{id} ∪ {imported_from} ∪ {ids this run wrote}`, both directions.
-- **TERMINAL PAIR** — the board's two terminal status values, named
-  by `--done` and `--not-planned`.
+- **TERMINAL** (of a status value) — declared AND outside
+  `{open, in-progress}`: the derived oracle. The tool pins only the
+  NON-terminal set, so a legal board may declare MORE than two
+  terminal values.
+- **MIRRORED TERMINALS** — the two terminal values `--done` and
+  `--not-planned` name. v1 maps exactly these two: startup refuses a
+  board whose terminal set exceeds them (below).
 
 ## Part A — the rename event (core tool, rev 16)
 
@@ -94,12 +112,18 @@ evidence) binds the bridge exactly as it binds any agent.
   `event <id> by <author> already renamed '<key>' to "<title>"`, hint
   = read the current title first; `needs_override` carries `signals`
   as everywhere.
-- **`title` is a RESERVED field name**: `bad_value` at
-  `create`/`import`/`vocab` for `--field`/`--multi-field`/`--guard
-  title`. A legal board could otherwise declare and guard `title`,
-  splitting the contested read path (which unions both streams) from
-  the write path (renames only) — probed as an unresolvable ticket and
-  an empty `contested_resolved`.
+- **`title` is a RESERVED field name**: `bad_value` at `create`,
+  `import`, and sync's ADOPT path (adopt re-validates arriving
+  declarations exactly as import does — all three meta-minting doors)
+  for `--field`/`--multi-field`/`--guard title`. A pre-existing board
+  that already declares `title` is refused at import/adopt with the
+  export/import-to-a-re-declared-board remedy. At `vocab` no special
+  case is needed — `title` can never become a declared field, so the
+  existing unknown-field error covers it; a test pins that. A legal
+  board could otherwise declare and guard `title`, splitting the
+  contested read path (which unions both streams) from the write path
+  (renames only) — probed as an unresolvable ticket and an empty
+  `contested_resolved`.
 - **Existence**: rename requires a locally existing titled key
   (`unknown_key`, hint = the seed command); ready-capable boards only.
   Fold totality, two distinct cases: (a) reachable and testable — a
@@ -120,9 +144,12 @@ evidence) binds the bridge exactly as it binds any agent.
   winner-last, `expect` = the winner rename id (usable directly as
   `--rename --expect`), `contested_resolved` recorded on the
   collapsing rename. The pass's scope is **"ready-capable boards:
-  their guarded fields, plus the rename stream"** — the title stream
-  is unguardable, so a `len(Guard)==0` short-circuit no longer bounds
-  it. Rationale, probed: concurrent cross-replica renames merged in
+  their guarded fields, plus the rename stream"**. (A `len(Guard)==0`
+  short-circuit was believed to bound the pass; probed false — the
+  tool requires `--guard status` on every ready-capable board, so
+  that disjunct is unreachable on the pass's population and the
+  extension adds no new board population.) Rationale, probed:
+  concurrent cross-replica renames merged in
   SILENCE while the identical status race contested; live-verified
   end to end, byte-identical entries on both replicas, ticket usable
   verbatim. Priced: bounds unchanged at 5k events with 72 contests
@@ -162,12 +189,14 @@ evidence) binds the bridge exactly as it binds any agent.
   renamed key in its fixture (an unbuilt production requirement, not a
   spike deliverable).
 - **Scale**: the standing scale fixture contests BOTH streams at full
-  strength (a single-stream fixture prices half the pass), and a
-  guard-free ready-capable board is priced by its own named fixture
-  (the pass's new population). Bounds hold at the shipped 350ms/140ms
-  class.
-- **Quickstart**: one line teaching `set --rename` (cold agents must
-  not keep the immutable-title belief amendment 1 retires); the line
+  strength (a single-stream fixture prices half the pass). There is
+  NO guard-free fixture: a guard-free ready-capable board cannot
+  exist (`create` refuses `--terminal` on status without `--guard
+  status`, probed), so the pass has no new population to price.
+  Bounds hold at the shipped 350ms/140ms class.
+- **Quickstart**: a ready-capable mini-board plus the `set --rename`
+  line, ~4 lines total (cold agents must not keep the immutable-title
+  belief amendment 1 retires); the line
   budget rises 120 → 124 — the guard test's constant
   (internal/docs/docs_test.go:21) moves with this ruling, exactly as
   the sync build's 110 → 120 did. Unbuilt production requirement.
@@ -185,7 +214,9 @@ evidence) binds the bridge exactly as it binds any agent.
    signal additionally gates renames — a named exception class outside
    guarded-field writes, with the same `override:` recording.
 4. **Issues rules 2–4's `--expect` semantics**: a second, rename-scoped
-   CAS stream exists alongside field-scoped CAS.
+   CAS stream exists alongside field-scoped CAS, with the rule-3
+   contract rows Part A's gate bullet states (`claim_lost` message and
+   hint; `signals` in `needs_override`).
 5. **Parent tool spec, Retries**: dedupe gains the rename dimension
    (rename events dedupe only against rename events, symmetrically).
 6. **`skills/ledger-issues/SKILL.md`**: the Titles doctrine (seed `-m`
@@ -206,19 +237,31 @@ evidence) binds the bridge exactly as it binds any agent.
    directions: `--override` with no standing signal is a legal no-op
    on EVERY write verb, rename included — retry-safe by the same
    argument everywhere (the gate dissolves; see the validation
-   record's rev-3-gauntlet and rev-6 entries for the two probes).
+   record's rev-3-gauntlet and rev-5-gauntlet entries for the two
+   probes).
    Consumer note for the same contract: sync/push exit-3 outcome
    documents go to stdout.
 8. **Sync spec Addition 3, the contested streams**: the write-heads
    antichain extends to the rename stream — Part A's contested-title
    bullet is the definition; the pass's scope sentence changes as
-   stated there.
+   stated there. The attention-only ruling amends TWO further
+   upstream contracts: the issues spec's frontier rule ("else
+   `attention-needed` when the attention list is non-empty") becomes
+   "…non-empty after excluding title-contest entries" — `all-handled`
+   may coexist with an attention list containing only title contests —
+   and Addition 3's Membership clause ("any entry for a key with a
+   live contest carries `contested: true`") is scoped to
+   guarded-field contests only.
 9. **Quickstart**: the `set --rename` line; budget 120 → 124.
 10. **Sync spec Addition 5**: its read-class sentence covers the
     rename gate's whole-chain read, and its single-pair
     `contested_resolved` derivation covers the `title` pseudo-field
     (a rename touches zero guarded fields; a literal reading computes
     no heads for it).
+11. **Parent tool spec, declaration validation + issues spec's
+    "ready-capability is syntactic" rules**: `title` is a reserved
+    field name at every meta-minting door (create/import/adopt) —
+    Part A's reservation bullet is the definition.
 
 ## Part B — `ledger-gh`, the bridge
 
@@ -233,7 +276,9 @@ Transport: the `gh` CLI, subprocess-only (v1). Board access: the
 **Report**: `{ok, repo, ledger, gh_mutations, board_writes, cursor,
 divergences, suppressed_authors, actions[], warnings[]}` — `cursor` is
 the PERSISTED cursor (a no-op run reports the stored one),
-`divergences` counts standing refusals, `suppressed_authors` counts
+`divergences` counts standing divergence records of all three classes
+— Law 3 refusals, Law 1 step-3 suppressions, and duplicate-link
+conflicts — new and repeating alike, `suppressed_authors` counts
 outbound events skipped per `github:@*` author (poisoning is visible
 even though the namespace is unenforced — author enforcement rides the
 existing owner-enforcement v2 item, not a one-prefix carve-out).
@@ -242,47 +287,100 @@ existing owner-enforcement v2 item, not a one-prefix carve-out).
 stderr; 2 = usage. The operator's lock/cron wrapper is written
 against this.
 
-**Startup checks, all refusals naming the fix**:
+**Preflight refusals, all naming the fix.** Placement is part of the
+contract: binary capability and flag shape run BEFORE anything else;
+every other check reads board or GitHub state and runs as Law 1 step
+(1a), AFTER `ledger sync` — a pre-sync read of the `bridge-state`
+note on a fresh replica sees nothing and waves through the exact
+mismatch the repo-binding check exists to catch, and the saturation
+check needs a transport call Law 1 forbids before sync.
 
-- **Binary capability**: the bridge probes its `ledger` binary and
+- **Binary capability** (pre-sync): the bridge probes its `ledger`
+  binary and
   refuses a pre-rev-16 one by name — Law 5's `signals` field fails
   closed, and against an old binary every `needs_override` would take
   the refusal path, so the operator is told to upgrade instead of
   wondering why nothing auto-overrides.
-- **Vocabulary, configured for the TERMINAL pair only**: `ledger
-  create` PINS the non-terminal vocabulary of a ready-capable board to
+- **Vocabulary, three refusals** (step 1a): `ledger create` PINS the
+  non-terminal vocabulary of a ready-capable board to
   `open`+`in-progress`; only terminals are free, so `done`/`dropped`
-  is legal but `todo`/`doing` is not. The bridge reads the board's
-  declared vocabulary and REFUSES a board that lacks the flags'
-  values — or whose flags name a NON-TERMINAL value (declared AND
-  outside `{open, in-progress}`, derivable with no new verb; the
-  `--done in-progress` hole passed a membership-only check and closed
-  GitHub issues on a non-terminal state, probed). The refusal names
-  the failing flag, the declared vocabulary, and the fix — and the
-  remedy tells the truth: a ready-capable board's status vocabulary
-  is immutable (`vocab add` is refused by the tool itself, probed),
-  so the fix is the board's own values as flags, or export/import to
-  a re-declared board; never `vocab add`. There is no reopen flag:
-  since non-terminal vocab is pinned, reopen ⇒ `open`, always.
-- **Saturation**: the bridge refuses a run whose issue listing
-  saturates the window (listing ≥ the limit; real ceiling limit−1 =
-  249 at the default): outside the window the bulk maps are
-  zero-valued, which silently disables the comment dedupe, the state
-  diff, and adoption — duplicates and un-adoptable orphans, probed
-  via a limit-faithful fixture. The fix is a CONSTANT, not a project
-  (probed live: `gh` paginates internally — `--limit 250` returns
-  250): `--list-limit` is the escape hatch so a board's Nth issue is
-  never a permanent brick.
-- **One board ↔ one repo**: the bridge refuses a run whose state note
-  names a different repo; multi-repo bridging is v2.
+  is legal but `todo`/`doing` is not — and the terminal set is
+  UNBOUNDED (a legal board declares three or more terminal values,
+  probed). The terminality oracle is the Vocabulary block's TERMINAL:
+  `declared − {open, in-progress}`, derivable with no new verb. The
+  bridge reads the board's declared vocabulary and refuses: (1) a
+  board lacking a flag's value; (2) a flag naming a NON-terminal
+  value by the oracle (the `--done in-progress` hole passed a
+  membership-only check and closed GitHub issues on a non-terminal
+  state, probed); (3) a board whose terminal set exceeds the two
+  MIRRORED TERMINALS, naming the unmapped values — v1 maps exactly
+  two; a third terminal otherwise mirrors to nothing forever with
+  zero signal, and intake then overwrites the maintainer's value on
+  the next human close (probed; multi-terminal mapping is v2). Each
+  refusal names the failing flag, the declared vocabulary, and the
+  fix — and the remedy tells the truth: a ready-capable board's
+  status vocabulary is immutable (`vocab add` is refused by the tool
+  itself, probed), so the fix is the board's own values as flags, or
+  export/import to a re-declared board; never `vocab add`. There is
+  no reopen flag: since non-terminal vocab is pinned, reopen ⇒
+  `open`, always.
+- **The bulk issue listing, pinned** (step 1a): `gh issue list
+  --state all --limit <list-limit> --json …` — `--state all` is
+  load-bearing, not a default (`gh` defaults to open-only, under
+  which close intake never fires, closed issues' comment dedupe is
+  zero-valued, a crashed create whose issue got closed is
+  un-adoptable, and saturation never trips — and the whole fixture
+  suite stays green, probed, which is why the fixture-faithfulness
+  law names `--state`). **Saturation**: the bridge refuses a run
+  whose listing saturates the window (listing ≥ the limit; real
+  ceiling limit−1 = 249 at the default): outside the window the bulk
+  maps are zero-valued, which silently disables the comment dedupe,
+  the state diff, and adoption — duplicates and un-adoptable
+  orphans, probed via a limit-faithful fixture. The fix is a
+  CONSTANT, not a project (probed live: `gh` paginates internally —
+  `--limit 250` returns 250): `--list-limit` is the escape hatch so
+  a board's Nth issue is never a permanent brick.
+- **One board ↔ one repo** (step 1a): the bridge refuses a run whose
+  state note names a different repo; multi-repo bridging is v2.
 
 **Status mapping**. Outbound: done-value ⇒ close (completed),
 not-planned-value ⇒ close (not planned). Inbound: close completed ⇒
 done-value with evidence `gh:<owner>/<repo>#<n>`; close NOT_PLANNED ⇒
 not-planned-value with NO evidence (evidence on wontfix is
-"pasted-string theater"); reopen ⇒ `open`, always.
+"pasted-string theater"); reopen ⇒ `open`, always. **The GitHub-side
+"current value" for Law 2's convergence is the board value this
+mapping assigns to the issue's `(state, stateReason)`** — never the
+bare open/closed bit: a done↔not-planned reclassification on the
+board IS a difference and re-closes with the other reason (the
+open/closed-bit reading pushed nothing, and intake then reverted the
+maintainer's reclassification with a fabricated `override: settled`
+and fabricated evidence, one per human attempt, probed). **The
+inbound reopen trigger, stated**: a reopen is written only when the
+issue is OPEN AND the board's current status is terminal; an open
+issue over a non-terminal board status is the resting state of every
+live key, not a reopen, and is never written (the write-on-any-
+difference reading un-claimed every claimed key with a fabricated
+auto-override per run, probed).
 
-### Identity — four pins
+**Title mapping**. Outbound: a rename mirrors as a title edit and
+NOTHING else — no comment (a bare rename has no message by Part A's
+`-m` rule, and an override justification never leaves the board).
+Inbound: a GitHub title edit becomes `set <key> --rename "<title>"`
+attributed via Law 4's `renamed` timeline event, with `--expect`
+from the rename stream (Law 5 — a board rename racing an intake
+rename loses loudly). Law 2's convergence applies: a title write
+fires only when the two sides' current titles differ.
+
+**Issue creation, stated**: a key gains an issue the FIRST time the
+mirror has something to push for it AND the key has a title (Part
+A's fold rule); the issue is created with the key's current title
+and a body carrying the STAMP and the `ledger-key: <key>` hint, and
+the link note is written immediately after. A titleless key never
+gains an issue. Symmetrically inbound, a seeded key's title is the
+GitHub issue title (the seed `-m`), and the SLUG is derived from
+that title by the pinned slugification rule below.
+
+### Identity — five pins
 
 - **No dedicated bridge identity; no login comparison anywhere.** Any
   number of GitHub logins operate the bridge, each with their own `gh`
@@ -402,11 +500,20 @@ map was also unmergeable across replicas, being last-write-wins).
 
 ### Law 1 — ordering
 
-(1) `ledger sync` — sync FIRST, always; failure aborts the run.
-(Today this merges the WHOLE store — `sync` takes no slug selector; a
-slug-selective sync, symmetric with push's privacy lever, is a named
-tool-backlog item the bridge adopts when it exists.)
-(2) READ the outbound DRAIN (`since <cursor>`).
+(1) `ledger sync` — sync FIRST, always; failure aborts the run,
+scoped as step (6) states: abort IFF the bridge's OWN slug failed,
+warn on other slugs'. (Today this merges the WHOLE store — `sync`
+takes no slug selector; a slug-selective sync, symmetric with push's
+privacy lever, is a named tool-backlog item the bridge adopts when it
+exists.)
+(1a) Post-sync preflight: the vocabulary refusals, the repo-binding
+check, the unbounded link-map read, and the bulk issue listing with
+its saturation refusal — the reads the preflight section places
+here.
+(2) READ the outbound DRAIN (`since <cursor>`). The cursor persisted
+at step (5) is the last event id of THIS run's drain — not the
+post-write chain head; the run's own intake events arrive in the
+next run's drain and are outbound-suppressed there by author.
 (3) Intake GitHub→board, per-aspect pending suppression: a key with an
 un-mirrored status/rename event is off-limits to intake for THAT
 aspect — and when suppression fires AND the remote differs from the
@@ -476,9 +583,23 @@ no-op".
 - **State writes are STATE-CONVERGENT in both directions, and the
   level is the FOLD, never the drain**: before any status/rename
   write, compare the target's CURRENT value and write only on
-  difference — and the value the mirror pushes is the board's current
-  FOLDED state (post-intake), with the drain supplying only marker
-  ids and, when the event IS the level, the message. A drain-derived
+  difference. **For status, "difference" is measured on the axis the
+  Status mapping defines**: the GitHub side's current value is the
+  board value its `(state, stateReason)` maps to, and the comparison
+  is terminality class plus, between terminals, the close reason —
+  never the raw status value (the raw reading made Law 6's
+  "non-terminal mirrors to nothing" and this rule contradict, and
+  its probed resolution reopened a human's close and published a
+  claim message). Under this axis `open`↔`in-progress` is never a
+  difference — Law 6's mirrors-to-nothing is this rule's corollary,
+  not an exception. When the difference is a REOPEN from a
+  non-terminal board level (issue CLOSED, board active), the mirror
+  reopens with a FIXED marked text naming the divergence — never a
+  board message (there is none to carry that isn't a claim/touch-base
+  message, which never reach GitHub). The value the mirror pushes is
+  the board's current FOLDED state (post-intake), with the drain
+  supplying only marker ids and, when the event IS the level, the
+  message. A drain-derived
   level skips suppressed intake writes and pushed a recovery run into
   reopening a closed issue and restoring a superseded title
   (live-caught). When the current value came from intake, GitHub
@@ -531,14 +652,22 @@ no-op".
 ### Law 3 — refusals converge
 
 A refusal (human-labeled key, unresolvable divergence) is recorded in
-bridge state as (issue, ASPECT, observed-state); while unchanged on
-both sides it is silently skipped, counted in `divergences`. The
-handoff note and the one GitHub comment ("reserved on the board; a
-maintainer must apply this there") are written ONCE per distinct
-(issue, aspect, observed-state) — **EVER, not per episode**: Law 2
-keys the note on exactly that triple, so a recurrence dedupes by
-design, and un-keying it would duplicate the note on every crash
-between note and persist. What recurs afresh on a re-observation is
+bridge state as **(issue, CLASS, aspect, observed-state), where CLASS
+∈ {refusal, suppression, link}** — the class coordinate is
+load-bearing: a suppression record and a refusal record are different
+events with opposite meanings, and keying both on the bare
+(issue, aspect, observed-state) triple let a run-A suppression record
+silently consume a run-B human-reserved refusal's note AND its one
+GitHub comment, leaving only a stale suppression note asserting the
+opposite of what happened (probed). Duplicate-link conflicts are the
+third class (aspect-less). While unchanged on both sides a record is
+silently skipped, counted in `divergences`. The handoff note and the
+one GitHub comment ("reserved on the board; a maintainer must apply
+this there") are written ONCE per distinct (issue, class, aspect,
+observed-state) — **EVER, not per episode**: Law 2 keys the note on
+exactly that quadruple, so a recurrence dedupes by design, and
+un-keying it would duplicate the note on every crash between note
+and persist. What recurs afresh on a re-observation is
 the COUNT, the report line, and the re-persisted record — the
 original note remains the greppable record of the divergence's
 content, which is identical by construction. **Record lifecycle**: a
@@ -559,7 +688,14 @@ timeline — `per_page=100 --paginate`, every page (a last-page-only
 read misses any state event followed by a page of comments; a
 single-call read finds NOTHING past 30 events — both probed). The
 match is the NEWEST event of the type. "No matching event found" is
-the only fallback: issue author + a warning. Cost, priced honestly:
+the only fallback: issue author + a warning. **State events carry no
+marker** — the marker doctrine covers comments only — so Law 4's
+actor is whoever GitHub says acted, which may be the bridge's own
+operating login re-performing a mirror; any rule that treats the
+actor as a human decision (Law 5's auto-override) is reachable only
+when the two sides genuinely differ under Law 2's convergence axis,
+which is what keeps the bridge from attributing its own closes to a
+person. Cost, priced honestly:
 ceil(timeline/100) calls per changed ASPECT, uncached — two aspects
 changing on one busy issue pay it twice.
 
@@ -571,11 +707,11 @@ loses loudly, not silently). On `needs_override` from
 `claim`/`settled`: auto-`--override`, attributed `github:@<login>` —
 a real person's decision, tool-recorded for triage. On
 `needs_override` from `human`: never — Law 3's refusal path
-(login↔label identity mapping is v2). On `claim_lost` for a TERMINAL
-value: straight to the handoff note — "never re-close blind";
-non-terminal `claim_lost`: one re-read retry, and the same rule
-applies to the retry (a retry that hits a signal takes the signal's
-rule). **The signal names come from the error document, not its
+(login↔label identity mapping is v2). On `claim_lost` where the value
+THE BRIDGE IS WRITING is terminal (by the oracle): straight to the
+handoff note — "never re-close blind"; a non-terminal write's
+`claim_lost`: one re-read retry, and the same rule applies to the
+retry (a retry that hits a signal takes the signal's rule). **The signal names come from the error document, not its
 prose**: tool rev 16's `"signals": ["human", ...]`. **The field
 FAILS CLOSED** (a reader that failed open auto-overrode the one
 write Law 3 exists to prevent, against any pre-rev-16 binary,
@@ -585,18 +721,26 @@ is the operator's early warning.
 
 ### Law 6 — mirror fidelity
 
-EVERY state mirror carries its message — a close mirrors as a marked
+EVERY STATUS mirror carries its message — a close mirrors as a marked
 comment carrying the close message and evidence THEN the close, and a
-REOPEN likewise comments its reason before reopening. **Non-terminal
-status transitions mirror to NOTHING**, messages included
-(claim/touch-base messages never reach GitHub); a marked-comment
-mirror for them is v2. `blocked-by` edges have no GitHub
+REOPEN likewise comments its reason before reopening (when the reopen
+is convergence-driven rather than event-driven — no board event
+exists — the comment is Law 2's fixed text, never a board message). A
+TITLE mirror is a title edit and nothing else — no comment; a bare
+rename has no message, and an override justification never leaves the
+board. **Transitions that do not change terminality mirror to
+NOTHING**, messages included (claim/touch-base messages never reach
+GitHub) — Law 2's convergence axis makes this a corollary, not an
+exception; a marked-comment mirror for them is v2. `blocked-by` edges have no GitHub
 representation and are not mirrored — stated. Notes on keys with no
 linked issue: at ISSUE-CREATION time the bridge backfills the key's
-existing non-bookkeeping, non-GitHub-authored notes (the
-statusless-seed window; the marker is what keeps backfill and drain
-from double-posting), and a note whose key never gains an issue is
-dropped WITH a warning naming the event id. Bridge-authored board
+existing notes **not authored `github:@*` or `github-bridge`** — the
+same author filter as outbound suppression, never a kind filter (a
+kind filter here re-eats the human `handoff` note through the
+backfill door; the statusless-seed window is what this exists for,
+and the marker is what keeps backfill and drain from double-posting)
+— and a note whose key never gains an issue is dropped WITH a
+warning naming the event id. Bridge-authored board
 writes are pinned: intake events `--as github:@<login>`; bookkeeping
 notes `--as github-bridge` with kinds
 `bridge-state`/`github-link`/`handoff`. **Outbound suppression is by
@@ -609,7 +753,9 @@ human's handoff like any other note.
 
 ### Slugification, pinned
 
-Lowercase, non-grammar characters → `-`, collapsed, 48-char truncate;
+The input is the GITHUB ISSUE TITLE (which also becomes the seeded
+key's title, as the Status/Title mapping section states). Lowercase,
+non-grammar characters → `-`, collapsed, 48-char truncate;
 empty result → `issue-<n>`; collision → `-<n>` suffix computed
 locally (two replicas intaking concurrently can still collide or
 diverge — the board's own two-root machinery is the net, stated).
@@ -659,9 +805,12 @@ identity mapping; non-terminal transition mirroring.
    the collapse idiom works verbatim; the three deliberate render
    changes have their own fixtures (no byte-identity claim);
    `signals[]` present in needs_override documents from every
-   emitting verb; both-streams + guard-free scale fixtures hold the
-   bounds; quickstart line + budget 124 with the guard constant
-   moved.
+   emitting verb; the both-streams scale fixture holds the bounds
+   (no guard-free fixture — such a board cannot exist, and a test
+   pins that `create` refuses it); quickstart mini-board + rename
+   line with budget 124 and the guard constant moved; `vocab add
+   <slug> title <v>` fails cleanly via the existing unknown-field
+   error, pinned.
 4. Ordering: the round-1 falsification as regression (close → one run
    → one GH close, zero board writes, no fabricated attribution); the
    divergence warning fires against the last-MIRRORED value and does
@@ -669,7 +818,14 @@ identity mapping; non-terminal transition mirroring.
    case (claimed key accepts a GitHub close on the next run — the
    permanent-suppression falsification, pinned); the push-hole
    regression (mirror-only run on A, synced B run ⇒ ZERO duplicate
-   issues).
+   issues); the convergence-axis regressions (all probed round 4): a
+   board done↔not-planned reclassification re-closes with the other
+   reason and NEVER writes a board reversion (no fabricated
+   `override: settled`, no fabricated evidence, across three
+   attempts); an open issue over a claimed key writes NOTHING inbound
+   (no reopen-to-open, no fabricated auto-override, across runs); a
+   closed issue over a non-terminal board level reopens with the
+   FIXED text and never a claim message.
 5. Idempotence: crash injection at every transport call site in BOTH
    modes — fail-BEFORE and fail-AFTER the effect (fail-before alone
    never creates the orphan that mints duplicates) ⇒ every replay
@@ -697,8 +853,9 @@ identity mapping; non-terminal transition mirroring.
    ⇒ newest actor found via pagination; no-event ⇒ author + warning.
 10. Vocabulary: `done`/`dropped` board bridged with flags; missing
     vocab refused naming the fix (and the fix is not `vocab add`);
-    `--done in-progress` refused; NOT_PLANNED maps in with no
-    evidence.
+    `--done in-progress` refused; a THREE-terminal board refused
+    naming the unmapped value (the silent-third-terminal probe as
+    regression); NOT_PLANNED maps in with no evidence.
 11. Mirror fidelity: close AND reopen comments precede their state
     change; non-terminal transitions mirror to nothing; issue-creation
     backfills pre-link notes exactly once (the marker keeps backfill
@@ -722,7 +879,8 @@ identity mapping; non-terminal transition mirroring.
     refusal-with-handoff); saturation refusal at exactly the limit;
     sync partial_failure on a foreign slug warns while own-slug
     failure aborts; refusal-record pruning persists (cleared
-    divergence's record lands, next occurrence notes afresh);
+    divergence's record lands; the next occurrence re-persists the
+    record and re-counts, and writes no second note);
     `reset_required` re-drain, one-board-one-repo refusal,
     sync-failure abort, and deleted/transferred-issue warning each
     get their named item.
@@ -742,13 +900,19 @@ identity mapping; non-terminal transition mirroring.
     REGRESSION (overlapping processes: bounded duplicates, no
     flip-flop, no fabricated override, next-run warnings name every
     key); flake-storm convergence with accumulating progress; the
-    re-bridged-repo re-import hazard pinned as documented behavior.
+    re-bridged-repo re-import hazard pinned as documented behavior;
+    the ASPECT-collision regression (a run-A suppression record must
+    not swallow a run-B refusal's note or comment — the class
+    coordinate, probed); a CLOSED linked issue is present in the bulk
+    map (its comments dedupe, its close intakes, its crashed create
+    adopts — the `--state all` regression).
     FIXTURE FAITHFULNESS is itself a test-plan law: the fake
-    transport honors `--limit`, models the per-issue comment cap,
-    and serializes calls like the real API (an unfaithful fixture
-    proved a refusal could fire while hiding what it protects
-    against, and would have measured its own race in the concurrency
-    probe).
+    transport honors `--limit` AND `--state`, models the per-issue
+    comment cap, and serializes calls like the real API (an
+    unfaithful fixture proved a refusal could fire while hiding what
+    it protects against, would have measured its own race in the
+    concurrency probe, and left the whole suite green under the
+    open-only listing bug).
 14. Bridge tests run against a FIXTURE transport; ONE live acceptance
     trial against a scratch repo (below). Skill/doctrine harness
     re-runs over the amended SKILL.md lines.
@@ -891,3 +1055,41 @@ transport, never live.
   fixture — carried as production requirements in Part A). Rev 6
   applied every ruling; rev 7 is the agreed structural rewrite of
   the same content.
+- **Rev 7 gauntlet, three reviewers on the restructured document**
+  (13/12/9 findings after each reviewer's own dedup; K3 on count;
+  unanimous NOT clarity-grade; all findings probed or
+  source-verified, three independently probed the terminal-set
+  hole's neighborhood). The Criticals: the tool does not bound the
+  terminal set, so a legal three-terminal board passed every startup
+  check while its third value mirrored to nothing forever and intake
+  then overwrote the maintainer's `duplicate` with `closed` (probed
+  end to end, exit 0 throughout); the inbound reopen trigger was
+  unspecified and the literal both-directions convergence reading
+  un-claimed every claimed key with a fabricated auto-override per
+  run (the spike survived only via an unstated board-terminal gate);
+  a done↔not-planned reclassification never reached GitHub under the
+  open/closed-bit reading and was reverted with a fabricated
+  `override: settled` plus fabricated `gh:` evidence, once per human
+  attempt, unbounded (probed, three rounds); Law 6's
+  "non-terminal mirrors to NOTHING" and Law 2's convergence
+  contradicted — the probed resolution reopened a human's close and
+  published a claim message. Majors: the ASPECT collision (a
+  suppression record swallowed a human-reserved refusal's note AND
+  comment — records gain a CLASS coordinate); the restructure
+  DROPPED the terminality oracle and mislabeled two post-sync checks
+  "startup" (both restored/re-placed — the round's two
+  rewrite-introduced defects); the guard-free ready-capable scale
+  fixture was unbuildable (`create` requires `--guard status`,
+  probed — deleted, and the rename build's brief amended mid-build);
+  the listing's `--state all` was unstated while the open-only
+  default left the spike's entire suite green (pinned, and
+  fixture-faithfulness now names `--state`); no Title mapping or
+  issue-creation rule existed in Part B (both added); the frontier
+  and per-entry-contested carve-outs amended no upstream contract
+  (amendment 8 extended); test item 12 still carried "notes afresh"
+  (the rev-6 repair applied to item 7 only — fixed). Minors: five
+  pins miscounted as four; amendment-7's dangling record pointer;
+  cursor definition; claim_lost's tested value; fold-order
+  "oldest"; state events carry no marker; `divergences`' three
+  producers; quickstart mini-board clause; adopt-path title
+  reservation. Rev 8 applies every ruling.
