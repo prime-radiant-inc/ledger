@@ -1,6 +1,23 @@
 # Ledger GitHub bridge: rename events and the additive sync (design)
 
-2026-08-18, revision 4 — rev 3's gauntlet (two reviewers, both
+2026-08-19, revision 5 — the conservative pass: spike round 3 built
+all ten rev-4 deltas (28-injection crash sweep over every rev-4
+transport shape; full live trial re-run incl. a live two-replica
+rename contest resolved with the ticket verbatim; scale bounds
+re-measured with BOTH contest streams in the fixture) and probed the
+three never-probed claims. Verdicts: transient-failure safety
+VERIFIED with progress accumulating mid-storm; the concurrency claim
+FALSIFIED — overlapping runs mint permanent duplicates and BOTH exit
+0 with no warning, so single-instance operation is a real operating
+requirement, stated honestly below; and two more live-only bugs (a
+run-start-snapshot oracle importing the bridge's own comment; a
+drain-read level trigger reopening a closed issue on recovery) became
+laws. One rev-4 sentence proved unachievable (refusal "notes afresh")
+and is narrowed; one internal contradiction (link tie-break) is
+resolved oldest-wins, the only merge-stable reading. Validation
+record at bottom.
+
+Rev 4 history: rev 3's gauntlet (two reviewers, both
 building adversarial tests against the spike's own fixture transport)
 cracked both of rev 3's foundations and retracted one of its tool
 amendments: the marker oracle went blind across `export`/`import`
@@ -137,16 +154,21 @@ bridge exactly as it binds any agent.
    pattern. Rename keeps its own `bad_usage` (its gate cannot
    dissolve). Consumer note for the same contract: sync/push exit-3
    outcome documents go to stdout.
-8. **Sync spec Addition 3, the contested streams** (rev 4): the
-   write-heads antichain extends to the RENAME stream — rename events
-   contest as pseudo-field `"title"` (same definition, ids
-   fold-ordered winner-last, `expect` = the winner rename id, usable
-   directly as `--rename --expect`). Probed rationale: concurrent
-   cross-replica renames merged in SILENCE while the identical status
-   race raised a contested entry — in a design whose bridge
-   manufactures rename races at machine speed, and where `prior[]`
-   cannot distinguish a race-loss from a sequential retitle. Law 5's
-   "loses loudly" now holds cross-replica, not just same-store.
+8. **Sync spec Addition 3, the contested streams** (rev 4; scope
+   sharpened rev 5): the write-heads antichain extends to the RENAME
+   stream — rename events contest as pseudo-field `"title"` (same
+   definition, ids fold-ordered winner-last, `expect` = the winner
+   rename id, usable directly as `--rename --expect`, with
+   `contested_resolved` recorded on the collapsing rename). The
+   pass's scope becomes **"ready-capable boards: their guarded
+   fields, plus the rename stream"** — the title stream is
+   unguardable, so the old `len(Guard)==0` short-circuit no longer
+   bounds it (spike-3 built and priced: bounds unchanged at 5k with
+   72 contests across BOTH streams — and the scale fixture MUST
+   contest both streams, or the bound prices half the pass). Probed
+   rationale: concurrent cross-replica renames merged in SILENCE
+   while the identical status race contested; live-verified end to
+   end, byte-identical entries both replicas, ticket usable verbatim.
 9. **Quickstart** (rev 4): one line teaching `set --rename` (cold
    agents must not keep operating under the immutable-title belief
    amendment 1 retires); the line budget rises 120 → 124 — the guard
@@ -178,13 +200,20 @@ a NON-TERMINAL value (declared AND outside `{open, in-progress}`,
 derivable with no new verb; rev 4 closes the probed
 `--done in-progress` hole, which passed rev 3's membership-only check
 and then closed GitHub issues on a non-terminal state) — naming the
-failing flag, the declared vocabulary, and the fix command. **The
-bridge also refuses a run whose issue listing SATURATES the window**
+failing flag, the declared vocabulary, and the fix command — and the
+mirror image rev 4 missed (rev 5): **`--reopened` must name a
+NON-terminal value** (terminality oracle: `declared − {open,
+in-progress}`), or every GitHub reopen settles the key it was meant
+to revive. **The bridge also refuses a run whose issue listing
+SATURATES the window**
 (`--limit 200` returning exactly 200): outside the window the bulk
 maps are zero-valued, which silently disables the comment dedupe, the
 state diff, and adoption — duplicates and un-adoptable orphans, probed
 via a limit-faithful fixture. A loud stop naming pagination as the
-fix, until pagination lands (backlog). Outbound:
+fix, until pagination lands (backlog). Tool-backlog line (rev 5):
+`ledger notes` does not surface `imported_from` — only event
+documents do; the bridge derives it from its whole-chain read, and a
+consumer without that read cannot. Outbound:
 done-value ⇒ close (completed), not-planned-value ⇒ close (not
 planned). Inbound: close completed ⇒ done-value with evidence
 `gh:<owner>/<repo>#<n>`; close NOT_PLANNED ⇒ not-planned-value with NO
@@ -210,14 +239,24 @@ evidence (evidence on wontfix is "pasted-string theater"); reopen ⇒
   format**: any future format change must keep every prior format
   recognized, or the bridge re-imports its own history as human
   comments (observed live against the round-1 format). **The oracle's
-  domain is `{id} ∪ {imported_from}`** (rev 4): `export`/`import`
-  re-mints every event id, preserving the old id only in
-  `imported_from` — an id-only oracle goes blind on exactly the
-  recovery path Law 2 calls safe, and re-imports the bridge's entire
-  mirrored history as human-attributed notes (gauntlet-2 probed,
-  end-to-end). The marker also earns its keep OUTBOUND: it is what
-  lets the note backfill and the drain recognize each other's posts,
-  and what makes crash re-runs duplicate-free.
+  domain is `{id} ∪ {imported_from} ∪ {ids this run wrote}`, applied
+  to BOTH directions** (rev 5 completes rev 4's inbound-only
+  statement): `export`/`import` re-mints ids, so both the inbound
+  "is this comment mine" test AND the outbound "have I posted this"
+  test resolve `imported_from` (the outbound blindness re-posted the
+  bridge's whole history on recovery — spike-3 caught); and the
+  oracle is NEVER a run-start snapshot — every marker id the run
+  emits joins the domain immediately, or the bridge's own
+  same-run comments import as board notes (live-caught twice now,
+  rounds 2 and 3, through different doors). A comment resolving to
+  NO author is refused with a warning, never written as a bare
+  `github:@` (the second independent guard). **The marker is
+  board-scoped only by luck** — a well-formed marker from ANOTHER
+  board's bridge does not resolve here and imports as if human
+  (live-observed against rounds 1-2's boards): therefore **one repo
+  binds to one board, permanently** — re-bridging a repo to a fresh
+  board re-imports every prior mirror, stated; a board-discriminated
+  marker (format v3) is the v2 fix.
 - **Cost, priced**: verification and Law 2's dedupe share ONE
   whole-chain read per run — it answers "does this id (or
   imported_from) resolve" AND "which idempotency keys are spent". The
@@ -233,13 +272,16 @@ evidence (evidence on wontfix is "pasted-string theater"); reopen ⇒
   A bulk ids/keys read verb is a named tool-backlog wish, not v1.
 - **The board's `github-link` notes are the authority** for key↔issue,
   read with two rev-4 hardenings the gauntlet forced. (1) **One link
-  per key, BOTH directions**: the key's newest link note names its one
-  issue, and an issue that is not that key's current link is NOT a
-  link inbound either — rev 3's reader kept every issue ever linked as
-  an inbound writer, so a duplicate create (two concurrent bridge
-  runs) produced an unbounded closed/reopened flip-flop minting a
-  fabricated `override: settled` per run, probed; "wasteful, not
-  corrupting" was false and is retracted. Duplicate link notes are
+  per key, BOTH directions — the ESTABLISHED (oldest bridge-authored)
+  link wins** (rev 5 resolves rev 4's internal contradiction: "newest
+  wins" cannot coexist with "a changed link is refused, never
+  repointed" — under newest-wins the repoint has happened before the
+  refusal fires — and oldest-wins is the only merge-stable choice,
+  since newest-wins flips when a loser's note arrives on a later
+  sync). An issue that is not the key's established link is NOT a
+  link inbound either — rev 3's reader kept every issue ever linked
+  as an inbound writer, producing an unbounded flip-flop minting a
+  fabricated override per run, probed. Duplicate link notes are
   warned every run until a human resolves them. (2) **Link and
   bridge-state notes are read author-filtered**: only notes authored
   `github-bridge` count, and a link note that CHANGES an existing
@@ -342,16 +384,26 @@ itself events; never promise "the next run is a no-op"):
   hand.
 - Handoff and suppression notes carry idempotency keys derived from
   (issue, aspect, observed state).
-- **State writes are STATE-CONVERGENT in both directions** (rev 4 —
-  the rule that actually makes state intake idempotent, which rev 3
-  omitted from the law that claims it): before any status/rename
-  write, compare the target's CURRENT value and write only on
-  difference. Inbound, an intake close against an already-closed key
-  is a no-op (rev 3 as written re-fired an attributed
-  `override: settled` every run, forever — probed); outbound, a state
-  mirror fires only when GitHub's current state differs. Comments and
-  notes stay event-driven (markers and keys make them idempotent);
-  state is level-triggered.
+- **State writes are STATE-CONVERGENT in both directions, and the
+  level is the FOLD, never the drain** (rev 5 sharpens rev 4 with the
+  spike's second live catch): before any status/rename write, compare
+  the target's CURRENT value and write only on difference — and the
+  value the mirror pushes is the board's current FOLDED state
+  (post-intake), with the drain supplying only marker ids and, when
+  the event IS the level, the message. A drain-derived level skips
+  suppressed intake writes and pushed rev 4's recovery run into
+  reopening a closed issue and restoring a superseded title
+  (live-caught). When the current value came from intake, GitHub
+  already shows it: nothing is pushed. **The mirror is a function of
+  the board's current state, never of its history.** Comments and
+  notes stay event-driven. Two contract clauses ride here (rev 5):
+  `deduped: true` responses are not writes ANYWHERE the bridge
+  writes, refusal and divergence notes included (a re-observed
+  divergence must not report chain growth that didn't happen); and
+  the tool's idempotency dedupe is LOCAL-VIEW — two replicas
+  importing the same comment during a partition both write, and the
+  merge keeps both (the tool's stated contract; accepted, greppable,
+  one sentence so nobody reads Law 2's keys as global).
 - `reset_required` on the stored cursor: warn and re-drain from empty.
   Safe FOR CONTENT because comments/notes are marker/key-idempotent
   and state writes are convergent (above); and on a re-drain run the
@@ -360,11 +412,35 @@ itself events; never promise "the next run is a no-op"):
   accused a human of edits the bridge itself had made, then replayed
   the board's whole state history at GitHub (probed; both closed by
   this bullet and the convergence rule).
-- Concurrency: single-instance operation is a stated constraint (no
-  lock machinery in v1); adoption, dedupe, and state convergence make
-  the overlap window inefficient — and the duplicate-create case
-  resolves to a warned duplicate link (identity section), not a
-  flip-flop.
+- **Concurrency, stated honestly** (rev 5 — the "inefficient, not
+  corrupting" claim was PROBED FALSE with real overlapping
+  processes): two concurrent runs — cron overlap on one store, or two
+  replicas' operators at once — mint PERMANENT artifacts: duplicate
+  issues per key, duplicate link notes, a doubly-imported comment
+  (two-replica) or doubly-posted comment (same-store). Adoption and
+  the stamp close the re-run window, not the overlap window (both
+  list before either creates), and idempotency keys don't cross a
+  partition. What holds: the damage is bounded per overlap, nothing
+  flip-flops, no override is ever fabricated, and the established
+  link resolves to one inbound writer. **There is NO failure signal
+  at run time** — both runs exit 0, ok:true; the first signal is the
+  NEXT run's duplicate-link warnings, which name every affected key
+  and count divergences (probed). Therefore: **single-instance
+  operation is an operating REQUIREMENT the operator must enforce**
+  (one designated runner, non-overlapping cron, or flock in the
+  invocation — the bridge provides no lock in v1); cleanup of an
+  overlap's duplicates is manual (close the duplicate issue with a
+  comment); a board-CAS reservation scheme that shrinks the
+  same-store window is v2, with its stated limit that no board
+  mechanism can close the cross-replica window (that IS the
+  partition).
+- **Availability under flakiness, priced** (rev 5): no retry, no
+  backoff anywhere — one transient transport failure aborts the run.
+  SAFE (verified: six flake configurations all converge exactly, with
+  progress accumulating across failed runs) and UNAVAILABLE under
+  sustained flakiness (at 33% per-call failure across 14 calls,
+  effectively no run completes). Retry-with-backoff is backlog, now
+  with measured shape instead of hope.
 
 **Law 3 — refusals converge** (rev 1's human-refusal path spammed a
 note and a GitHub comment per run, forever): a refusal (human-labeled
@@ -372,12 +448,23 @@ key, unresolvable divergence) is recorded in bridge state as (issue,
 aspect, observed-state); while unchanged on both sides it is silently
 skipped, counted in `divergences`. The handoff note and the one
 GitHub comment ("reserved on the board; a maintainer must apply this
-there") are written ONCE per distinct divergence. **Record
-lifecycle** (rev 4 — the fold dropped it): a record NOT re-observed
-this run is PRUNED (the state note stays bounded, and a cleared
-divergence is forgotten so its next real occurrence notes afresh);
-pruning is a state change for Law 1's persistence rule. Suppression
-notes (Law 1 step 3) share this exact machinery.
+there") are written ONCE per distinct (issue, aspect, observed-state)
+— **EVER, not per episode** (rev 5 narrows rev 4's "notes afresh",
+which was unachievable: Law 2 keys the note on exactly that triple,
+so a recurrence dedupes by design, and un-keying it would duplicate
+the note on every crash between note and persist; what recurs afresh
+is the COUNT, the report line, and the re-persisted record — the
+original note remains the greppable record of the divergence's
+content, which is identical by construction). **Record lifecycle**: a
+record NOT re-observed this run is PRUNED (the state note stays
+bounded); pruning is a state change for Law 1's persistence rule, and
+record-set comparison is SET comparison, order-blind (walk order is
+an artifact; list comparison would persist a new state note every
+run, forever). Suppression notes (Law 1 step 3) share this exact
+machinery. Consequence of author-suppression stated: a FORGED
+bookkeeping note (human-authored github-link/bridge-state) is inert
+on the board but mirrors to GitHub as an ordinary comment — the
+poisoning becomes visible in two places, one public; accepted.
 
 **Law 4 — attribution is paginated or absent**: the actor for a
 close/reopen/rename comes from the FULL issue timeline —
@@ -521,6 +608,24 @@ one call.
     `reset_required` re-drain, one-board-one-repo refusal,
     sync-failure abort, and deleted/transferred-issue warning each
     get their named item (rev 3's orphans).
+13. Rev-5 items, each from a spike-3 finding: the oracle covers both
+    directions AND same-run writes (warm-cache own-comment fixture;
+    export/import outbound re-post fixture); author-less comments
+    refused; oldest-wins link tie-break under merge (loser's note
+    arriving by later sync does not flip); fold-not-drain level
+    trigger (the export/import recovery neither reopens nor
+    retitles); `deduped` never counts as a write on refusal paths;
+    refusal-set comparison is order-blind; `--reopened` terminality;
+    both-streams scale fixture; concurrency probe kept as a
+    REGRESSION (overlapping processes: bounded duplicates, no
+    flip-flop, no fabricated override, next-run warnings name every
+    key); flake-storm convergence with accumulating progress; the
+    re-bridged-repo re-import hazard pinned as documented behavior.
+    FIXTURE FAITHFULNESS is itself a test-plan law: the fake
+    transport honors `--limit` and serializes calls like the real
+    API (an unfaithful fixture proved a refusal could fire while
+    hiding what it protects against, and would have measured its own
+    race in the concurrency probe).
 12. Bridge tests run against a FIXTURE transport; ONE live acceptance
     trial against a scratch repo (below). Skill/doctrine harness
     re-runs over the amended SKILL.md lines.
@@ -612,3 +717,26 @@ transport, never live.
   persistence rule inverted under its own example and dropped the
   refusal-set disjunct + pruning (all four disjuncts + lifecycle now
   stated); quickstart amendment missing (entry 9, budget 120 → 124).
+- Spike round 3, the conservative pass (all ten rev-4 deltas built
+  with regressions; 28-injection sweep across every rev-4 transport
+  shape; full live trial re-run + three new live steps incl. the
+  two-replica rename contest resolved with its ticket verbatim and
+  export/import recovery; scale bounds re-measured at 72 contests
+  across both streams, 106-110ms vs 350ms). Live-only catches, again:
+  the run-start-snapshot oracle imported the bridge's own divergence
+  comment under an empty login (round 2's finding-14 through a new
+  door — oracle now includes same-run writes, author-less comments
+  refused); the drain-derived level trigger reopened a closed issue
+  and restored a superseded title on recovery (the mirror is a
+  function of current state, never history). Falsified: "inefficient,
+  not corrupting" (permanent duplicates, zero run-time signal, both
+  overlap shapes probed with real processes) — restated as an honest
+  operating requirement with next-run detection; "notes afresh"
+  (unachievable against Law 2's keying — narrowed to the count);
+  rev 4's link tie-break self-contradiction (oldest-wins, the
+  merge-stable reading). Verified: flake-storm safety with
+  accumulating progress (and the no-retry availability cost priced);
+  the signals[] field with prose-fallback pinned OUT; the title
+  stream live end to end. Standing hazard newly dimensioned: markers
+  are not board-scoped — one repo binds to one board permanently, or
+  a prior board's mirrors re-import (format v3 is the v2 fix).
