@@ -1,13 +1,16 @@
 {
- "ts": "2026-08-19T00:13:41.995",
- "type": "note",
- "key": "skew-flagging",
- "text": "migrated from https://github.com/prime-radiant-inc/ledger/issues/2",
+ "ts": "2026-08-19T00:13:42.119",
+ "type": "set",
+ "key": "degraded-ssh",
+ "fields": {
+  "status": "open"
+ },
+ "text": "degraded-mode hardening: ssh BatchMode decision + missing failure-path tests",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 6816,
+  "pid": 6831,
   "branch": "main",
   "head": "cb04ecd",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
