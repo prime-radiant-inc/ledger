@@ -1,15 +1,15 @@
 {
- "ts": "2026-08-19T04:26:59.188",
+ "ts": "2026-08-19T04:51:57.159",
  "type": "note",
  "key": "github-bridge",
- "text": "spike v2 DONE (crash sweep 16/16, live trial all green incl. crash-resume + marker edges); spec rev 3 committed (0-findings-dropped fold of 28); gauntlet round 2 next",
+ "text": "gauntlet round 2 done (10v10 tie, H1 on weight; override symmetry retracted, marker oracle + index + links repaired); spec rev 4 committed",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 33544,
+  "pid": 7240,
   "branch": "main",
-  "head": "5e4579b",
+  "head": "4f8d447",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
   "session_source": "CLAUDE_CODE_SESSION_ID"
  }
