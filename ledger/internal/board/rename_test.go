@@ -1,6 +1,7 @@
 package board
 
 import (
+	"reflect"
 	"testing"
 
 	"ledger/internal/model"
@@ -133,5 +134,208 @@ func TestTwoRootCollisionLosingSeedTitleAppearsNowhere(t *testing.T) {
 	info := Build(readyMeta(), evs).Keys["task-signup"].RenameInfo()
 	if len(info.Prior) != 1 || info.Prior[0] != "ash's seed" {
 		t.Fatalf("prior is fold-path history, not a complete inventory: %v", info.Prior)
+	}
+}
+
+// ---- the contested title stream (rename events as pseudo-field "title") ----
+
+// renameAt is a fixture rename event with a chosen author and timestamp.
+func renameAt(id, key, title, author, ts string) model.Event {
+	return model.Event{ID: id, Type: "set", Key: key, Author: author, TS: ts, Rename: title}
+}
+
+// TestConcurrentRenamesContestAsTheTitlePseudoField: the rename stream is a
+// write-head antichain like any guarded field's — same definition, ids
+// fold-ordered winner-last, expect = the winner's id (usable verbatim as
+// `--rename --expect`).
+func TestConcurrentRenamesContestAsTheTitlePseudoField(t *testing.T) {
+	evs := []model.Event{
+		ev("seed000000", "t1", "status", "open", "seeder", "2026-08-17T10:00:00.000"),
+		renameAt("alicerename", "t1", "alice's title", "alice", "2026-08-17T11:00:00.000"),
+		renameAt("bobrename0", "t1", "bob's title", "bob", "2026-08-17T12:00:00.000"),
+	}
+	evs[0].Text = "the seed title"
+	d := dagOf(evs, [][]int{{}, {0}, {0}})
+	b := Build(contestMeta(), evs)
+	b.ComputeContests(evs, d)
+
+	c := contestOn(t, b, "t1", TitleField)
+	if !reflect.DeepEqual(c.IDs, []string{"alicerename", "bobrename0"}) {
+		t.Fatalf("heads in fold order, winner last: %v", c.IDs)
+	}
+	if !reflect.DeepEqual(c.Authors, []string{"alice", "bob"}) {
+		t.Fatalf("authors parallel to ids: %v", c.Authors)
+	}
+	if c.Expect != "bobrename0" {
+		t.Fatalf("expect is the winner's id: %q", c.Expect)
+	}
+	if b.Keys["t1"].Title != "bob's title" {
+		t.Fatalf("the fold winner and the contest winner are the same event: %q", b.Keys["t1"].Title)
+	}
+}
+
+// TestTitleContestCollapsesLikeAnyOtherStream: a third rename descending
+// from both heads collapses the antichain — no clearing rule, the definition
+// clears itself — and ResolvedHeads names the losers it beat.
+func TestTitleContestCollapsesLikeAnyOtherStream(t *testing.T) {
+	evs := []model.Event{
+		ev("seed000000", "t1", "status", "open", "seeder", "2026-08-17T10:00:00.000"),
+		renameAt("alicerename", "t1", "alice's title", "alice", "2026-08-17T11:00:00.000"),
+		renameAt("bobrename0", "t1", "bob's title", "bob", "2026-08-17T12:00:00.000"),
+		renameAt("collapse00", "t1", "the agreed title", "kit", "2026-08-17T13:00:00.000"),
+	}
+	evs[0].Text = "the seed title"
+	d := dagOf(evs, [][]int{{}, {0}, {0}, {1, 2}})
+
+	losers := ResolvedHeads(evs[:3], dagOf(evs[:3], [][]int{{}, {0}, {0}}), "t1", TitleField)
+	if !reflect.DeepEqual(losers, []string{"alicerename"}) {
+		t.Fatalf("the collapsing write records every head but the winner: %v", losers)
+	}
+
+	b := Build(contestMeta(), evs)
+	b.ComputeContests(evs, d)
+	if len(b.Contests["t1"]) != 0 {
+		t.Fatalf("the collapse clears the contest: %+v", b.Contests["t1"])
+	}
+}
+
+// TestTitleStreamContestsOnAGuardFreeReadyCapableBoard: the title stream is
+// unguardable, so a len(Guard)==0 short-circuit may no longer bound the pass
+// — a ready-capable board declaring no guards still has titles, and its
+// renames still race.
+func TestTitleStreamContestsOnAGuardFreeReadyCapableBoard(t *testing.T) {
+	meta := contestMeta()
+	meta.Guard = nil
+	evs := []model.Event{
+		ev("seed000000", "t1", "status", "open", "seeder", "2026-08-17T10:00:00.000"),
+		renameAt("alicerename", "t1", "alice's title", "alice", "2026-08-17T11:00:00.000"),
+		renameAt("bobrename0", "t1", "bob's title", "bob", "2026-08-17T12:00:00.000"),
+	}
+	evs[0].Text = "the seed title"
+	b := Build(meta, evs)
+	b.ComputeContests(evs, dagOf(evs, [][]int{{}, {0}, {0}}))
+	if c := contestOn(t, b, "t1", TitleField); c.Expect != "bobrename0" {
+		t.Fatalf("guard-free board still contests its title stream: %+v", c)
+	}
+}
+
+// TestPlainBoardNeverContestsTitles: titles exist only on ready-capable
+// boards, so the pass's scope is unchanged in that dimension.
+func TestPlainBoardNeverContestsTitles(t *testing.T) {
+	meta := model.Meta{Fields: map[string][]string{"status": {"open", "done"}}}
+	evs := []model.Event{
+		renameAt("alicerename", "t1", "alice's title", "alice", "2026-08-17T11:00:00.000"),
+		renameAt("bobrename0", "t1", "bob's title", "bob", "2026-08-17T12:00:00.000"),
+	}
+	b := Build(meta, evs)
+	b.ComputeContests(evs, dagOf(evs, [][]int{{}, {}}))
+	if len(b.Contests) != 0 {
+		t.Fatalf("a plain board has no titles to contest: %+v", b.Contests)
+	}
+}
+
+// TestTitleContestSurfacesInAttentionOnly is the attention-only ruling: a
+// title contest raises its attention entry, but it must NOT set per-entry
+// `contested: true` and must NOT flip the frontier off all-handled — a
+// cosmetic cross-replica retitle can't hold a fleet in the picking loop.
+func TestTitleContestSurfacesInAttentionOnly(t *testing.T) {
+	evs := []model.Event{
+		ev("seed000000", "t1", "status", "in-progress", "alice", "2026-08-17T10:00:00.000"),
+		renameAt("alicerename", "t1", "alice's title", "alice", "2026-08-17T11:00:00.000"),
+		renameAt("bobrename0", "t1", "bob's title", "bob", "2026-08-17T12:00:00.000"),
+	}
+	evs[0].Text = "the seed title"
+	b := Build(contestMeta(), evs)
+	b.ComputeContests(evs, dagOf(evs, [][]int{{}, {0}, {0}}))
+	env := b.Envelope(mustParseTS("2026-08-17T13:00:00.000"), 0, alwaysTrue)
+
+	if env.Frontier != "all-handled" {
+		t.Fatalf("a title contest must not flip the frontier: %q (%+v)", env.Frontier, env.Attention)
+	}
+	if len(env.Held) != 1 || env.Held[0].Contested {
+		t.Fatalf("a title contest must not set the per-entry contested flag: %+v", env.Held)
+	}
+	var titleEntries int
+	for _, a := range env.Attention {
+		if a.Reason == "contested" && a.Contest.Field == TitleField {
+			titleEntries++
+			if a.Title != "bob's title" {
+				t.Fatalf("the entry carries the CURRENT title: %q", a.Title)
+			}
+			if a.Renamed == nil || a.Renamed.By != "bob" {
+				t.Fatalf("the entry carries renamed info: %+v", a.Renamed)
+			}
+		}
+	}
+	if titleEntries != 1 {
+		t.Fatalf("exactly one title-contest attention entry: %+v", env.Attention)
+	}
+}
+
+// TestStatusContestStillFlipsTheFrontierAlongsideATitleContest: the
+// attention-only rule is scoped to the title stream alone — a guarded-field
+// contest on the same board still sets the flag and still moves the verdict.
+func TestStatusContestStillFlipsTheFrontierAlongsideATitleContest(t *testing.T) {
+	evs := []model.Event{
+		ev("seed000000", "t1", "status", "in-progress", "seeder", "2026-08-17T10:00:00.000"),
+		ev("aclaim0000", "t1", "status", "in-progress", "alice", "2026-08-17T11:00:00.000"),
+		ev("bclaim0000", "t1", "status", "in-progress", "bob", "2026-08-17T11:30:00.000"),
+		renameAt("alicerename", "t1", "alice's title", "alice", "2026-08-17T12:00:00.000"),
+		renameAt("bobrename0", "t1", "bob's title", "bob", "2026-08-17T12:30:00.000"),
+	}
+	evs[0].Text = "the seed title"
+	b := Build(contestMeta(), evs)
+	b.ComputeContests(evs, dagOf(evs, [][]int{{}, {0}, {0}, {1}, {2}}))
+	env := b.Envelope(mustParseTS("2026-08-17T13:00:00.000"), 0, alwaysTrue)
+
+	if env.Frontier != "attention-needed" {
+		t.Fatalf("a status contest still moves the verdict: %q", env.Frontier)
+	}
+	if len(env.Held) != 1 || !env.Held[0].Contested {
+		t.Fatalf("a status contest still sets the per-entry flag: %+v", env.Held)
+	}
+}
+
+// TestStatuslessKeyWithAFoldTotalRenameTitlesAllItsEntries: entry titles
+// exist whenever the KEY has a title — one title per key per envelope,
+// statusless and contested entries alike; `title` is omitted only when no
+// title exists at all.
+func TestStatuslessKeyWithAFoldTotalRenameTitlesAllItsEntries(t *testing.T) {
+	evs := []model.Event{
+		renameAt("alicerename", "t1", "alice's title", "alice", "2026-08-17T11:00:00.000"),
+		renameAt("bobrename0", "t1", "bob's title", "bob", "2026-08-17T12:00:00.000"),
+	}
+	b := Build(contestMeta(), evs)
+	b.ComputeContests(evs, dagOf(evs, [][]int{{}, {}}))
+	env := b.Envelope(mustParseTS("2026-08-17T13:00:00.000"), 0, alwaysTrue)
+
+	seen := 0
+	for _, a := range env.Attention {
+		if a.Key != "t1" {
+			continue
+		}
+		seen++
+		if a.Title != "bob's title" {
+			t.Fatalf("%s entry must carry the key's title: %+v", a.Reason, a)
+		}
+		if a.Renamed == nil {
+			t.Fatalf("%s entry must carry renamed info: %+v", a.Reason, a)
+		}
+	}
+	if seen != 2 { // statusless + contested
+		t.Fatalf("expected a statusless and a contested entry: %+v", env.Attention)
+	}
+}
+
+// TestStatuslessKeyWithNoTitleOmitsTitleEverywhere: the other half of the
+// same rule — no title anywhere means no title field, as before.
+func TestStatuslessKeyWithNoTitleOmitsTitleEverywhere(t *testing.T) {
+	evs := []model.Event{ev("lbl0000000", "t1", "labels", "urgent", "alice", "2026-08-17T11:00:00.000")}
+	b := Build(contestMeta(), evs)
+	env := b.Envelope(mustParseTS("2026-08-17T13:00:00.000"), 0, alwaysTrue)
+	for _, a := range env.Attention {
+		if a.Title != "" {
+			t.Fatalf("an untitled key carries no title: %+v", a)
+		}
 	}
 }
