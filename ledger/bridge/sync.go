@@ -661,7 +661,10 @@ func (s *Syncer) intakeTitle(is ghIssue, ks *KeyState) error {
 		}
 		return nil
 	}
-	actor, ok := s.GH.LastActor(is.Number, "renamed")
+	actor, ok, err := s.GH.LastActor(is.Number, "renamed")
+	if err != nil {
+		return err
+	}
 	if !ok {
 		actor = is.Author.Login
 		s.report.warn("issue #%d: no 'renamed' timeline event found — attributing the retitle to the issue author @%s", is.Number, actor)
@@ -726,7 +729,10 @@ func (s *Syncer) intakeState(is ghIssue, ks *KeyState) error {
 	if want == openValue {
 		event = "reopened"
 	}
-	actor, ok := s.GH.LastActor(is.Number, event)
+	actor, ok, err := s.GH.LastActor(is.Number, event)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		actor = is.Author.Login
 		s.report.warn("issue #%d: no '%s' timeline event found — attributing to the issue author @%s", is.Number, event, actor)

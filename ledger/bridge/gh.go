@@ -212,21 +212,26 @@ type timelineEvent struct {
 // `gh api --paginate` emits one JSON document per page, concatenated. A
 // streaming decoder reads that AND the single-document case, so this works
 // against both without asking which one it got.
-func (g GH) LastActor(n int, event string) (string, bool) {
+// A TRANSPORT FAILURE is not a fallback. "No matching event found" is the
+// only case that falls back to the issue author; a 502 or a killed process
+// must abort the run, or a hiccup gets written to the board permanently as
+// somebody's decision. The crash sweep found this: swallowing the error made
+// injections at every timeline call site unreachable, which is precisely the
+// shape of a silent wrong attribution.
+func (g GH) LastActor(n int, event string) (login string, found bool, err error) {
 	out, err := g.raw("api", "--paginate",
 		fmt.Sprintf("repos/%s/issues/%d/timeline?per_page=100", g.Repo, n))
 	if err != nil {
-		return "", false
+		return "", false, err
 	}
 	dec := json.NewDecoder(strings.NewReader(out))
-	login := ""
 	for {
 		var page []timelineEvent
-		if err := dec.Decode(&page); err != nil {
-			if err == io.EOF {
+		if e := dec.Decode(&page); e != nil {
+			if e == io.EOF {
 				break
 			}
-			return "", false
+			return "", false, fmt.Errorf("gh api timeline for #%d: undecodable output: %w", n, e)
 		}
 		for _, te := range page {
 			if te.Event == event && te.Actor.Login != "" {
@@ -235,7 +240,7 @@ func (g GH) LastActor(n int, event string) (string, bool) {
 		}
 	}
 	if login == "" {
-		return "", false
+		return "", false, nil
 	}
-	return login, true
+	return login, true, nil
 }

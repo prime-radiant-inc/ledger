@@ -184,6 +184,13 @@ func (f *fixture) setStatusOverride(key, value, msg, as string, evidence ...stri
 	f.ledgerOK(args...)
 }
 
+// reserve puts the `human` label on a key — the standing signal the bridge
+// must NEVER override, and so the trigger for Law 3's refusal path.
+func (f *fixture) reserve(key, as string) {
+	f.t.Helper()
+	f.ledgerOK("set", key, "labels=human", "-m", "reserving this for a person", "--as", as)
+}
+
 // ---- the fixture GitHub repo ----
 
 func (f *fixture) ghLoad() *fakegh.State {
@@ -300,7 +307,7 @@ func (f *fixture) syncAfter(login string, failAfter int) (*Report, error) {
 func (f *fixture) syncMode(login string, failAt, failAfter int) (*Report, error) {
 	f.t.Helper()
 	st := f.ghLoad()
-	st.Calls = 0
+	st.Calls, st.Log = 0, nil
 	f.ghSave(st)
 	// Set the state path per run, not once at construction: a test that
 	// builds two fixtures must not have the second one's repo answer the
@@ -317,6 +324,20 @@ func (f *fixture) syncMode(login string, failAt, failAfter int) (*Report, error)
 	set(fakegh.EnvFailAt, failAt)
 	set(fakegh.EnvFailAfter, failAfter)
 	return f.syncer().Run()
+}
+
+// runBridgeBinary runs the real `ledger-gh` binary as a separate PROCESS
+// with its own environment — what the concurrency regression needs, since
+// two goroutines sharing this test's memory would not be two operators.
+func (f *fixture) runBridgeBinary() (string, error) {
+	cmd := exec.Command(bridgeBin, "sync", "--repo", f.repo, "--ledger", f.slug,
+		"--store", f.dir, "--ledger-bin", ledgerBin, "--gh-bin", ghBin,
+		"--done", f.done, "--not-planned", f.notPlanned, "--list-limit", fmt.Sprint(f.listLimit))
+	cmd.Env = append(os.Environ(),
+		fakegh.EnvState+"="+f.ghState, fakegh.EnvLogin+"=operator",
+		fakegh.EnvFailAt+"=", fakegh.EnvFailAfter+"=")
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }
 
 func (f *fixture) syncOK(login string) *Report {
