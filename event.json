@@ -1,16 +1,16 @@
 {
- "ts": "2026-08-19T00:14:38.733",
+ "ts": "2026-08-19T00:14:38.892",
  "type": "set",
  "key": "probe-key",
  "fields": {
-  "labels": ""
+  "status": "open"
  },
- "text": "clearing probe label",
+ "text": "doctrine probe artifact",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 8246,
+  "pid": 8263,
   "branch": "main",
   "head": "cb04ecd",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
