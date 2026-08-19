@@ -1,22 +1,14 @@
 {
- "ts": "2026-08-19T21:53:19.630",
- "type": "set",
+ "ts": "2026-08-19T21:53:27.552",
+ "type": "note",
  "key": "migration-learnings",
- "fields": {
-  "status": "closed"
- },
- "text": "all four code/doc tasks landed on fix/migration-learnings; review and merge still gate main",
- "evidence": [
-  "commit:b1e428d",
-  "commit:14fdfc7",
-  "commit:c28165c",
-  "commit:8db27cb"
- ],
+ "kind": "status-update",
+ "text": "migration-learnings build complete on fix/migration-learnings (4 commits): (1) set AND rename responses now echo the tool-computed override beside contested_resolved, with an override: marker on the TTY line; (2) ledger init from a repo subdirectory now initializes the repo root instead of refusing with bad_value (probe confirmed the old behavior was a clean exit-4 refusal, which the migration's jq pipe swallowed) — the anti-shadow-store invariant is kept and retested; (3) skills/ledger-issues gained the --expect scope paragraph, a Retire-a-mistake idiom (4 new walkthrough fences, 68-\u003e72), and --stale-after horizon guidance, all executed by TestDoctrineVerbatimWalkthrough; (4) ledger/docs/migrate-github.md is an executable recipe (fetch-to-file, jq/while loop with per-command exit checks and --idempotency-key resume), driven by two checked-in gh fixtures in internal/docs/testdata and falsification-checked. Full suite + vet + gofmt green at every task boundary.",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 22660,
+  "pid": 23471,
   "branch": "main",
   "head": "524b5f5",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
