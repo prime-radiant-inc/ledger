@@ -1,19 +1,20 @@
 {
- "ts": "2026-08-19T00:13:44.497",
+ "ts": "2026-08-19T00:13:44.654",
  "type": "set",
  "key": "tty-partial-summary",
  "fields": {
-  "labels": "human"
+  "status": "open"
  },
- "text": "reserving for jesse: UX decision",
+ "text": "TTY partial_failure prints per-slug details but no summary line or hint — keep or fix, jesse's call",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 7111,
+  "pid": 7127,
   "branch": "main",
   "head": "cb04ecd",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
   "session_source": "CLAUDE_CODE_SESSION_ID"
- }
+ },
+ "override": "human"
 }
