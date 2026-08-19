@@ -1,11 +1,16 @@
 {
- "ts": "2026-08-19T00:13:26.988",
- "type": "create",
+ "ts": "2026-08-19T00:13:41.581",
+ "type": "set",
+ "key": "frontier-cursors",
+ "fields": {
+  "status": "open"
+ },
+ "text": "v2: frontier cursors — bounded paging across merged history, and watch --limit",
  "author": "claude",
  "origin": {
   "host": "m4.local",
-  "cwd": "/Users/jesse/git/ledger-research/ledger",
-  "pid": 6441,
+  "cwd": "/Users/jesse/git/ledger-research",
+  "pid": 6705,
   "branch": "main",
   "head": "cb04ecd",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
