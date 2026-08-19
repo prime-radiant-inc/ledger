@@ -1,16 +1,16 @@
 {
- "ts": "2026-08-19T19:26:01",
+ "ts": "2026-08-19T21:09:47",
  "type": "note",
  "key": "github-bridge",
- "kind": "gotcha",
- "text": "scale-bound flake on merged main full-suite run: TestScaleReadyEnvelopeBound median 161ms vs 140ms bound under parallel-package contention (cmd's 232s subprocess storm); passes in isolation (0.6ms-class) and passed 2 prior full runs on identical code. Absolute wall-clock bounds cannot be pristine under uncontrolled parallel load; min-of-N and retry both fail this mode (contention outlives store's run). Fix requires a contract decision: ratio-to-in-run-baseline, bound-behind-flag with serial invocation, or accept occasional flake. Parked for jesse.",
+ "kind": "status-update",
+ "text": "RESOLVED by jesse's ruling: the wall-clock scale bounds are deleted (524b5f5) — never asked for; correctness-at-scale tests stay. The parked flake decision item is closed.",
  "author": "claude-code",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research/ledger",
-  "pid": 52785,
+  "pid": 7362,
   "branch": "main",
-  "head": "6573522",
+  "head": "524b5f5",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
   "session_source": "CLAUDE_CODE_SESSION_ID"
  }
