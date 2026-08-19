@@ -108,9 +108,9 @@ func runInit(c *Ctx, hooks bool) error {
 	}
 
 	// A target inside a git repo initializes THE REPO, from however deep in
-	// it the caller happens to be standing — the same ancestor resolution
-	// every other verb does (store.Resolve's walk), with git's own toplevel
-	// as the answer. It must never fall through to the bare-store branch
+	// it the caller happens to be standing — git's own toplevel (already
+	// resolved above) is the answer, mirroring the ancestor resolution every
+	// other verb gets from store resolution. It must never fall through to the bare-store branch
 	// below: that would silently create a shadow .ledger.git next to the real
 	// repo, and store resolution's ancestor walk would then find the shadow
 	// before the real repo's own (as-yet-uninstalled) store — a trap sprung on
