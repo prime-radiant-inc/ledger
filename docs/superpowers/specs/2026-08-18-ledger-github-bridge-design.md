@@ -1,6 +1,23 @@
 # Ledger GitHub bridge: rename events and the additive sync (design)
 
-2026-08-19, revision 5 — the conservative pass: spike round 3 built
+2026-08-19, revision 6 — the three-reviewer gauntlet returned 35
+findings (16/10/9), five of them Critical, all probed: the amendment-7
+retraction rationale was FALSE (the human gate dissolves — it is an
+unguarded label — so rename now keeps set's no-op symmetry);
+`signals[]` failed OPEN into auto-overriding human stop signs against
+pre-rev-16 binaries (now fails closed with a startup capability
+check); `gh issue list` returns the OLDEST 100 comments per issue, so
+busy issues silently stopped importing and double-posted on crash
+(per-issue saturation re-read added); the oracle survives exactly ONE
+export/import (`imported_from` is single-hop — bound stated,
+ancestry-list fix filed); and `--reopened` was simultaneously
+mandated and denied (flag deleted; reopen ⇒ open). Rev 6 applies all
+rulings; a rev-7-style structural rewrite (narration → history,
+vocabulary block, whole-law restatements) is the agreed next step.
+Because this round was NOT clarity-grade, the build gate escalates to
+Jesse per the standing instruction. Validation record at bottom.
+
+Rev 5 history: the conservative pass: spike round 3 built
 all ten rev-4 deltas (28-injection crash sweep over every rev-4
 transport shape; full live trial re-run incl. a live two-replica
 rename contest resolved with the ticket verbatim; scale bounds
@@ -67,9 +84,13 @@ bridge exactly as it binds any agent.
   `bad_usage` on a bare rename and REQUIRED with `--override`, where it
   is the override justification — it renders wherever override messages
   render and is never a title. `--override` without a standing signal
-  is `bad_usage` (nothing to override). `--idempotency-key` is allowed,
-  scoped to rename events (a rename never dedupes against a field
-  write sharing its key).
+  is a legal no-op, exactly as on `set` (rev 6 — see amendment 7's
+  completed retraction; the gate dissolves, so `bad_usage` here was
+  the TOCTOU the retraction itself condemned). `--idempotency-key` is
+  allowed, scoped SYMMETRICALLY (rev 6, closing the probed swallow
+  hole): rename events dedupe only against rename events, and field
+  writes dedupe only against field-carrying events — a field write
+  never dedupes against a rename sharing its (author, key, idem).
 - **Fold rule**: a key's title = the latest rename event's text in fold
   order, else the first status event's `-m`. Concurrent renames resolve
   last-in-fold-order; losers persist as fold-path history.
@@ -107,10 +128,18 @@ bridge exactly as it binds any agent.
   ABSENT on unrenamed keys. **Byte-compatibility claim, scoped
   honestly** (rev 1's blanket claim was false by its own next
   sentence): rename-LABELING adds nothing to unrenamed output, but
-  rev 16 makes two deliberate output changes on ALL boards — `ready`'s
-  TTY blocked line gains the title, and `status <key>`'s drill-down
-  gains title + rename info — each with its own fixture, not a
-  byte-identity test.
+  rev 16 makes THREE deliberate output changes on all READY-CAPABLE
+  boards (rev 6 corrects both the count and the scope — plain boards
+  have no titles and are untouched): `ready`'s TTY blocked line gains
+  the title, `status <key>`'s drill-down gains title + rename info,
+  and `show --id` renders `rename:` on rename events (it is the
+  pinned ticket-read path for contest heads, and rendered nothing of
+  a rename on a TTY — probed) — each with its own fixture, not a
+  byte-identity test. The bare `status` SPINE is ruled the other way:
+  its note column IS the event message, deliberately unlabeled — the
+  seed message rendering verbatim on a renamed key is the spine
+  showing history, not a defect; the drill-down and every list
+  surface carry the labeled title.
 - **Determinism**: pure fold; the standing determinism test gains a
   renamed key in its fixture.
 
@@ -146,13 +175,14 @@ bridge exactly as it binds any agent.
    `TestOverrideResetsAcrossLosingCASAttempt` constructs the killer:
    a claim that goes STALE between CAS attempts makes the
    caller-did-everything-right write die as a usage error inside the
-   retry loop). The symmetry argument was unsound at the root: a
-   rename's only gate is `human`, which never dissolves; `set`'s
-   signals dissolve on the clock, so no-signal-no-op is the correct
-   retry-safe semantics there — the flag's effect is conditional, not
-   absent, which is why it isn't the forbidden accepted-and-ignored
-   pattern. Rename keeps its own `bad_usage` (its gate cannot
-   dissolve). Consumer note for the same contract: sync/push exit-3
+   retry loop). Rev 6 completes the retraction in BOTH directions:
+   rev 5 claimed rename's gate "cannot dissolve" — probed FALSE
+   (`human` is an unguarded `labels` token; any writer or sync merge
+   clears it, and the mid-CAS-loop TOCTOU is verbatim the killer
+   construction above). **`--override` with no standing signal is a
+   legal no-op on EVERY write verb, rename included** — retry-safe by
+   the same argument everywhere; the flag's effect is conditional,
+   not absent. Consumer note for the same contract: sync/push exit-3
    outcome documents go to stdout.
 8. **Sync spec Addition 3, the contested streams** (rev 4; scope
    sharpened rev 5): the write-heads antichain extends to the RENAME
@@ -201,16 +231,21 @@ derivable with no new verb; rev 4 closes the probed
 `--done in-progress` hole, which passed rev 3's membership-only check
 and then closed GitHub issues on a non-terminal state) — naming the
 failing flag, the declared vocabulary, and the fix command — and the
-mirror image rev 4 missed (rev 5): **`--reopened` must name a
-NON-terminal value** (terminality oracle: `declared − {open,
-in-progress}`), or every GitHub reopen settles the key it was meant
-to revive. **The bridge also refuses a run whose issue listing
+terminality oracle `declared − {open, in-progress}` (rev 6: the
+`--reopened` flag is DELETED — rev 5 mandated it in one sentence and
+denied it in another; since non-terminal vocab is pinned, its only
+legal non-default value was `in-progress`, so reopen ⇒ `open`,
+always, no flag, and the synopsis stands as written). **The bridge also refuses a run whose issue listing
 SATURATES the window**
-(`--limit 200` returning exactly 200): outside the window the bulk
-maps are zero-valued, which silently disables the comment dedupe, the
-state diff, and adoption — duplicates and un-adoptable orphans, probed
-via a limit-faithful fixture. A loud stop naming pagination as the
-fix, until pagination lands (backlog). Tool-backlog line (rev 5):
+(the listing returning >= the limit; real ceiling limit−1 = 199,
+stated honestly): outside the window the bulk maps are zero-valued,
+which silently disables the comment dedupe, the state diff, and
+adoption — duplicates and un-adoptable orphans, probed via a
+limit-faithful fixture. The fix is a CONSTANT, not a project (rev 6,
+probed live: `gh` paginates internally — `--limit 250` returns 250):
+raise the limit, and a `--list-limit` flag is the escape hatch so a
+board's 200th issue is never a permanent brick. The "pagination
+backlog" item is deleted. Tool-backlog line (rev 5):
 `ledger notes` does not surface `imported_from` — only event
 documents do; the bridge derives it from its whole-chain read, and a
 consumer without that read cannot. Outbound:
@@ -244,7 +279,13 @@ evidence (evidence on wontfix is "pasted-string theater"); reopen ⇒
   statement): `export`/`import` re-mints ids, so both the inbound
   "is this comment mine" test AND the outbound "have I posted this"
   test resolve `imported_from` (the outbound blindness re-posted the
-  bridge's whole history on recovery — spike-3 caught); and the
+  bridge's whole history on recovery — spike-3 caught). **The bound,
+  honest** (rev 6, probed): `imported_from` is SINGLE-HOP — the tool
+  overwrites it on each import — so the oracle survives exactly ONE
+  export/import; a SECOND recovery has the same effect as re-bridging
+  a fresh board and re-imports mirrored history. Tool-backlog fix
+  filed: `imported_from` becomes an ancestry list (nothing less
+  closes it — comments carry every generation's ids); and the
   oracle is NEVER a run-start snapshot — every marker id the run
   emits joins the domain immediately, or the bridge's own
   same-run comments import as board notes (live-caught twice now,
@@ -281,8 +322,23 @@ evidence (evidence on wontfix is "pasted-string theater"); reopen ⇒
   sync). An issue that is not the key's established link is NOT a
   link inbound either — rev 3's reader kept every issue ever linked
   as an inbound writer, producing an unbounded flip-flop minting a
-  fabricated override per run, probed. Duplicate link notes are
-  warned every run until a human resolves them. (2) **Link and
+  fabricated override per run, probed. **Link retraction** (rev 6 —
+  under append-only oldest-wins a duplicate was PERMANENTLY
+  unresolvable, probed, and the runbook's corrective-note remedy only
+  works for `bridge-state`, which reads newest-wins; the two
+  bookkeeping classes have opposite tie-breaks, now stated): a
+  `github-bridge`-authored note `github: retracted issues/<n>`
+  removes <n> from the key's candidate set; established = oldest
+  non-retracted; merge-stable (set union, deterministic). **The
+  cleanup doctrine that actually converges** (probed; the previous
+  one did not): close the duplicate issue on GitHub AND write its
+  retraction note — the warning clears next run. Intake seeds only
+  OPEN issues (rev 6 — a closed, hintless unknown imports nothing;
+  previously stripping a duplicate's hint minted a permanent junk
+  key). The stamped-forgery bound is re-priced honestly: under
+  oldest-wins a forged binding on a not-yet-linked key is permanent
+  until retracted, not self-correcting. Duplicate link notes warn
+  every run until retracted. (2) **Link and
   bridge-state notes are read author-filtered**: only notes authored
   `github-bridge` count, and a link note that CHANGES an existing
   link is a refusal-with-handoff, never a silent repoint — rev 3's
@@ -331,7 +387,12 @@ aspect — and **when suppression fires AND the remote differs from the
 last MIRRORED value, the bridge warns and leaves a board note**: that
 is a genuine concurrent GitHub edit being discarded. The comparison is
 against what the bridge last put there — `mirroredView`, the fold over
-the chain MINUS this run's drain, derived, stateless, replica-stable;
+the chain minus this run's drain's NON-SUPPRESSED events only (rev 6:
+intake writes describe what GitHub already shows and BELONG in the
+mirrored view; excluding them made every board-side reversal of an
+intaken close fire a false "a human's edit was discarded" accusation —
+probed, and the one-line fix probed clean against the full suite);
+derived, stateless, replica-stable;
 a key with no pre-drain history compares as a fresh open issue. (Rev
 2 compared against the OUTGOING value, which flags every ordinary
 close as a discarded human edit — fixture-falsified.) Suppression
@@ -376,9 +437,15 @@ itself events; never promise "the next run is a no-op"):
   on**: a deduped write is not a write, or a converged run can never
   report zero.
 - Mirrored comments carry the source event id in their marker; before
-  posting, the mirror checks the issue's already-fetched comments for
-  that id — mid-run failure re-runs never double-post (verified live
-  with injected crashes against the real API).
+  posting, the mirror checks the issue's comments for that id.
+  **Per-issue comment saturation** (rev 6, probed live: the bulk
+  listing returns the OLDEST 100 comments per issue, newest silently
+  missing — so a busy issue stopped importing forever with a clean
+  0/0 report, and crash re-runs double-posted past the cap): when the
+  bulk read returns exactly 100 comments for an issue, the bridge
+  re-reads THAT issue completely (`gh issue view <n> --json comments`,
+  probed complete at 140) before any dedupe, intake, or posting
+  decision touches it. The fixture models the cap — faithfulness law.
 - Issue creation: the crash window is closed by ADOPTION, not search —
   the identity section's stamp rule, using the bulk list already in
   hand.
@@ -428,9 +495,13 @@ itself events; never promise "the next run is a no-op"):
   and count divergences (probed). Therefore: **single-instance
   operation is an operating REQUIREMENT the operator must enforce**
   (one designated runner, non-overlapping cron, or flock in the
-  invocation — the bridge provides no lock in v1); cleanup of an
-  overlap's duplicates is manual (close the duplicate issue with a
-  comment); a board-CAS reservation scheme that shrinks the
+  invocation — the bridge provides no lock in v1) — and the next-run
+  warning fires ONLY for overlaps that create issues: comment-shaped
+  overlaps (both runs posting one note, or two replicas importing one
+  comment) leave permanent public duplicates with NO signal on any
+  run, ever (rev 6, probed); cleanup of issue duplicates is the
+  retraction doctrine above; a board-CAS reservation scheme that
+  shrinks the
   same-store window is v2, with its stated limit that no board
   mechanism can close the cross-replica window (that IS the
   partition).
@@ -489,10 +560,13 @@ non-terminal `claim_lost`: one re-read retry, and **the same rule
 applies to the retry** (a retry that hits a signal takes the signal's
 rule — the spike's `retried+override` path). **The signal names come
 from the error document, not its prose**: tool rev 16 adds
-`"signals": ["human", ...]` to the `needs_override` error (the spike
-distinguished `human` from `claim`/`settled` by substring-matching an
-English message — a prose dependency in a machine contract, deleted by
-one field).
+`"signals": ["human", ...]` to the `needs_override` error. **The
+field FAILS CLOSED** (rev 6 — the spike's reader failed open, probed:
+an empty `signals` read as not-human and auto-overrode the one write
+Law 3 exists to prevent, against any pre-rev-16 binary): a
+`needs_override` whose document carries no `signals` is UNKNOWN and
+takes Law 3's refusal path; and the bridge probes its `ledger` binary
+at startup, refusing a pre-rev-16 one by name with the fix stated.
 
 **Law 6 — mirror fidelity**: EVERY state mirror carries its message —
 a close mirrors as a marked comment carrying the close message and
@@ -529,6 +603,79 @@ webhooks; pagination beyond 200 issues/run; rate-limit backoff
 namespace enforcement (owner-enforcement v2 carries it). CLI wishes
 go to the tool backlog: latest-event-of-kind read; write-then-fold in
 one call.
+
+## Rev 6 consolidated rulings (binding; folded into law text at the
+structural rewrite)
+
+- **`title` is a RESERVED field name** (tool rev 16): `bad_value` at
+  `create`/`import`/`vocab` for `--field`/`--multi-field`/`--guard
+  title` — a legal board could otherwise declare and guard `title`,
+  splitting the contested read path (which unions both streams) from
+  the write path (renames only): probed as an unresolvable ticket and
+  an empty `contested_resolved`.
+- **Title contests surface in `attention` ONLY** (amendment 8
+  extended): they do NOT set per-entry `contested: true` and do NOT
+  flip `frontier` off `all-handled` — a cosmetic cross-replica
+  retitle must not hold a fleet in the loop or drag pickers into
+  name-the-contest doctrine (both probed). The title-collapse idiom
+  is `set <key> --rename "<keeper>" --expect <contest.expect>` — no
+  `--override` (settled never gates renames). Amendment 6 extends to
+  the skill's picking-loop contested paragraph, recovery paragraph,
+  and worked example; the "renaming is a human call" sentence is
+  scoped to KEY IDENTITY (rename/split of colliding keys) — 
+  collapsing a title contest with its ticket is a picker's act.
+- **Entry titles exist whenever the KEY has a title** (amendments 1/2
+  extended; the statusless carve-out narrows): a statusless key with
+  a fold-total rename renders that title on ALL its entries —
+  statusless and contested alike — one title per key per envelope;
+  `title` is omitted only when no title exists at all.
+- **Rule-3 contract rows for the rename stream** (amendment 4
+  extended): rename `claim_lost` message = "event <id> by <author>
+  already renamed '<key>' to "<title>"", hint = read the current
+  title first; `needs_override` carries `signals` as everywhere.
+- **Sync spec Addition 5 amended — the tenth entry**: its read-class
+  sentence covers the rename gate's whole-chain read, and its
+  single-pair `contested_resolved` derivation covers the `title`
+  pseudo-field (a rename touches zero guarded fields; a literal
+  reading computes no heads for it).
+- **Vocabulary-refusal remedy tells the truth**: a ready-capable
+  board's status vocabulary is immutable — `vocab add` is refused by
+  the tool itself (probed) — so the refusal names the board's own
+  values as the flags to pass, or export/import to a re-declared
+  board; never `vocab add`.
+- **The link-map read is UNBOUNDED** (`notes -k github-link -n 0`) —
+  the default limit of 10 silently truncates the identity map at ten
+  issues and mints duplicates for everything past it.
+- **`ledger-gh` exit contract**: 0 = report on stdout; 1 = error
+  document on stderr; 2 = usage. The operator's lock/cron wrapper is
+  written against this.
+- **Non-terminal status transitions mirror to NOTHING**, messages
+  included (claim/touch-base messages never reach GitHub) — stated
+  beside the `blocked-by` sentence; a marked-comment mirror for them
+  is v2.
+- **Out-of-scope backoff line** points at Law 2's availability
+  bullet (safe ≠ available; the measured shape lives there).
+- **Vocabulary block** (structural rewrite will front-load it):
+  ASPECT ∈ {status, title} — the closed list every record key and
+  Law 4 cost count uses; DRAIN = the outbound event stream
+  `since <cursor>`; LEVEL = the board's current folded value, the
+  thing state mirrors push (vs the drain's EDGES); MIRROREDVIEW =
+  fold(chain − non-suppressed drain events).
+- **Validation honesty** (two rev-5 "built" claims were not): the
+  quickstart rename teaching (a ready-capable mini-board + the rename
+  line, ~4 lines, budget 120 → 124, guard constant at
+  internal/docs/docs_test.go:21) and the determinism fixture's
+  renamed key are UNBUILT spec requirements for the production build,
+  not spike deliverables.
+- **Scale fixtures**: the merged fixture keeps BOTH halves at full
+  strength (status-contest count restored alongside the title
+  stream; its docstring told the old truth); a guard-free
+  ready-capable board is priced by its own named fixture (the
+  AllContests relaxation's actual new population).
+- **Test-plan repairs**: duplicate item-12 numbering fixed; the
+  refusal item asserts what recurs (count, report line, re-persisted
+  record) and that the NOTE does not — the previous wording asserted
+  the sentence Law 3 declares unachievable.
 
 ## Test plan
 
