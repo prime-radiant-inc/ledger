@@ -30,12 +30,14 @@ import (
 	"ledger/internal/store"
 )
 
-// determinismReplicas builds one shared chain — a root, then FOUR real
+// determinismReplicas builds one shared chain — a root, then SIX real
 // events on three sibling branches off the root (task-1 claimed twice,
 // concurrently, by alice and bob — a genuine contested pair, since the
 // cover-set pass's write-heads determination is exactly the kind of logic
-// that could accidentally depend on merge shape; task-2 opened and then
-// annotated by carol) — and assembles it into two replicas whose sentinel
+// that could accidentally depend on merge shape — and RENAMED twice,
+// concurrently, by alice and carol, which contests the pass's second
+// stream and makes task-1 a renamed key in every projection; task-2 opened
+// and then annotated by carol) — and assembles it into two replicas whose sentinel
 // merges differ in BOTH structure and parent order:
 //
 //	replica A: one flat 3-parent (octopus) sentinel: -p alice -p bob -p carol
@@ -91,6 +93,24 @@ func determinismReplicas(t *testing.T) (replicaA, replicaB, cursor string) {
 	if err != nil {
 		t.Fatalf("build carol's note: %v", err)
 	}
+	// The title stream, raced across the same partition: a renamed key in
+	// the fixture (so every projection renders a renamed title) that is also
+	// a live title contest (so the cover-set pass runs both streams under
+	// two different merge shapes).
+	aTip2, err := s.BuildCommit("board", aTip, model.Event{
+		TS: "2026-08-17T11:20:00.000", Type: "set", Key: "task-1",
+		Rename: "task one, alice's title", Author: "alice",
+	}, nil)
+	if err != nil {
+		t.Fatalf("build alice's rename: %v", err)
+	}
+	cTip3, err := s.BuildCommit("board", cTip2, model.Event{
+		TS: "2026-08-17T11:25:00.000", Type: "set", Key: "task-1",
+		Rename: "task one, carol's title", Author: "carol",
+	}, nil)
+	if err != nil {
+		t.Fatalf("build carol's concurrent rename: %v", err)
+	}
 
 	replicaA = filepath.Join(t.TempDir(), "replica-a")
 	replicaB = filepath.Join(t.TempDir(), "replica-b")
@@ -98,7 +118,7 @@ func determinismReplicas(t *testing.T) (replicaA, replicaB, cursor string) {
 	copyDir(t, origin, replicaB)
 
 	sa := store.Store{Repo: gitx.Repo{Dir: replicaA}}
-	octopus, err := sa.BuildMerge([]string{aTip, bTip, cTip2},
+	octopus, err := sa.BuildMerge([]string{aTip2, bTip, cTip3},
 		model.Event{TS: "2026-08-17T12:00:00.000", Type: "sync", Author: "host-a"})
 	if err != nil {
 		t.Fatalf("build replica A's octopus sentinel: %v", err)
@@ -106,12 +126,12 @@ func determinismReplicas(t *testing.T) (replicaA, replicaB, cursor string) {
 	git(t, replicaA, "update-ref", store.Ref("board"), octopus, forkPoint)
 
 	sb := store.Store{Repo: gitx.Repo{Dir: replicaB}}
-	m1, err := sb.BuildMerge([]string{cTip2, bTip},
+	m1, err := sb.BuildMerge([]string{cTip3, bTip},
 		model.Event{TS: "2026-08-17T12:30:00.000", Type: "sync", Author: "host-b1"})
 	if err != nil {
 		t.Fatalf("build replica B's first sentinel: %v", err)
 	}
-	m2, err := sb.BuildMerge([]string{m1, aTip},
+	m2, err := sb.BuildMerge([]string{m1, aTip2},
 		model.Event{TS: "2026-08-17T12:45:00.000", Type: "sync", Author: "host-b2"})
 	if err != nil {
 		t.Fatalf("build replica B's second sentinel: %v", err)
@@ -128,6 +148,18 @@ func determinismReplicas(t *testing.T) (replicaA, replicaB, cursor string) {
 	// test would be vacuous (byte-diffing two runs of the identical ref).
 	if octopus == m2 {
 		t.Fatal("setup bug: the two replicas' sentinel tips must differ")
+	}
+	// ...and the fixture must genuinely carry a renamed key and a live
+	// contest on BOTH streams, or the pass's most order-sensitive work goes
+	// unmeasured while the byte-diff still passes.
+	probe, _, code := runPiped(t, replicaA, nil, "ready", "--ledger", "board", "--at", "2030-01-01T00:00:00.000")
+	if code != 0 {
+		t.Fatalf("fixture probe: exit %d\n%s", code, probe)
+	}
+	for _, want := range []string{`"renamed"`, `"field": "title"`, `"field": "status"`} {
+		if !strings.Contains(probe, want) {
+			t.Fatalf("setup bug: the fixture must carry %s in its projection:\n%s", want, probe)
+		}
 	}
 
 	return replicaA, replicaB, root

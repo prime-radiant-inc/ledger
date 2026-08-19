@@ -854,3 +854,120 @@ func TestVocabRefusesTitleOnALegacyBoard(t *testing.T) {
 		t.Fatalf("want a reserved bad_value: %s", se)
 	}
 }
+
+// ---- the ecosystem: a rename is an ordinary keyed set event ----
+
+// TestRenameDeliveredBySinceAndWatch: the encoding's whole point — a rename
+// rides a type:"set" event, so cursors deliver it and `watch --key` matches
+// it with no special case anywhere.
+func TestRenameDeliveredBySinceAndWatch(t *testing.T) {
+	dir := setupReady(t)
+	seedKey(t, dir, "k1", "the seed title", "ash")
+	cursor := mustJSON(t, mustRun(t, dir, "since", "--ledger", "issues"))["cursor"].(string)
+
+	so := mustRun(t, dir, "set", "k1", "--rename", "the renamed title", "--as", "kit")
+	renameID := mustJSON(t, so)["id"].(string)
+
+	delivered := mustJSON(t, mustRun(t, dir, "since", cursor, "--ledger", "issues"))["events"].([]any)
+	if len(delivered) != 1 {
+		t.Fatalf("since must deliver the rename: %+v", delivered)
+	}
+	ev := delivered[0].(map[string]any)
+	if ev["id"] != renameID || ev["type"] != "set" || ev["rename"] != "the renamed title" {
+		t.Fatalf("the delivered event carries the rename verbatim: %+v", ev)
+	}
+
+	ch := startWatch(dir, "watch", "--ledger", "issues", "--key", "k1", "--since", cursor, "--timeout", "5")
+	select {
+	case r := <-ch:
+		if r.code != 0 {
+			t.Fatalf("watch --key must wake on a rename: %d\n%s\n%s", r.code, r.stdout, r.stderr)
+		}
+		events := mustJSON(t, r.stdout)["events"].([]any)
+		if len(events) != 1 || events[0].(map[string]any)["rename"] != "the renamed title" {
+			t.Fatalf("watch must deliver the rename event: %s", r.stdout)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("watch subprocess never returned")
+	}
+}
+
+// TestRenameCountsInRollupCoverage: a rename is curation debt like any other
+// record, and rolls up like one — nothing about the coverage invariant knows
+// renames exist.
+func TestRenameCountsInRollupCoverage(t *testing.T) {
+	dir := setupReady(t)
+	seedKey(t, dir, "k1", "the seed title", "ash")
+	before := mustJSON(t, mustRun(t, dir, "rollup", "--ledger", "issues"))["rollup_due"].(float64)
+
+	so := mustRun(t, dir, "set", "k1", "--rename", "the renamed title", "--as", "kit")
+	doc := mustJSON(t, so)
+	if doc["rollup_due"].(float64) != before+1 {
+		t.Fatalf("the rename's own response must count it as debt: %s", so)
+	}
+	renameID := doc["id"].(string)
+
+	mustRun(t, dir, "rollup", renameID, "-m", "retitled k1 after the review", "--ledger", "issues")
+	after := mustJSON(t, mustRun(t, dir, "rollup", "--ledger", "issues"))["rollup_due"].(float64)
+	if after != before {
+		t.Fatalf("rolling the rename up must clear it from the debt: %v -> %v", before, after)
+	}
+}
+
+// TestRenameSurvivesExportImport: the copy folds to the same title, with the
+// same rename history — the rename is chain content like any other event.
+func TestRenameSurvivesExportImport(t *testing.T) {
+	dir := setupReady(t)
+	seedKey(t, dir, "k1", "first title", "ash")
+	mustRun(t, dir, "set", "k1", "--rename", "second title", "--as", "kit")
+	mustRun(t, dir, "set", "k1", "--rename", "third title", "--as", "kit")
+
+	path := filepath.Join(t.TempDir(), "issues.jsonl")
+	mustRun(t, dir, "export", "issues", "--to", path)
+	mustRun(t, dir, "import", path, "--slug", "copy")
+
+	doc := mustJSON(t, mustRun(t, dir, "status", "k1", "--ledger", "copy"))
+	if doc["title"] != "third title" {
+		t.Fatalf("the copy must fold to the same title: %+v", doc["title"])
+	}
+	info := renamedInfo(t, doc)
+	prior := info["prior"].([]any)
+	if info["by"] != "kit" || len(prior) != 2 || prior[0] != "first title" || prior[1] != "second title" {
+		t.Fatalf("the copy carries the same rename history: %+v", info)
+	}
+}
+
+// TestNeedsOverrideCarriesSignalsFromEveryEmittingVerb: signals[] is a tool
+// rev 16 contract on the ERROR DOCUMENT, not a rename-only affordance — a
+// consumer deciding whether to auto-override (a claim dissolves on the
+// clock) or to refuse (a human label does not) must never parse English.
+// Both paths that can emit needs_override are pinned here.
+func TestNeedsOverrideCarriesSignalsFromEveryEmittingVerb(t *testing.T) {
+	dir := setupReady(t)
+	seedID := seedKey(t, dir, "k1", "the title", "ash")
+	claimSo := mustRun(t, dir, "set", "k1", "status=in-progress", "--expect", seedID, "-m", "claiming", "--as", "alice")
+	claimID := mustJSON(t, claimSo)["id"].(string)
+	mustRun(t, dir, "set", "k1", "labels=human", "--expect", "none", "--as", "ash")
+
+	// set: a guarded write against both a live cross-author claim and a
+	// human label.
+	_, se, code := run(t, dir, "set", "k1", "status=closed", "--evidence", "commit:abc",
+		"--expect", claimID, "-m", "closing", "--as", "bob")
+	if code != 4 {
+		t.Fatalf("expected needs_override: %d %s", code, se)
+	}
+	signals := mustJSON(t, se)["signals"].([]any)
+	if len(signals) != 2 || signals[0] != "claim" || signals[1] != "human" {
+		t.Fatalf("set's needs_override must carry every standing signal, in the fixed order: %s", se)
+	}
+
+	// rename: human alone, since claim and settled never gate a retitle.
+	_, se, code = run(t, dir, "set", "k1", "--rename", "a new title", "--as", "bob")
+	if code != 4 {
+		t.Fatalf("expected needs_override: %d %s", code, se)
+	}
+	signals = mustJSON(t, se)["signals"].([]any)
+	if len(signals) != 1 || signals[0] != "human" {
+		t.Fatalf("rename's needs_override must carry exactly the human signal: %s", se)
+	}
+}

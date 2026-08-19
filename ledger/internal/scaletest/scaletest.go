@@ -184,10 +184,35 @@ func (im *importer) run(t testing.TB, repo gitx.Repo) {
 // the SAME (key, status) pairs. start offsets the timestamps; handing both
 // branches the same start is what makes their writes interleave in the fold
 // the way a real merge's do.
+//
+// Every fifth event is a RENAME rather than a claim, so the branches race
+// those same 40 keys' TITLE stream too. The rename stream is a contested
+// stream of its own, so a fixture carrying only status writes would leave
+// the cover-set pass's second stream unmeasured — and the whole point of
+// the bound is to price the pass as it actually runs.
 func Branch(start, n int, author string) []model.Event {
 	evs := make([]model.Event, 0, n)
+	renames := 0
 	for i := 0; i < n; i++ {
+		if i%5 == 4 {
+			// Renames walk the 40 keys on their own counter, so the title
+			// stream races on EVERY one of them rather than only on the keys
+			// whose position happens to line up with the modulus.
+			key := fmt.Sprintf("k-%d", renames%40)
+			evs = append(evs, RenameEvent(start+i, key, author+"'s title "+fmt.Sprint(i), author))
+			renames++
+			continue
+		}
 		evs = append(evs, Event(start+i, fmt.Sprintf("k-%d", i%40), "status", "in-progress", author))
 	}
 	return evs
+}
+
+// RenameEvent builds one rename event — a "set" whose whole payload is the
+// new title, which is how the wire carries a retitle.
+func RenameEvent(i int, key, title, author string) model.Event {
+	return model.Event{
+		TS:   time.Unix(1750000000+int64(i), 0).UTC().Format(model.TSLayout),
+		Type: "set", Key: key, Rename: title, Author: author,
+	}
 }
