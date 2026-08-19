@@ -1,0 +1,4 @@
+# This repo uses `ledger` for durable agent working-state (git phantom refs).
+# Bootstrap in a fresh clone:  ledger init && ledger sync
+# Docs: run `ledger quickstart`
+remote = "origin"  # default sync remote (name only)
