@@ -4,7 +4,8 @@ This is the material `ledger init` points at but doesn't print in full: the
 hazards that only matter to whoever administers a shared remote, not to an
 agent doing day-to-day reads and writes. Agent-facing doctrine lives in
 `ledger quickstart`; this file is for humans setting up or recovering a
-shared store.
+shared store. Bulk-seeding a board from an existing GitHub backlog is its
+own recipe: `ledger/docs/migrate-github.md`.
 
 ## What can destroy the remote copy
 

@@ -2,12 +2,14 @@ package docs_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"ledger/internal/cmd"
@@ -135,6 +137,231 @@ func verbsFromHelp(help string) []string {
 		}
 	}
 	return verbs
+}
+
+// ---- docs/migrate-github.md: the bulk-migration recipe, executed ----
+
+// migrationLoop returns the recipe's seeding loop, verbatim, out of
+// docs/migrate-github.md — the single ```sh fenced block in the file. The
+// test below runs THAT text, so a recipe that stops working fails here
+// rather than in somebody's terminal halfway through a real backlog.
+func migrationLoop(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "migrate-github.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var blocks []string
+	var cur []string
+	inFence := false
+	for _, line := range strings.Split(string(data), "\n") {
+		switch {
+		case !inFence && strings.TrimSpace(line) == "```sh":
+			inFence = true
+			cur = nil
+		case inFence && strings.TrimSpace(line) == "```":
+			inFence = false
+			blocks = append(blocks, strings.Join(cur, "\n"))
+		case inFence:
+			cur = append(cur, line)
+		}
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("migrate-github.md must carry exactly one ```sh block (the loop); found %d", len(blocks))
+	}
+	if !strings.Contains(blocks[0], "while IFS=") {
+		t.Fatalf("the ```sh block is not the seeding loop:\n%s", blocks[0])
+	}
+	return blocks[0]
+}
+
+// ledgerBinDir builds the CLI once per test binary and returns the
+// directory holding it — the recipe calls a bare `ledger`, so it has to be
+// on PATH as a real executable, not an in-process ExecuteArgs call.
+var ledgerBinDir = sync.OnceValues(func() (string, error) {
+	dir, err := os.MkdirTemp("", "ledger-bin")
+	if err != nil {
+		return "", err
+	}
+	build := exec.Command("go", "build", "-o", filepath.Join(dir, "ledger"), ".")
+	build.Dir = filepath.Join("..", "..")
+	if out, err := build.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("go build: %v\n%s", err, out)
+	}
+	return dir, nil
+})
+
+// migrationBoard makes a repo with the ready-capable board the recipe's
+// "Before you start" section tells you to create.
+func migrationBoard(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, args := range [][]string{{"init", "-b", "main"}, {"commit", "--allow-empty", "-m", "init"}} {
+		c := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+	}
+	var so, se bytes.Buffer
+	code := cmd.ExecuteArgs([]string{"--store", dir, "create", "issues", "--scope", "migration",
+		"--field", "status=open,in-progress,closed,wontfix",
+		"--terminal", "status=closed,wontfix",
+		"--multi-field", "labels", "--multi-field", "blocked-by",
+		"--guard", "status", "--guard", "blocked-by",
+		"--stale-after", "4h"}, &so, &se)
+	if code != 0 {
+		t.Fatalf("create board: %s", se.String())
+	}
+	return dir
+}
+
+// runMigrationLoop copies fixture in as ./issues.json (the filename step 1
+// of the recipe writes) and runs the recipe's loop against dir's board.
+func runMigrationLoop(t *testing.T, dir, fixture string) (stdout, stderr string) {
+	t.Helper()
+	binDir, err := ledgerBinDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join("testdata", fixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "issues.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sh := exec.Command("sh", "-c", migrationLoop(t))
+	sh.Dir = dir
+	sh.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"), "LEDGER_DIR=")
+	var so, se bytes.Buffer
+	sh.Stdout, sh.Stderr = &so, &se
+	if err := sh.Run(); err != nil {
+		// A broken row makes the loop `break`, which is not a failure of the
+		// loop itself; only report a shell-level failure, with the output.
+		t.Logf("loop exited %v\nstdout: %s\nstderr: %s", err, so.String(), se.String())
+	}
+	return so.String(), se.String()
+}
+
+// boardTitles reads the board back as {key: title}.
+func boardTitles(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	var so, se bytes.Buffer
+	if code := cmd.ExecuteArgs([]string{"--store", dir, "show", "--ledger", "issues"}, &so, &se); code != 0 {
+		t.Fatalf("show: %s", se.String())
+	}
+	var doc struct {
+		Rows []struct {
+			Key   string `json:"key"`
+			Title string `json:"title"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal(so.Bytes(), &doc); err != nil {
+		t.Fatalf("show JSON: %v\n%s", err, so.String())
+	}
+	titles := map[string]string{}
+	for _, r := range doc.Rows {
+		titles[r.Key] = r.Title
+	}
+	return titles
+}
+
+// keyNotes returns the note bodies recorded against one key.
+func keyNotes(t *testing.T, dir, key string) []string {
+	t.Helper()
+	var so, se bytes.Buffer
+	if code := cmd.ExecuteArgs([]string{"--store", dir, "notes", "--key", key, "--ledger", "issues"}, &so, &se); code != 0 {
+		t.Fatalf("notes: %s", se.String())
+	}
+	var doc struct {
+		Notes []struct {
+			Body string `json:"body"`
+			Text string `json:"text"`
+		} `json:"notes"`
+	}
+	if err := json.Unmarshal(so.Bytes(), &doc); err != nil {
+		t.Fatalf("notes JSON: %v\n%s", err, so.String())
+	}
+	var bodies []string
+	for _, n := range doc.Notes {
+		bodies = append(bodies, n.Body+n.Text)
+	}
+	return bodies
+}
+
+// migrationKeys is the slug the recipe's own key expression produces for
+// each fixture issue, including the 64-character truncation on issue 9.
+var migrationKeys = map[int]string{
+	1:  "fix-the-retry-storm-bug",
+	2:  "add-stale-after-guidance-to-the-skill",
+	7:  "gh-import-should-refuse-a-board",
+	9:  "investigate-why-the-orchestrator-sometimes-reclaims-a-claim-that",
+	11: "cache-warm-on-boot",
+}
+
+// TestMigrateGitHubRecipeSeedsEveryIssue: the recipe's loop, run verbatim
+// against a checked-in `gh issue list --json number,title` fixture (never
+// the live API), seeds one titled key per issue with a provenance note.
+func TestMigrateGitHubRecipeSeedsEveryIssue(t *testing.T) {
+	dir := migrationBoard(t)
+	_, stderr := runMigrationLoop(t, dir, "gh-issues.json")
+	if strings.Contains(stderr, "STOPPED at") {
+		t.Fatalf("the clean fixture must migrate end to end: %s", stderr)
+	}
+	titles := boardTitles(t, dir)
+	if len(titles) != len(migrationKeys) {
+		t.Fatalf("want %d keys, got %d: %v", len(migrationKeys), len(titles), titles)
+	}
+	for n, key := range migrationKeys {
+		if titles[key] == "" {
+			t.Fatalf("issue %d seeded no key %q: %v", n, key, titles)
+		}
+		notes := keyNotes(t, dir, key)
+		if len(notes) != 1 || !strings.Contains(notes[0], fmt.Sprintf("migrated from issues/%d", n)) {
+			t.Fatalf("issue %d's key %q must carry exactly one provenance note: %v", n, key, notes)
+		}
+	}
+	// The seed's -m is the title, verbatim off the fixture — the recipe's
+	// load-bearing warning.
+	if got := titles[migrationKeys[7]]; got != "gh: `import` should refuse a board" {
+		t.Fatalf("the seed's -m must be the title verbatim: %q", got)
+	}
+}
+
+// TestMigrateGitHubRecipeBreaksOnFailureThenResumes: the `|| break` half of
+// the recipe. A poisoned row (issue 7 carrying issue 1's title, so its key
+// collides and its `--expect none` loses) stops the loop right there —
+// later rows never land — and the run says which issue stopped it. Fixing
+// that row and re-running finishes the job without duplicating anything,
+// because `--idempotency-key` makes the already-migrated rows no-ops.
+func TestMigrateGitHubRecipeBreaksOnFailureThenResumes(t *testing.T) {
+	dir := migrationBoard(t)
+	_, stderr := runMigrationLoop(t, dir, "gh-issues-poisoned.json")
+	if !strings.Contains(stderr, "STOPPED at issue #7") {
+		t.Fatalf("a failed row must name itself and break: %q", stderr)
+	}
+	titles := boardTitles(t, dir)
+	if len(titles) != 2 {
+		t.Fatalf("only the two rows ahead of the poison may land: %v", titles)
+	}
+	for _, n := range []int{9, 11} {
+		if _, seeded := titles[migrationKeys[n]]; seeded {
+			t.Fatalf("issue %d is after the break and must never have landed: %v", n, titles)
+		}
+	}
+
+	// Resume: the corrected fixture, same board.
+	_, stderr = runMigrationLoop(t, dir, "gh-issues.json")
+	if strings.Contains(stderr, "STOPPED at") {
+		t.Fatalf("the resume run must finish: %s", stderr)
+	}
+	titles = boardTitles(t, dir)
+	if len(titles) != len(migrationKeys) {
+		t.Fatalf("want %d keys after the resume, got %d: %v", len(migrationKeys), len(titles), titles)
+	}
+	if notes := keyNotes(t, dir, migrationKeys[1]); len(notes) != 1 {
+		t.Fatalf("re-running must not duplicate a note (idempotency-key): %v", notes)
+	}
 }
 
 // example is one executable line pulled from a fenced ```-block: the

@@ -1,0 +1,7 @@
+[
+  {"number": 1, "title": "Fix the retry storm bug"},
+  {"number": 2, "title": "Add --stale-after guidance to the skill"},
+  {"number": 7, "title": "Fix the retry storm bug"},
+  {"number": 9, "title": "Investigate why the orchestrator sometimes reclaims a claim that is still live"},
+  {"number": 11, "title": "Cache warm on boot"}
+]
