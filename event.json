@@ -1,7 +1,7 @@
 {
- "ts": "2026-08-19T00:13:44.196",
+ "ts": "2026-08-19T00:13:44.347",
  "type": "set",
- "key": "skew-flagging",
+ "key": "tracking-ref-reads",
  "fields": {
   "labels": "v2"
  },
@@ -9,7 +9,7 @@
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 7079,
+  "pid": 7095,
   "branch": "main",
   "head": "cb04ecd",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
