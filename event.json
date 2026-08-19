@@ -1,15 +1,16 @@
 {
- "ts": "2026-08-19T00:13:44.347",
+ "ts": "2026-08-19T00:13:44.497",
  "type": "set",
- "key": "tracking-ref-reads",
+ "key": "tty-partial-summary",
  "fields": {
-  "labels": "v2"
+  "labels": "human"
  },
+ "text": "reserving for jesse: UX decision",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 7095,
+  "pid": 7111,
   "branch": "main",
   "head": "cb04ecd",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
