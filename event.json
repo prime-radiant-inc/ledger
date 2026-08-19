@@ -1,15 +1,16 @@
 {
- "ts": "2026-08-19T07:36:34.259",
+ "ts": "2026-08-19T17:57:09",
  "type": "note",
  "key": "github-bridge",
- "text": "gauntlet round 3 (three reviewers): 35 findings, 5 Criticals — NOT clarity-grade; rev 6 committed (f75d438) with all rulings; per the gate this escalates to jesse before any build; structural rewrite also pending his call",
- "author": "claude",
+ "kind": "status-update",
+ "text": "jesse ruled: rename (Part A) ships now via dedicated build (branch feat/rename, opus implementer, brief frozen from rev 6); spec restructured to rev 7 (143a1f3, semantics-preserving; stale test-plan override lines + duplicate numbering fixed, gauntlet-3 entry added to validation record); gauntlet round 4 (three competing reviewers, probe mandate, clarity-grade question) running on rev 7. Part B build gates on that round.",
+ "author": "claude-code",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 66987,
+  "pid": 32639,
   "branch": "main",
-  "head": "f75d438",
+  "head": "143a1f3",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
   "session_source": "CLAUDE_CODE_SESSION_ID"
  }
