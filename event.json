@@ -1,20 +1,16 @@
 {
- "ts": "2026-08-19T00:13:44.654",
- "type": "set",
+ "ts": "2026-08-19T00:13:44.809",
+ "type": "note",
  "key": "tty-partial-summary",
- "fields": {
-  "status": "open"
- },
- "text": "TTY partial_failure prints per-slug details but no summary line or hint — keep or fix, jesse's call",
+ "text": "migrated from https://github.com/prime-radiant-inc/ledger/issues/8",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 7127,
+  "pid": 7144,
   "branch": "main",
   "head": "cb04ecd",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
   "session_source": "CLAUDE_CODE_SESSION_ID"
- },
- "override": "human"
+ }
 }
