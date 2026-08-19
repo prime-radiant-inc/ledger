@@ -1,14 +1,21 @@
 # Ledger GitHub bridge: rename events and the additive sync (design)
 
-2026-08-18, revision 2 — revision 1's gauntlet (two reviewers, a
-stateful fixture transport, live probes against the spike's bridged
-repo) produced the project's heaviest single-round result: ~28 distinct
-legitimate findings, six Criticals between the two slates, and nine
-independent convergences. Rev 2 rebuilds Part B around six explicit
-laws, patches Part A's contradictions, and grows the amendment
-inventory from one entry to six. The architecture (rename as a
-set-field event; an additive bridge over the public CLI) survived; the
-sentences did not. Validation record at bottom.
+2026-08-18, revision 3 — a second spike built rev 2's six laws end to
+end (16-injection crash sweep green, live trial green including
+crash-resume against the real API) under one Jesse ruling that
+replaces rev 2's identity model: **no dedicated bridge identity; the
+bridge works with any number of GitHub logins operating it**, and echo
+suppression becomes a VERIFIED MARKER. Rev 3 folds in the spike's 28
+findings — including one bug only the live trial could catch (the
+bridge's own unmarked refusal comment echoing back as board state) and
+two rev-2 sentences the fixtures falsified (the divergence test fired
+on every ordinary close; persist-when-changed plus per-aspect
+suppression produced permanent suppression). Validation record at
+bottom.
+
+Rev 2 history: rev 1's gauntlet produced ~28 findings and six
+Criticals; rev 2 rebuilt Part B as six laws and grew the amendment
+inventory to six. The architecture survived; the sentences did not.
 
 **Scope**: (A) a first-class RENAME event in the core tool — tool rev
 16; (B) `ledger-gh`, a companion bridge — Level 1 (ledger→GitHub
@@ -104,6 +111,15 @@ bridge exactly as it binds any agent.
    its "never to decorate (wording, titles…)" sentence is rewritten:
    the rename event is now the legitimate title correction; the
    prohibition that survives is overriding STATE for cosmetic reasons.
+7. **Parent tool spec, error contract** (rev 3, two additions ridden
+   by tool rev 16): the `needs_override` error document carries
+   `"signals": [...]` (machine-readable signal names — the bridge must
+   never parse English); and `--override` with NO standing signal is
+   `bad_usage` on EVERY write verb, not just renames (the spike built
+   the rename rule and found `set` silently accepting-and-ignoring the
+   flag — the exact pattern this spec family forbids; symmetry pinned
+   here, gauntlet may attack it). Consumer note for the same contract:
+   sync/push exit-3 outcome documents go to stdout.
 
 ## Part B — `ledger-gh`, the bridge
 
@@ -119,38 +135,67 @@ author (poisoning is visible even though the namespace is unenforced —
 author enforcement rides the existing owner-enforcement v2 item, not a
 one-prefix carve-out).
 
-**Vocabulary is configured, not assumed** (a legal ready-capable board
-can use `done`/`dropped`): `--done` and `--not-planned` name the
-terminal values the bridge writes and recognizes; at startup the bridge
-reads the board's declared vocabulary and REFUSES a board that lacks
-them, naming the fix. Outbound: done-value ⇒ close (completed),
-not-planned-value ⇒ close (not planned). Inbound: GitHub close
-completed ⇒ done-value with evidence `gh:<owner>/<repo>#<n>`; close
-NOT_PLANNED ⇒ not-planned-value with NO evidence (the issues spec
-calls evidence on wontfix "pasted-string theater"); reopen ⇒ open.
+**Vocabulary is configured, not assumed — for the TERMINAL pair only**
+(rev 3 narrows rev 2's premise, which was half wrong: `ledger create`
+PINS the non-terminal vocabulary of a ready-capable board to
+`open`+`in-progress`; only terminals are free, so `done`/`dropped` is
+legal but `todo`/`doing` is not): `--done` and `--not-planned` name
+the terminal values; at startup the bridge reads the board's declared
+vocabulary and REFUSES a board that lacks them, naming the failing
+flag, the declared vocabulary, and the fix command. Outbound:
+done-value ⇒ close (completed), not-planned-value ⇒ close (not
+planned). Inbound: close completed ⇒ done-value with evidence
+`gh:<owner>/<repo>#<n>`; close NOT_PLANNED ⇒ not-planned-value with NO
+evidence (evidence on wontfix is "pasted-string theater"); reopen ⇒
+`open`, always — no flag, since the non-terminal vocab is pinned.
 
-**Identity, three pins**:
+**Identity, four pins** (rev 3 — the ruling):
 
-- **A dedicated bridge identity is an operating REQUIREMENT.** At
-  startup the bridge resolves its GitHub login (`gh api user`) and
-  REFUSES to run if it equals any `github:@<login>` author already on
-  the board — the bridge must never share a login with a human
-  participant, because echo suppression keys on it. (Rev 1's
-  operator-token model was probed dropping the operator's own
-  comments.)
+- **No dedicated bridge identity; no login comparison anywhere.** Any
+  number of GitHub logins operate the bridge, each with their own `gh`
+  auth, while the same logins participate as humans. The bridge never
+  calls `gh api user`. Echo suppression is a **verified marker**:
+  every comment the bridge posts — mirrored notes, close/reopen
+  explanations, divergence notices, ALL of them; an unmarked bridge
+  comment does not exist (the spike's live trial caught exactly one
+  and it echoed back as board state attributed to a person) — opens
+  with `**<author>** (via ledger, <event-id>):`. Inbound, a comment is
+  bridge-authored iff it matches that format AND the embedded event id
+  RESOLVES on this board's chain. A pasted marker with a resolving id
+  suppresses the paster's own comment (self-inflicted, stated); a
+  marker with a garbage id imports normally; both edges verified live
+  under one login playing both roles. **The marker is a versioned wire
+  format**: any future format change must keep every prior format
+  recognized, or the bridge re-imports its own history as human
+  comments (observed live against the round-1 format). The marker also
+  earns its keep OUTBOUND: it is what lets the note backfill and the
+  drain recognize each other's posts, and what makes crash re-runs
+  duplicate-free.
+- **Cost, priced**: verification and Law 2's dedupe share ONE
+  whole-chain read per run — it answers "does this id resolve" AND
+  "which idempotency keys are spent" (the derived index that keeps
+  comment intake from costing one subprocess per comment per run).
+  A bulk ids/keys read verb is a named tool-backlog wish, not v1.
 - **The board's `github-link` note is THE authority** for key↔issue.
-  The issue-body `ledger-key:` line is a HINT: honored only when the
-  board's link note for that key names this issue number. An unlinked
-  issue claiming an existing key is warned and never intaken, never
-  seeded over (rev 1's body-line authority was probed as a hijack: any
-  GitHub user could bind their issue to any key and drive it). Two
-  issues claiming one key: the linked one wins, the other is warned
-  every run until a human resolves it.
-- **The reserved state key defends itself**: intake never mints a key
-  named `github-bridge-state` (collision-suffixed like any other), and
-  a link hint naming it is refused (probed live: rev 1's bridge seeded
-  its own bookkeeping key as pickable work from a GitHub issue titled
-  "GitHub bridge state").
+  The issue-body `ledger-key:` line is a HINT, honored only when the
+  link note agrees. An unlinked issue claiming a LINKED key is warned
+  and never intaken (the probed hijack). **Adoption ruling** (the
+  crash window and the hijack are the same input; only a stamp
+  separates them): the bridge writes `<!-- ledger-bridge -->` into
+  every issue body it creates, and ADOPTS an unlinked issue only when
+  the stamp AND the key hint are present AND the key has no linked
+  issue — recovering its own crashed creates from the bulk list it
+  already holds (no search call). A stamped forgery can therefore bind
+  a stranger's issue to a not-yet-linked key, and can never touch a
+  linked one — bounded like the marker edge, accepted, stated. The
+  issue body is thereby a SECOND, independent copy of the identity
+  map, and it — not the sync-first law — is what actually closes the
+  unsynced-replica duplicate hazard (spike-verified both ways: the
+  stamp adopts; erase the hint and the duplicate returns).
+- **The reserved state key defends itself**: intake never mints
+  `github-bridge-state` (collision-suffixed), and a link hint naming
+  it is refused (probed live; the fresh spike refused rev 1's real
+  seizure artifact on its first run).
 
 **Bridge state**: one note, kind `bridge-state`, under reserved NOTE
 key `github-bridge-state` (a note key: no board key, no attention
@@ -161,52 +206,71 @@ unmergeable across replicas, being last-write-wins). One board ↔ one
 repo: the bridge refuses a run whose state note names a different
 repo; multi-repo bridging is v2.
 
-**Law 1 — ordering** (v1 falsified live at the spike; v2 closes the
-push hole G1 probed):
-(1) `ledger sync <slug>` — sync FIRST, always (unsynced replicas mint
-duplicate issues; failure aborts the run);
+**Law 1 — ordering**:
+(1) `ledger sync` — sync FIRST, always; failure aborts the run.
+(Today this merges the WHOLE store — `sync` takes no slug selector;
+a slug-selective sync, symmetric with push's privacy lever, is a named
+tool-backlog item the bridge adopts when it exists.)
 (2) READ the outbound drain (`since <cursor>`);
 (3) intake GitHub→board, per-aspect pending suppression: a key with an
 un-mirrored status/rename event is off-limits to intake for THAT
-aspect — and **whenever suppression fires AND the remote value differs
-from the value about to be pushed, the bridge warns and leaves a board
-note**: that difference is a genuine concurrent GitHub edit being
-discarded, and silence would erase a human's action (probed: rev 1
-suppressed silently);
+aspect — and **when suppression fires AND the remote differs from the
+last MIRRORED value, the bridge warns and leaves a board note**: that
+is a genuine concurrent GitHub edit being discarded. The comparison is
+against what the bridge last put there — `mirroredView`, the fold over
+the chain MINUS this run's drain, derived, stateless, replica-stable;
+a key with no pre-drain history compares as a fresh open issue. (Rev
+2 compared against the OUTGOING value, which flags every ordinary
+close as a discarded human edit — fixture-falsified.) Suppression
+notes get the same convergence treatment as Law 3 refusals: once per
+distinct divergence, then counted.
 (4) mirror board→GitHub;
-(5) persist state if anything changed;
+(5) **persist state when the run changed something OR the drain
+carried anything the mirror owns.** (Rev 2's persist-when-changed
+alone was fixture-falsified: an event that mirrors to nothing —
+in-progress, a labels edit — never advanced the cursor, so its key's
+status aspect stayed off-limits to intake FOREVER; a claimed key
+silently stopped accepting GitHub closes.)
 (6) **`ledger push <slug>` — always, selectively, LAST.** Always:
 link notes and bridge state must reach the remote or the sync-first
-law protects nothing (probed: rev 1's push-if-intake-wrote left
-bookkeeping local and minted duplicate issues WITH sync-first obeyed).
-Selectively: bare `push` publishes every local slug — the skill's
-privacy lever — so the bridge names its board, only. Push/sync
-`partial_failure` (exit 3): sync ⇒ abort; push ⇒ warn, retry next run
-(everything is idempotent below).
+law protects nothing (probed at rev 1). Selectively: bare `push`
+publishes every local slug — the privacy lever. `partial_failure`
+(exit 3): sync ⇒ abort; push ⇒ warn, retry next run. Consumer note:
+sync/push write the exit-3 outcomes document to STDOUT (every other
+error is stderr) — a bridge parses both streams; one sentence for the
+parent spec's CLI contract.
 
 **Law 2 — idempotence by construction, not by cursor** (crash
-anywhere, re-run safely):
+anywhere, re-run safely; recovery CONVERGES — it may take two or three
+runs to reach the 0/0 fixed point, because recovery bookkeeping is
+itself events; never promise "the next run is a no-op"):
 - Intake comments: `note -k comment --idempotency-key
   gh-comment-<rest-id>` — the REST id parsed from the comment `url`'s
-  `#issuecomment-<id>` fragment (free in the bulk read; the `--json`
-  `id` field is a GraphQL node id and is NOT ordered — pinned so
-  nobody re-derives it). Re-import after any crash is a dedupe no-op.
-- Mirrored comments carry the source event id in their marker:
-  `**<author>** (via ledger, <event-id>):`. Before posting, the mirror
-  checks the issue's already-fetched comments for that id — a mid-run
-  failure re-run never double-posts (probed against rev 1).
-- Issue creation: before `gh issue create`, search the repo for an
-  existing issue whose body hint names the key AND whose creation the
-  bridge recognizes as its own; one search, closes both the crash
-  window and the concurrent-run window.
+  `#issuecomment-<id>` fragment (the `--json` `id` field is a GraphQL
+  node id, NOT ordered — pinned so nobody re-derives it). Already-
+  spent keys are skipped via the shared whole-chain read's DERIVED
+  index — no per-comment subprocess, nothing stored, nothing to lose
+  on a merge (this derived index is what keeps both reviewers' rev-2
+  simplification cheap; without it the law costs one `ledger note`
+  invocation per GitHub comment per run, forever). **`deduped: true`
+  in the write response is part of the contract the bridge depends
+  on**: a deduped write is not a write, or a converged run can never
+  report zero.
+- Mirrored comments carry the source event id in their marker; before
+  posting, the mirror checks the issue's already-fetched comments for
+  that id — mid-run failure re-runs never double-post (verified live
+  with injected crashes against the real API).
+- Issue creation: the crash window is closed by ADOPTION, not search —
+  the identity section's stamp rule, using the bulk list already in
+  hand.
 - Handoff and suppression notes carry idempotency keys derived from
   (issue, aspect, observed state).
-- `reset_required` on the stored cursor (export/import re-mint, ref
-  surgery): warn and re-drain from empty — safe, because every mirror
-  action above is idempotent.
+- `reset_required` on the stored cursor: warn and re-drain from empty
+  — safe, because every action above is idempotent (fixture-verified:
+  no duplicate issue, no duplicate comment).
 - Concurrency: single-instance operation is a stated constraint (no
-  lock machinery in v1); the searches above make the overlap window
-  merely wasteful, not corrupting.
+  lock machinery in v1); adoption and dedupe make the overlap window
+  wasteful, not corrupting.
 
 **Law 3 — refusals converge** (rev 1's human-refusal path spammed a
 note and a GitHub comment per run, forever): a refusal (human-labeled
@@ -233,22 +297,31 @@ racing an intake rename loses loudly, not silently). On
 `github:@<login>` — a real person's decision, tool-recorded for
 triage. On `needs_override` from `human`: never — Law 3's refusal
 path (login↔label identity mapping is v2). On `claim_lost` for a
-TERMINAL value: straight to the handoff note — "never re-close blind"
-is the doctrine's own exception (rev 1's "retry once" contradicted
-it); non-terminal `claim_lost`: one re-read retry.
+TERMINAL value: straight to the handoff note — "never re-close blind";
+non-terminal `claim_lost`: one re-read retry, and **the same rule
+applies to the retry** (a retry that hits a signal takes the signal's
+rule — the spike's `retried+override` path). **The signal names come
+from the error document, not its prose**: tool rev 16 adds
+`"signals": ["human", ...]` to the `needs_override` error (the spike
+distinguished `human` from `claim`/`settled` by substring-matching an
+English message — a prose dependency in a machine contract, deleted by
+one field).
 
-**Law 6 — mirror fidelity**: a close mirrors as a comment carrying the
-close message and evidence, THEN the close — never a bare unexplained
-closure. Notes on keys with no linked issue: the mirror defers
-nothing; at ISSUE-CREATION time the bridge backfills the key's
-existing non-bookkeeping notes (the statusless-seed window), and a
-note whose key never gains an issue is dropped WITH a warning naming
-the event id. `blocked-by` edges have no GitHub representation and
-are not mirrored — stated. Bridge-authored board writes are pinned:
-intake events `--as github:@<login>`; bookkeeping and handoff notes
-`--as github-bridge` with kinds `bridge-state`/`github-link`/`handoff`
-— and ALL THREE kinds are outbound-suppressed (rev 1 suppressed two;
-its handoff notes echoed to GitHub as comments).
+**Law 6 — mirror fidelity**: EVERY state mirror carries its message —
+a close mirrors as a marked comment carrying the close message and
+evidence THEN the close, and a REOPEN likewise comments its reason
+before reopening (rev 2 named only the close; the reason a key came
+back matters as much as why it closed). Notes on keys with no linked
+issue: at ISSUE-CREATION time the bridge backfills the key's existing
+non-bookkeeping, non-GitHub-authored notes (the statusless-seed
+window; the marker is what keeps backfill and drain from
+double-posting), and a note whose key never gains an issue is dropped
+WITH a warning naming the event id. `blocked-by` edges have no GitHub
+representation and are not mirrored — stated. Bridge-authored board
+writes are pinned: intake events `--as github:@<login>`; bookkeeping
+and handoff notes `--as github-bridge` with kinds
+`bridge-state`/`github-link`/`handoff` — ALL THREE kinds
+outbound-suppressed.
 
 **Slugification, pinned**: lowercase, non-grammar characters → `-`,
 collapsed, 48-char truncate; empty result → `issue-<n>`; collision →
@@ -281,20 +354,30 @@ one call.
    includes a renamed key; contested and stale-claim entries carry
    renamed titles; the two deliberate render changes have their own
    fixtures (no byte-identity claim).
-4. Ordering: the spike falsification as regression (close → one run →
-   one GH close, zero board writes, no fabricated attribution); the
-   suppressed-genuine-edit case warns and notes; the push-hole
-   regression (fixture transport: mirror-only run on replica A, then
-   synced replica B run ⇒ ZERO duplicate issues).
-5. Idempotence: crash injected after every phase (fixture transport
-   fails at each call site in turn) ⇒ re-run converges with no
-   duplicate comments, notes, or issues; double-run 0/0 on a converged
-   board; state persists only on change; report's `cursor` = persisted
-   cursor on no-op runs.
-6. Identity: hijack regression (unlinked issue claiming an existing
-   key ⇒ warned, untouched); two-issues-one-key ⇒ linked wins;
-   reserved-key seizure regression (issue titled to slugify into the
-   state key ⇒ suffixed); dedicated-identity startup refusal.
+4. Ordering: the round-1 falsification as regression (close → one run
+   → one GH close, zero board writes, no fabricated attribution); the
+   divergence warning fires against the last-MIRRORED value and does
+   NOT fire on an ordinary close (the rev-2 falsification, pinned);
+   the mirrors-to-nothing case (claimed key accepts a GitHub close on
+   the next run — the permanent-suppression falsification, pinned);
+   the push-hole regression (mirror-only run on A, synced B run ⇒
+   ZERO duplicate issues).
+5. Idempotence: crash injection at every transport call site in BOTH
+   modes — fail-BEFORE and fail-AFTER the effect (fail-before alone
+   never creates the orphan that mints duplicates) ⇒ every replay
+   CONVERGES to a 0/0 fixed point (may take 2-3 runs; never assert
+   "next run is clean") with no duplicate comments, notes, or issues;
+   the `deduped: true` contract (a converged run reports zero writes);
+   report's `cursor` = persisted cursor on no-op runs.
+6. Identity: multi-login (several operator logins across runs, humans
+   commenting under the SAME logins — mirrored comments never import,
+   human ones import once); the three marker edges (forged marker +
+   real id ⇒ suppressed; garbage id ⇒ imports; prior format rule);
+   hijack regression (unlinked issue claiming a LINKED key ⇒ warned,
+   untouched); adoption (crash after create ⇒ stamped orphan adopted,
+   one link, no duplicate; stamp+hint on an unlinked key adopts,
+   absent stamp refuses); two-issues-one-key ⇒ linked wins;
+   reserved-key seizure regression.
 7. Refusal convergence: human-labeled divergence ⇒ exactly one note +
    one GH comment across N runs; `divergences` counted; cleared when
    either side changes.
@@ -306,10 +389,13 @@ one call.
 10. Vocabulary: `done`/`dropped` board bridged with flags; missing
     vocab refused naming the fix; NOT_PLANNED maps in with no
     evidence.
-11. Mirror fidelity: close comment precedes close; issue-creation
-    backfills pre-link notes; never-linked note drop warns; handoff
-    notes never mirror; `suppressed_authors` counts a poisoned
-    `--as github:@x` event.
+11. Mirror fidelity: close AND reopen comments precede their state
+    change; issue-creation backfills pre-link notes exactly once (the
+    marker keeps backfill and drain apart); never-linked note drop
+    warns; handoff notes never mirror; `suppressed_authors` counts a
+    poisoned `--as github:@x` event; `signals: [...]` present in
+    `needs_override` documents; `--override` with no signal is
+    `bad_usage` on set and rename alike.
 12. Bridge tests run against a FIXTURE transport; ONE live acceptance
     trial against a scratch repo (below). Skill/doctrine harness
     re-runs over the amended SKILL.md lines.
@@ -349,7 +435,26 @@ transport, never live.
   suppression discarded genuine concurrent GitHub edits silently;
   handoff notes echoed out as comments; state-note LWW lost high-water
   marks on merge — resolved by BOTH reviewers' convergent
-  simplification: idempotency-keyed imports, marks deleted. Rev 2 is
+  simplification: idempotency-keyed imports, marks deleted. Rev 2 was
   the corrective: the six laws, the six-entry amendment inventory, the
   configured vocabulary, the dedicated identity requirement, and a
-  test plan whose items map one-to-one onto the laws.
+  test plan mapping onto the laws.
+- Spike round 2 (same branch; six laws + the multi-login ruling; 28
+  findings; 16-injection crash sweep in both fail modes, all
+  converging; live trial green including crash-resume with injected
+  failures against the real API, a >30-event pagination proof — the
+  single-call read finds NOTHING, not merely a stale actor — and the
+  three marker edges under one login). Fixture-falsified rev-2
+  sentences, corrected here: the divergence comparison (outgoing →
+  last-mirrored), the persistence rule (or-drain-carried-mirrorable),
+  "next run is a no-op" (→ converges). Live-falsified: an unmarked
+  bridge comment (the Law-3 notice) echoed back as board state —
+  hence "an unmarked bridge comment does not exist." Ruling applied:
+  dedicated identity deleted; verified marker; multi-login pinned by
+  test. Spike recommendations adopted: derived idempotency index off
+  the shared whole-chain read; stamp-based adoption over search;
+  `deduped: true` as contract; `signals: [...]` in the error
+  document; reopen messages; terminal-only vocabulary flags; both
+  crash-injection modes. Deliberately re-litigable at the next
+  gauntlet: the stamped-forgery adoption bound, the `--override`
+  bad_usage symmetry on `set`, and the whole-store sync cost.
