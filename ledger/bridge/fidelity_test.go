@@ -645,3 +645,45 @@ func TestFixtureTransportIsFaithful(t *testing.T) {
 		t.Fatal("the fixture must model gh's open-only default")
 	}
 }
+
+// TestUnsyncedReplicaAdoptsRatherThanDuplicating is the unsynced-replica
+// duplicate-issue hazard, demonstrated against the FIXTURE transport and
+// never live (it would leave permanent litter in a shared repo).
+//
+// Replica B has never met replica A: no remote, no shared history, so none
+// of A's github-link notes exist on B's chain. The sync-first law protects
+// nothing here — there is nothing to sync with. What closes the hazard is
+// the issue BODY: the STAMP plus the `ledger-key:` line are a SECOND,
+// INDEPENDENT copy of the identity map, so B adopts A's issues instead of
+// minting a duplicate for every key.
+func TestUnsyncedReplicaAdoptsRatherThanDuplicating(t *testing.T) {
+	a := newIssueFixture(t)
+	keys := []string{"cache-warm", "retry-storm", "flaky-auth"}
+	for _, k := range keys {
+		a.seed(k, "task "+k, "jesse")
+	}
+	a.converge("operator", 4)
+	if a.countIssues() != len(keys) {
+		t.Fatalf("setup: %d issues", a.countIssues())
+	}
+
+	// B: the same board content, arrived at independently, with NO remote and
+	// no knowledge of A's link notes.
+	b := newIssueFixture(t)
+	b.ghState, b.repo = a.ghState, a.repo
+	for _, k := range keys {
+		b.seed(k, "task "+k, "jesse")
+	}
+	r := b.syncOK("operator")
+	if got := b.countIssues(); got != len(keys) {
+		t.Fatalf("an unsynced replica minted duplicates: %d issues (want %d): %s",
+			got, len(keys), mustJSON(t, r))
+	}
+	if countSubstr(r.Actions, "adopted an issue this bridge created but never linked") != len(keys) {
+		t.Fatalf("every key should have been adopted from its issue body: %s", mustJSON(t, r))
+	}
+	b.converge("operator", 4)
+	if got := b.countIssues(); got != len(keys) {
+		t.Fatalf("converging minted duplicates: %d", got)
+	}
+}

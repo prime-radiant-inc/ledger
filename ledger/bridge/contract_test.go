@@ -70,6 +70,18 @@ func TestExitContract(t *testing.T) {
 			t.Fatalf("the report must carry %q: %s", field, stdout)
 		}
 	}
+	// A converged run's actions list marshals as [], never JSON null: a
+	// consumer must not have to special-case the fixed point.
+	code, stdout, stderr = run(ok...)
+	if code != exitOK {
+		t.Fatalf("the second run: exit %d (%s)", code, stderr)
+	}
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatal(err)
+	}
+	if _, isList := report["actions"].([]any); !isList {
+		t.Fatalf("actions must be a list even when empty, got %#v", report["actions"])
+	}
 
 	// 1 — error document on STDERR. A second repo is the refusal at hand.
 	code, stdout, stderr = run(append(append([]string{}, ok[:1]...),

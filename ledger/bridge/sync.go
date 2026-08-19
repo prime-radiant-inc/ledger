@@ -120,7 +120,10 @@ type ghStateBits struct {
 //	5  persist state if ANY of the four disjuncts holds
 //	6  ledger push <slug>      (always, selective, last)
 func (s *Syncer) Run() (*Report, error) {
-	s.report = &Report{OK: true, Repo: s.GH.Repo, Ledger: s.Board.Slug}
+	// Actions is never nil: a converged run must marshal it as [], not JSON
+	// null, exactly as the parent tool's own empty lists do. A consumer that
+	// iterates the report should not have to special-case the fixed point.
+	s.report = &Report{OK: true, Repo: s.GH.Repo, Ledger: s.Board.Slug, Actions: []string{}}
 
 	// (1) sync first. A failure on THIS board's slug aborts: acting on a
 	// replica that could not merge the others is how duplicate issues get
