@@ -1,13 +1,16 @@
 {
- "ts": "2026-08-19T00:13:43.075",
- "type": "note",
- "key": "sync-double-fold",
- "text": "migrated from https://github.com/prime-radiant-inc/ledger/issues/6",
+ "ts": "2026-08-19T00:13:43.202",
+ "type": "set",
+ "key": "test-hygiene",
+ "fields": {
+  "status": "open"
+ },
+ "text": "test-hygiene batch: silent skip, missing assertions, word-boundary verb coverage, drift guards",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 6946,
+  "pid": 6960,
   "branch": "main",
   "head": "cb04ecd",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
