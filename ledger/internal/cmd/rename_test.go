@@ -971,3 +971,52 @@ func TestNeedsOverrideCarriesSignalsFromEveryEmittingVerb(t *testing.T) {
 		t.Fatalf("rename's needs_override must carry exactly the human signal: %s", se)
 	}
 }
+
+// TestTwoRootCollisionWithARenameThroughRealSync is the fold-order
+// precedence case, reachable and end to end: replica a seeds and renames
+// task-x while replica b independently seeds the SAME key. After the merge
+// the rename precedes b's colliding seed in fold order and still titles the
+// key; `prior` carries the FOLD-PATH seed (a's) and the losing root's seed
+// title appears in no rename structure anywhere — only in the chain itself,
+// which is why doctrine says to read both heads.
+func TestTwoRootCollisionWithARenameThroughRealSync(t *testing.T) {
+	_, a, b := twoReplicas(t)
+	seedBoard(t, a, "board")
+	pushLedgerRef(t, a, "board")
+	mustRun(t, b, "sync")
+
+	mustRun(t, a, "set", "task-x", "status=open", "--expect", "none", "-m", "alice's seed title", "--as", "alice")
+	mustRun(t, a, "set", "task-x", "--rename", "the corrected title", "--as", "alice")
+	mustRun(t, b, "set", "task-x", "status=open", "--expect", "none", "-m", "bob's colliding seed", "--as", "bob")
+
+	pushLedgerRef(t, a, "board")
+	mustRun(t, b, "sync")
+
+	doc := mustJSON(t, mustRun(t, b, "status", "task-x", "--ledger", "board"))
+	if doc["title"] != "the corrected title" {
+		t.Fatalf("the latest rename titles the key across the collision: %+v", doc["title"])
+	}
+	info := renamedInfo(t, doc)
+	prior := info["prior"].([]any)
+	if len(prior) != 1 {
+		t.Fatalf("prior is fold-path history, not a complete inventory: %+v", prior)
+	}
+	if prior[0] == "bob's colliding seed" {
+		t.Fatalf("prior must carry the FOLD-PATH seed, not the losing root's: %+v", prior)
+	}
+
+	// The losing seed title is nowhere in any rename structure — the chain
+	// is the only place it survives.
+	show := mustRun(t, b, "show", "--ledger", "board")
+	rk, err := json.Marshal(mustJSON(t, show)["renamed_keys"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rk), "colliding seed") {
+		t.Fatalf("the losing root's seed title must appear in no rename structure: %s", rk)
+	}
+	raw := mustRun(t, b, "tail", "--raw", "-n", "0", "--ledger", "board")
+	if !strings.Contains(raw, "bob's colliding seed") {
+		t.Fatalf("...but it must still be greppable in the chain:\n%s", raw)
+	}
+}
