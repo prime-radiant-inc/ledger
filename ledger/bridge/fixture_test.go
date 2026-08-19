@@ -130,9 +130,10 @@ func (f *fixture) ledgerOK(args ...string) map[string]any {
 	// --ledger; everything else goes through the normal path.
 	var doc map[string]any
 	var err error
-	if args[0] == "init" || args[0] == "create" {
+	switch args[0] {
+	case "init", "create", "push", "sync", "export", "import":
 		doc, err = f.board().runBare(args...)
-	} else {
+	default:
 		doc, err = f.ledger(args...)
 	}
 	if err != nil {

@@ -92,6 +92,12 @@ type Syncer struct {
 	// drainHadWork is true when the drain carried any event outbound
 	// suppression does not skip.
 	drainHadWork bool
+	// knownIssues is every issue number the bulk listing returned. An
+	// ESTABLISHED link naming an issue outside it is a BROKEN link — the
+	// issue was deleted or transferred out of the repo — which is warned and
+	// handed off once, and takes the key out of play for the run rather than
+	// aborting on a 404 or minting a second issue for it.
+	knownIssues map[int]bool
 	// newRecords is this run's re-observed divergence set; state keeps only
 	// these, so a divergence a human resolved stops being remembered.
 	newRecords []Record
@@ -159,6 +165,7 @@ func (s *Syncer) Run() (*Report, error) {
 	}
 	s.scanDrain()
 	s.reportLinkConflicts()
+	s.reportBrokenLinks()
 
 	// (3) intake, (4) mirror.
 	if err := s.intake(issues); err != nil {
@@ -251,6 +258,10 @@ func (s *Syncer) preflight() ([]ghIssue, error) {
 	}
 
 	s.ghTitle, s.ghState, s.ghComments = map[int]string{}, map[int]ghStateBits{}, map[int][]ghComment{}
+	s.knownIssues = map[int]bool{}
+	for _, is := range issues {
+		s.knownIssues[is.Number] = true
+	}
 	for i := range issues {
 		is := &issues[i]
 		// Per-issue comment saturation. The BULK listing returns the OLDEST
@@ -488,6 +499,31 @@ func (s *Syncer) reportLinkConflicts() {
 		// however many competing notes arrive. Aspect-less: a link conflict
 		// is not about status or title.
 		s.refuse(Record{Issue: s.byKey[key], Class: classLink, Observed: issueList(others)}, key, explain)
+	}
+}
+
+// reportBrokenLinks is the named out-of-scope case with a defined behaviour:
+// issue deletion or transfer out of the repo. The key's ESTABLISHED link
+// names an issue the listing does not contain, so there is nothing to mirror
+// onto and nothing to intake from.
+//
+// Warning plus a ONE-TIME handoff note, and the key stands down for the run
+// — never a 404 abort (which would take the whole board down for one deleted
+// issue) and never a fresh create (which would silently re-mint the issue
+// under a second number while the link still names the first).
+func (s *Syncer) reportBrokenLinks() {
+	for _, key := range sortedKeys(s.byKey) {
+		n := s.byKey[key]
+		if s.knownIssues[n] {
+			continue
+		}
+		explain := fmt.Sprintf("board key '%s' is linked to #%d, which this repo's issue listing does not "+
+			"contain — the issue was deleted or transferred. The bridge will neither mirror to it nor "+
+			"create a replacement. To re-home the key, open a new issue and write the retraction and the "+
+			"new link: ledger note -k %s --key %s -m '%s%d' --as %s",
+			key, n, kindLink, key, linkRetractPrefix, n, bridgeAuthor)
+		s.report.warn("%s", explain)
+		s.refuse(Record{Issue: n, Class: classLink, Observed: "missing"}, key, explain)
 	}
 }
 
@@ -1061,6 +1097,13 @@ func (s *Syncer) postMirrored(n int, ids []string, author, text string) error {
 // gains an issue, because there is nothing to name one with.
 func (s *Syncer) ensureIssue(key, forEvent string) (int, error) {
 	if n, ok := s.byKey[key]; ok {
+		if !s.knownIssues[n] {
+			// A broken link (deleted or transferred issue), already warned
+			// and handed off by reportBrokenLinks. Nothing to land on, and
+			// creating a replacement would silently re-mint the issue under a
+			// second number while the link still names the first.
+			return 0, nil
+		}
 		return n, nil
 	}
 	ks := s.keys[key]
@@ -1073,6 +1116,14 @@ func (s *Syncer) ensureIssue(key, forEvent string) (int, error) {
 	}
 	s.report.gh("#%d created for %s (%q)", n, key, ks.Title)
 	s.ghTitle[n], s.ghState[n] = ks.Title, ghStateBits{}
+	// An issue this run created is not in the preflight listing, and the
+	// broken-link guard above reads exactly that listing. Without this line
+	// the key's own status mirror is skipped as "linked to a missing issue"
+	// on the very run that created it — the close never lands, and the next
+	// run's intake reads the still-open issue as a human reopen and writes
+	// one, with a fabricated auto-override. Caught by the export/import
+	// regression.
+	s.knownIssues[n] = true
 
 	// The link note is written IMMEDIATELY after the create. The crash
 	// window between the two is closed by ADOPTION, not by search.
@@ -1152,6 +1203,12 @@ func (s *Syncer) refuse(r Record, key, explain string) {
 	// The GitHub comment carries the handoff note's event id in its marker,
 	// like every other comment the bridge posts. Without it the bridge's own
 	// divergence comment reads to the next run's intake as a human's.
+	//
+	// An issue the listing does not contain (deleted, transferred) has
+	// nowhere to put it; the board note is the whole record there.
+	if !s.knownIssues[r.Issue] {
+		return
+	}
 	if err := s.postMirrored(r.Issue, markerIDs(id, ""), bridgeAuthor, explain+
 		"\n\nThis key is reserved on the board; a maintainer must apply this there. "+
 		"The bridge will not repeat this comment."); err != nil {
