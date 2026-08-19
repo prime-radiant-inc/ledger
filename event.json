@@ -1,0 +1,14 @@
+{
+ "ts": "2026-08-19T00:13:26.988",
+ "type": "create",
+ "author": "claude",
+ "origin": {
+  "host": "m4.local",
+  "cwd": "/Users/jesse/git/ledger-research/ledger",
+  "pid": 6441,
+  "branch": "main",
+  "head": "cb04ecd",
+  "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
+  "session_source": "CLAUDE_CODE_SESSION_ID"
+ }
+}

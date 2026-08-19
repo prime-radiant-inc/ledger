@@ -1,0 +1,38 @@
+{
+ "slug": "issues",
+ "scope": "ledger tool backlog (migrated from GitHub issues 1-11)",
+ "created": "2026-08-19T00:13:26.988",
+ "created_by": "claude",
+ "base": "cb04ecd",
+ "fields": {
+  "status": [
+   "open",
+   "in-progress",
+   "closed",
+   "wontfix"
+  ]
+ },
+ "require_evidence": {
+  "status": [
+   "closed"
+  ]
+ },
+ "field_order": [
+  "status"
+ ],
+ "multi_fields": [
+  "labels",
+  "blocked-by"
+ ],
+ "terminal": {
+  "status": [
+   "closed",
+   "wontfix"
+  ]
+ },
+ "guard": [
+  "status",
+  "blocked-by"
+ ],
+ "stale_after": "168h"
+}
