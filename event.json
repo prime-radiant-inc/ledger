@@ -1,15 +1,15 @@
 {
- "ts": "2026-08-19T05:49:36.894",
+ "ts": "2026-08-19T07:13:29.994",
  "type": "note",
  "key": "github-bridge",
- "text": "conservative pass per jesse: spike v3 running (10 rev-4 deltas + full re-verification + concurrent-runs/flakiness probes); then rev 5; then THREE-reviewer gauntlet; build only after a clarity-grade round; Criticals persisting past round 3 escalate to jesse",
+ "text": "spike v3 DONE (28-injection sweep, live trial full pass, concurrency claim falsified with real processes); spec rev 5 committed; three-reviewer gauntlet next — clarity-grade round gates the build, Criticals escalate to jesse",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 31250,
+  "pid": 16510,
   "branch": "main",
-  "head": "4f8d447",
+  "head": "03a6d73",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
   "session_source": "CLAUDE_CODE_SESSION_ID"
  }
