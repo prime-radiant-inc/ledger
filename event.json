@@ -1,16 +1,13 @@
 {
- "ts": "2026-08-19T00:13:41.850",
- "type": "set",
+ "ts": "2026-08-19T00:13:41.995",
+ "type": "note",
  "key": "skew-flagging",
- "fields": {
-  "status": "open"
- },
- "text": "v2: born-stale / born-future claim flagging under clock skew",
+ "text": "migrated from https://github.com/prime-radiant-inc/ledger/issues/2",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 6740,
+  "pid": 6816,
   "branch": "main",
   "head": "cb04ecd",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
