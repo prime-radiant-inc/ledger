@@ -1,13 +1,13 @@
 {
- "ts": "2026-08-19T04:51:57.159",
+ "ts": "2026-08-19T05:49:36.894",
  "type": "note",
  "key": "github-bridge",
- "text": "gauntlet round 2 done (10v10 tie, H1 on weight; override symmetry retracted, marker oracle + index + links repaired); spec rev 4 committed",
+ "text": "conservative pass per jesse: spike v3 running (10 rev-4 deltas + full re-verification + concurrent-runs/flakiness probes); then rev 5; then THREE-reviewer gauntlet; build only after a clarity-grade round; Criticals persisting past round 3 escalate to jesse",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 7240,
+  "pid": 31250,
   "branch": "main",
   "head": "4f8d447",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
