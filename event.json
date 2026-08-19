@@ -1,14 +1,14 @@
 {
- "ts": "2026-08-19T21:09:47",
+ "ts": "2026-08-19T21:26:51",
  "type": "note",
  "key": "github-bridge",
  "kind": "status-update",
- "text": "RESOLVED by jesse's ruling: the wall-clock scale bounds are deleted (524b5f5) — never asked for; correctness-at-scale tests stay. The parked flake decision item is closed.",
+ "text": "jesse greenlit both builds: ledger-gh Part B building on feat/bridge (opus, spec rev 8.1 binding, spike reference-only, fixture-faithfulness law, one live trial vs scratch repo); migration-learnings plan building in parallel on fix/migration-learnings (opus, 3 staleness corrections carried: quickstart budget 124, titles renameable, coexistence resolved board-canonical). Reviews gate both merges.",
  "author": "claude-code",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research/ledger",
-  "pid": 7362,
+  "pid": 15123,
   "branch": "main",
   "head": "524b5f5",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
