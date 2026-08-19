@@ -1,16 +1,13 @@
 {
- "ts": "2026-08-19T00:13:42.931",
- "type": "set",
+ "ts": "2026-08-19T00:13:43.075",
+ "type": "note",
  "key": "sync-double-fold",
- "fields": {
-  "status": "open"
- },
- "text": "sync folds each slug's chain twice — batch or share the read",
+ "text": "migrated from https://github.com/prime-radiant-inc/ledger/issues/6",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 6926,
+  "pid": 6946,
   "branch": "main",
   "head": "cb04ecd",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
