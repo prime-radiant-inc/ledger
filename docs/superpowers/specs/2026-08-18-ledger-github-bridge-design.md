@@ -346,6 +346,12 @@ check needs a transport call Law 1 forbids before sync.
   a board's Nth issue is never a permanent brick.
 - **One board ↔ one repo** (step 1a): the bridge refuses a run whose
   state note names a different repo; multi-repo bridging is v2.
+  **Honesty (rev 8.2, demonstrated live)**: this check is BOARD-SIDE
+  only — a fresh board has no state note and sails onto an
+  already-bound repo. The repo-side guard for bridge-created issues
+  is the stamped-foreign-hint refusal in the identity section; for
+  human-created unstamped issues the binding doctrine remains
+  whichever board runs first, permanently.
 
 **Status mapping**. Outbound: done-value ⇒ close (completed),
 not-planned-value ⇒ close (not planned). Inbound: close completed ⇒
@@ -377,12 +383,26 @@ fires only when the two sides' current titles differ.
 
 **Issue creation, stated**: a key gains an issue the FIRST time the
 mirror has something to push for it AND the key has a title (Part
-A's fold rule); the issue is created with the key's current title
+A's fold rule) — a claim-only drain pushes nothing and creates
+nothing; the issue is created with the key's current title
 and a body carrying the STAMP and the `ledger-key: <key>` hint, and
 the link note is written immediately after. A titleless key never
-gains an issue. Symmetrically inbound, a seeded key's title is the
+gains an issue, and a status or title mirror dropped for want of an
+issue WARNS naming the event id, exactly as dropped notes do (rev
+8.2 — a close that mirrors to nothing with a clean report is the
+reporting failure the saturation rules exist to prevent).
+Symmetrically inbound, a seeded key's title is the
 GitHub issue title (the seed `-m`), and the SLUG is derived from
-that title by the pinned slugification rule below.
+that title by the pinned slugification rule below. **Inbound seeds
+carry `--idempotency-key gh-issue-<n>`** (rev 8.2, closing the
+probed seed→link crash window): the shared derived index maps a
+spent seed key back to its board key, and issue resolution consults
+that mapping BEFORE minting any new key — a crash between seed and
+link note otherwise mints a second suffixed key on the next run and
+a second GitHub issue for the first, permanently. The chain thereby
+carries a third, durable copy of the identity map. An issue with NO
+author (deleted account) is warned and SKIPPED for seeding, never
+an abort — the same rule its comments already follow.
 
 ### Identity — five pins
 
@@ -460,7 +480,10 @@ that title by the pinned slugification rule below.
     doctrine that actually converges** (probed; the previous one did
     not): close the duplicate issue on GitHub AND write its
     retraction note — the warning clears next run. Duplicate link
-    notes warn every run until retracted. The stamped-forgery bound,
+    notes warn every run until retracted, and a RETRACTED issue
+    number takes the retraction path silently thereafter — its
+    `ledger-key:` line is the bridge's own cleaned-up artifact and
+    must not fire the hijack warning forever (rev 8.2). The stamped-forgery bound,
     re-priced honestly: under oldest-wins a forged binding on a
     not-yet-linked key is permanent until retracted, not
     self-correcting.
@@ -483,7 +506,16 @@ that title by the pinned slugification rule below.
     bridge writes the STAMP into every issue body it creates, and
     ADOPTS an unlinked issue only when the stamp AND the key hint are
     present AND the key has no linked issue — recovering crashed
-    creates from the bulk list already in hand. A stamped forgery can
+    creates from the bulk list already in hand. **A STAMPED issue
+    whose hint names a key NOT on this board is warned and SKIPPED —
+    never seeded, never body-rewritten** (rev 8.2): it provably
+    belongs to another board's bridge, and seeding it is how a
+    second board was observed live rewriting a bound repo's
+    `ledger-key:` lines and destroying the stamp's crash-recovery
+    guarantee for orphans in the adoption window. This is the hijack
+    rule's conservatism applied to the stamp — a refusal, granting
+    the body no new authority — and it is what enforces
+    one-repo-one-board from the repo side. A stamped forgery can
     bind a stranger's issue to a not-yet-linked key and can never
     touch a linked one — bounded, accepted, stated. The issue body is
     thereby a SECOND, independent copy of the identity map, and it —
