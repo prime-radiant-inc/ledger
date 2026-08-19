@@ -1,16 +1,16 @@
 {
- "ts": "2026-08-19T00:14:38.892",
+ "ts": "2026-08-19T00:14:39.128",
  "type": "set",
  "key": "probe-key",
  "fields": {
-  "status": "open"
+  "status": "wontfix"
  },
- "text": "doctrine probe artifact",
+ "text": "probe artifact, not real work",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 8263,
+  "pid": 8355,
   "branch": "main",
   "head": "cb04ecd",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
