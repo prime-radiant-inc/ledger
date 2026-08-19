@@ -1,16 +1,13 @@
 {
- "ts": "2026-08-19T00:17:38.905",
- "type": "set",
+ "ts": "2026-08-19T00:17:39.072",
+ "type": "note",
  "key": "migration-learnings",
- "fields": {
-  "status": "open"
- },
- "text": "implement the migration-learnings plan (docs/superpowers/plans/2026-08-18-migration-learnings.md)",
+ "text": "plan committed on main; five tasks: override echo, init-from-subdir, skill doctrine x3, gh-migration recipe, board bookkeeping",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 10600,
+  "pid": 10618,
   "branch": "main",
   "head": "46bc965",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
