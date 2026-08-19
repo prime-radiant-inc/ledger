@@ -19,9 +19,34 @@ type FieldState struct {
 	Evidence                    []string
 }
 
+// RenameRecord is one landed rename event on a key: the title it asserted,
+// plus the provenance a renamed title must always be able to show.
+type RenameRecord struct{ Text, ID, Author, TS string }
+
+// RenameInfo is the mandatory label a renamed title carries wherever a
+// title-bearing row renders, JSON and TTY alike: who renamed it last, when,
+// that rename event's id, and every title the key held before on the fold
+// path — oldest first, the fold-path seed title included. It is fold-path
+// history, not a complete inventory: under a two-root collision the losing
+// root's seed title appears here nowhere (read both heads for that).
+type RenameInfo struct {
+	By    string   `json:"by"`
+	TS    string   `json:"ts"`
+	ID    string   `json:"id"`
+	Prior []string `json:"prior"`
+}
+
 // Key is one issue-tracker key's derived state.
 type Key struct {
 	Name, Title string
+	// SeedTitle is the first status event's message — the title law before
+	// renames existed. Title equals it until a rename lands.
+	SeedTitle string
+	// Renames is every rename event on this key in fold order; the LAST
+	// one's text is the key's current title. Concurrent renames resolve
+	// last-in-fold-order, and the losers stay in the chain, greppable, and
+	// listed among the prior titles.
+	Renames     []RenameRecord
 	Status      *FieldState // nil = statusless (no status event yet)
 	LabelsID    string      // latest labels event id ("" if none)
 	BlockedByID string
@@ -81,8 +106,10 @@ type Board struct {
 
 // Build folds events into per-key state in a single pass, in order.
 // Latest event per (key, field) wins; multi-field values split on ",";
-// an empty value clears. Title is fixed to the Text of the key's first
-// status-setting event and never revisited by later status writes.
+// an empty value clears. Title is a pure fold too: the LATEST rename
+// event's text in fold order, else the first status event's message — so
+// concurrent renames resolve by the same total order every other duel on
+// this board resolves by, and the losers stay greppable in the chain.
 func Build(meta model.Meta, events []model.Event) *Board {
 	b := &Board{Meta: meta, Keys: map[string]*Key{}}
 	for i, ev := range events {
@@ -94,11 +121,14 @@ func Build(meta model.Meta, events []model.Event) *Board {
 			k = &Key{Name: ev.Key}
 			b.Keys[ev.Key] = k
 		}
+		if ev.Rename != "" {
+			k.Renames = append(k.Renames, RenameRecord{Text: ev.Rename, ID: ev.ID, Author: ev.Author, TS: ev.TS})
+		}
 		for field, value := range ev.Fields {
 			switch field {
 			case "status":
 				if k.Status == nil {
-					k.Title = ev.Text // first status event's message, immutable
+					k.SeedTitle = ev.Text // first status event's message
 				}
 				k.Status = &FieldState{
 					Value: value, ID: ev.ID, Author: ev.Author, TS: ev.TS,
@@ -128,7 +158,37 @@ func Build(meta model.Meta, events []model.Event) *Board {
 			}
 		}
 	}
+	// The title resolves after the pass, never inside it: a rename can sit
+	// BEFORE its key's seed in fold order (a two-root merge leaves exactly
+	// that), so only the finished per-key rename list answers "which rename
+	// is last". Fold-total by construction: a key with renames and no seed
+	// still gets a title.
+	for _, k := range b.Keys {
+		k.Title = k.SeedTitle
+		if n := len(k.Renames); n > 0 {
+			k.Title = k.Renames[n-1].Text
+		}
+	}
 	return b
+}
+
+// RenameInfo is the label a renamed key's title carries wherever it renders;
+// nil when the key was never renamed — its title is still the seed's, and
+// nothing needs saying.
+func (k *Key) RenameInfo() *RenameInfo {
+	n := len(k.Renames)
+	if n == 0 {
+		return nil
+	}
+	prior := []string{}
+	if k.SeedTitle != "" {
+		prior = append(prior, k.SeedTitle)
+	}
+	for _, r := range k.Renames[:n-1] {
+		prior = append(prior, r.Text)
+	}
+	last := k.Renames[n-1]
+	return &RenameInfo{By: last.Author, TS: last.TS, ID: last.ID, Prior: prior}
 }
 
 // setMulti records field's latest tokens in k.Multi — wholesale replace,
