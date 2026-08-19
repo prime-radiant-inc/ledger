@@ -1,14 +1,22 @@
 {
- "ts": "2026-08-19T21:26:51",
- "type": "note",
- "key": "github-bridge",
- "kind": "status-update",
- "text": "jesse greenlit both builds: ledger-gh Part B building on feat/bridge (opus, spec rev 8.1 binding, spike reference-only, fixture-faithfulness law, one live trial vs scratch repo); migration-learnings plan building in parallel on fix/migration-learnings (opus, 3 staleness corrections carried: quickstart budget 124, titles renameable, coexistence resolved board-canonical). Reviews gate both merges.",
- "author": "claude-code",
+ "ts": "2026-08-19T21:53:19.630",
+ "type": "set",
+ "key": "migration-learnings",
+ "fields": {
+  "status": "closed"
+ },
+ "text": "all four code/doc tasks landed on fix/migration-learnings; review and merge still gate main",
+ "evidence": [
+  "commit:b1e428d",
+  "commit:14fdfc7",
+  "commit:c28165c",
+  "commit:8db27cb"
+ ],
+ "author": "claude",
  "origin": {
   "host": "m4.local",
-  "cwd": "/Users/jesse/git/ledger-research/ledger",
-  "pid": 15123,
+  "cwd": "/Users/jesse/git/ledger-research",
+  "pid": 22660,
   "branch": "main",
   "head": "524b5f5",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
