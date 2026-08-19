@@ -117,9 +117,13 @@ evidence) binds the bridge exactly as it binds any agent.
   declarations exactly as import does — all three meta-minting doors)
   for `--field`/`--multi-field`/`--guard title`. A pre-existing board
   that already declares `title` is refused at import/adopt with the
-  export/import-to-a-re-declared-board remedy. At `vocab` no special
-  case is needed — `title` can never become a declared field, so the
-  existing unknown-field error covers it; a test pins that. A legal
+  export/import-to-a-re-declared-board remedy. `vocab` DOES need the
+  reservation (the build corrected rev 8's "no special case" claim):
+  a LEGACY board minted by a pre-rev-16 binary can carry a declared
+  `title` on disk (probed — the shipped binary accepts `--field
+  title=`), and nothing re-validates a local board at read time, so
+  `vocab` on such a board refuses `title` by name with the reserved
+  `bad_value`; pinned by test against a planted legacy board. A legal
   board could otherwise declare and guard `title`, splitting the
   contested read path (which unions both streams) from the write path
   (renames only) — probed as an unresolvable ticket and an empty
