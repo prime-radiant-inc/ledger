@@ -1,16 +1,13 @@
 {
- "ts": "2026-08-19T00:13:43.763",
- "type": "set",
+ "ts": "2026-08-19T00:13:43.917",
+ "type": "note",
  "key": "cleanup-nonsync",
- "fields": {
-  "status": "open"
- },
- "text": "cleanup: dead nonSyncEvents filter + contested residency comment wording",
+ "text": "migrated from https://github.com/prime-radiant-inc/ledger/issues/11",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 7028,
+  "pid": 7046,
   "branch": "main",
   "head": "cb04ecd",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
