@@ -35,8 +35,13 @@ Break-a-cycle idiom below), verdict regardless, never merely flagged. A
 with `show --id` on each of `contest.ids` before collapsing with
 `--expect <contest.expect>`, adding `--override` where the collapse
 trips the settled gate — a seed collision can hide two distinct tasks
-under one key, and renaming or splitting them is a human call, never a
-picker's.
+under one key, and splitting them (or renaming one KEY into another) is
+a human call, never a picker's. An entry whose `contest.field` is
+`title` is the exception that is entirely yours: two replicas raced the
+wording, nothing about the work is in question, and the frontier
+deliberately stays `all-handled` over it. Collapse it with the ticket —
+`set <key> --rename "<keeper>" --expect <contest.expect>`, no
+`--override` (settled never gates a rename).
 When `frontier` is `all-handled`, leave — the tool has verified every
 dependency chain ends at a live worker or a human, and — cycle detection
 being holder-blind — that no dependency loop hides behind either. When
@@ -48,8 +53,11 @@ human-labeled stale claims).
 `settled`/`claim` signals) exists so terminal states change only on
 purpose. Override to CORRECT state — collapsing a contested close,
 reopening genuinely wrong work, reclaiming from a dead claimant — and
-say why in `-m`; never to decorate it (wording, titles, tidiness: the
-record is immutable and the display won't change). A HUMAN label is
+say why in `-m`; never to decorate STATE for cosmetic reasons (tidiness,
+a status that reads better: the record is immutable and rewriting it
+buys nothing). A wrong TITLE is no longer a reason to touch state at
+all — `set <key> --rename` is the legitimate correction, and it never
+moves a status. A HUMAN label is
 different in kind: it is a stop sign, not a gate — walk away, report,
 and leave the override to a person. The field trial's one misjudgment
 was a cosmetic override-reopen of a settled close; the durable record
@@ -73,13 +81,18 @@ included, not just the idioms that spell it out — carries `--override -m
 "<why>"` per the standing-signal rule; that variant isn't repeated per
 idiom below.
 
-**Titles**: the seed's `-m` IS the key's title — immutable, carried by
-every listing forever. Write a title ("fix the retry storm bug"), never
-a status update ("creating retry task"): there is no `title` field to
-fix it with later, and a note doesn't change the display. Field trial:
-an agent who seeded with a procedural message spent four commands
-discovering this, then overrode a settled close just to fuss with the
-title — the title was never fixable; the override was pure cost.
+**Titles**: the seed's `-m` IS the key's title — carried by every
+listing forever, so write a title ("fix the retry storm bug"), never a
+status update ("creating retry task"). Titles are stable, not immutable:
+`set <key> --rename "<new title>"` corrects one, and every listing then
+shows the new title labeled `(renamed by <author>)` with the old ones
+under `renamed.prior`. A rename is a CORRECTION with attribution, not a
+workflow — it costs a permanent, attributed event, and a `human`-labeled
+key charges an `--override` on top. Get the seed right; retitle when it
+is wrong, not when it could be better. Field trial: an agent who seeded
+with a procedural message then overrode a settled close just to fuss
+with the title — the override was pure cost even then, and now the
+rename is the honest fix.
 
 - **Seed**: `set <key> status=open --expect none -m "<title>"`. With a
   dependency, edges first — a statusless key is unpickable and in
@@ -116,6 +129,20 @@ title — the title was never fixable; the override was pure cost.
   cd <board dir> && ~/path-to/ledger set design-review labels=human --expect none -m "reserving for jesse" --as ash --ledger issues
   cd <board dir> && ~/path-to/ledger set design-review status=open --expect none -m "pick the retry API shape" --as ash --ledger issues  # expect: exit 4 error needs_override
   cd <board dir> && ~/path-to/ledger set design-review status=open --expect none --override -m "pick the retry API shape -- reserved for jesse: needs a human call on the retry contract" --as ash --ledger issues
+  ```
+
+- **Retitle** (rare, and never a workflow step): `set <key> --rename
+  "<new title>"` when a title is WRONG. The rename is the whole event —
+  no field assignments, no evidence, no `-m` — so it never touches state;
+  `--expect` is optional and targets the key's latest rename (`--expect
+  none` means never renamed). A `human`-labeled key charges
+  `--override -m "<why>"` for it, exactly as a person's reserved issue
+  should:
+
+  ```
+  cd <board dir> && ~/path-to/ledger set spike-probe --rename "spike probe: retry storm under backpressure" --as ash --ledger issues
+  cd <board dir> && ~/path-to/ledger set design-review --rename "pick the retry contract" --as ash --ledger issues  # expect: exit 4 error needs_override
+  cd <board dir> && ~/path-to/ledger set design-review --rename "pick the retry contract" --override -m "jesse asked for the retitle in standup" --as ash --ledger issues
   ```
 
 - **Claim**: `set <key> status=in-progress --expect <ready id> -m
@@ -368,15 +395,21 @@ has no horizon setting that helps; clock discipline is the only
 defense there.
 
 A `contested` attention entry is a partition's fingerprint: two
-replicas raced the same guarded field. Recovery reads BOTH heads with
+replicas raced the same guarded field — or, when `contest.field` is
+`title`, the same key's title. Recovery reads BOTH heads with
 `show --id` on each of `contest.ids` before collapsing anything — a
 seed collision can hide two distinct tasks under one key, and the
-title alone won't reveal it. Collapse with `--expect
-<contest.expect>`; where the collapse re-asserts a settled value it
-trips the settled gate, so add `--override` and say why in `-m`, the
-same as any other settled-outcome revision. Renaming or splitting a
-seed-collided key is a human call, never a recovery agent's to make
-alone.
+title alone won't reveal it. Read both heads for the title history
+too: under a collision the LOSING root's seed title appears in no
+`renamed.prior` list anywhere, because `prior` is fold-path history,
+not a complete inventory — the two heads are the only place that
+title still exists. Collapse with `--expect <contest.expect>`; where
+the collapse re-asserts a settled value it trips the settled gate, so
+add `--override` and say why in `-m`, the same as any other
+settled-outcome revision. A `title` contest collapses with
+`set <key> --rename "<keeper>" --expect <contest.expect>` and needs no
+`--override`. Splitting a seed-collided key, or renaming one KEY into
+another, is a human call, never a recovery agent's to make alone.
 
 A multi-root refusal (a grafted or foreign chain arriving via sync)
 wedges that slug for the whole fleet: push is non-force and sync
@@ -411,7 +444,10 @@ had written during the partition, including `task-signup` showing
 open-vs-closed. For each entry it read both heads (`show --id` on each
 of `contest.ids`), collapsed with `--expect <contest.expect>` (adding
 `--override` where the settled gate tripped), and said which side it
-kept and why in `-m`. Eight writes later: `attention: []`, `frontier:
+kept and why in `-m`. Had either side retitled during the partition
+there would have been a `field: "title"` entry too, collapsed the same
+way with `set <key> --rename "<keeper>" --expect <contest.expect>` and
+no `--override`. Eight writes later: `attention: []`, `frontier:
 all-handled`, one `push`, and both replicas byte-identical — with every
 resolution carrying a permanent `contested_resolved: [<losing ids>]`
 record in the history. Total agent confusion across the recovery: zero.

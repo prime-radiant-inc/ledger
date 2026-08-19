@@ -168,7 +168,18 @@ One definition (both reviewers independently converged on it):
 **For each (key, guarded field) on a ready-capable board, compute the
 write-heads: the writes to that field with no descendant write to that
 field. `|heads| > 1` is contested — one attention entry per
-(key, field).** The winner is the fold-order-last head; `expect` is the
+(key, field).** The pass's scope is "ready-capable boards: their guarded
+fields, PLUS the rename stream" (tool rev 16): a key's rename events are
+a stream of writes to one thing, so they contest under the same
+definition as the pseudo-field `"title"` — ids fold-ordered winner-last,
+`expect` = the winner rename id (usable directly as `--rename --expect`),
+`contested_resolved` recorded on the collapsing rename. The title stream
+is unguardable, so guards never bound it. A title contest surfaces in
+`attention` ONLY: it does NOT set a per-entry `"contested": true` and
+does NOT flip `frontier` off `all-handled` — a cosmetic cross-replica
+retitle must not hold a fleet in the loop — and its collapse idiom is
+`set <key> --rename "<keeper>" --expect <contest.expect>`, no
+`--override` (settled never gates a rename). The winner is the fold-order-last head; `expect` is the
 winner's id, which is the field's latest event by construction — a
 valid CAS ticket always. No separate clearing rules: any write to the
 field collapses the heads to one (the definition clears itself), and
@@ -178,9 +189,13 @@ exists to flag (rev-2 rule cut, probed rationale).
 
 - **Entry shape** (nested ticket, mirroring `break`; flat fields keep
   the existing envelope types):
-  `{"reason": "contested", "key", "title" (omitted when the key is
-  statusless), "contest": {"field", "ids": [fold order, winner last],
-  "authors": [parallel], "expect", "human": <key carries the label>}}`.
+  `{"reason": "contested", "key", "title" (the key's CURRENT title, with
+  `renamed` info attached when it was renamed; omitted only when the key
+  has no title from any source), "contest": {"field", "ids": [fold order,
+  winner last], "authors": [parallel], "expect", "human": <key carries
+  the label>}}`. Entry titles exist whenever the KEY has a title — a
+  statusless key with a fold-total rename renders that title on ALL its
+  entries, one title per key per envelope.
   **The attention sort, complete and total over every entry kind**
   (the issues spec never defined one, and cycle entries carry `keys`,
   not `key`): entries sort on `(sort_key, reason, field)`, where
@@ -226,9 +241,10 @@ exists to flag (rev-2 rule cut, probed rationale).
   title pin): when contested heads descend from different seed events,
   the key may hold two genuinely different tasks (the trial's
   colliding `task-signup` seeds). The entry's `title` is the KEY's
-  title under the issues spec's unamended law — the first status
-  event's message in fold order, immutable, identical in every
-  projection (rev 4 pinned "the fold-winner head's title"; probed,
+  CURRENT title (tool rev 16 supersedes this clause's "unamended law"
+  wording: the latest rename in fold order, else the first status
+  event's message), identical in every projection, with its `renamed`
+  info attached; the entry's `expect`/`ids` machinery is untouched (rev 4 pinned "the fold-winner head's title"; probed,
   heads are status writes carrying no title, so the pin either
   demanded seed-walking machinery no spec defines or made one key
   render two titles across an envelope — both wrong; what the trial
@@ -236,8 +252,13 @@ exists to flag (rev-2 rule cut, probed rationale).
   hazard is covered by doctrine plus one mechanism: the skill's
   contested-recovery line says read both heads before collapsing — a
   seed collision can hide two distinct tasks under one key, and
-  collapsing adjudicates only the field value, never the identity;
-  renaming/splitting is a human call. The tickets hand agents bare
+  collapsing adjudicates only the contested stream's value, never the
+  identity; splitting a collided key, or renaming one KEY into another,
+  is a human call. Under such a collision the LOSING root's seed title
+  appears in no rename structure at all — `renamed.prior` is fold-path
+  history, not a complete inventory — which is a second reason the
+  read-both-heads doctrine is the way to see a collided key's whole
+  story. The tickets hand agents bare
   event ids; `show --id` (pinned below) is how they read one.
 - **Id reads, both paths pinned**: `show --id <sha>` renders ONE
   event in full — type, key, fields, message, evidence, author with
@@ -410,6 +431,13 @@ moves):
 4. **The attention sort** (Addition 3): the issues spec never
    defined an order for `attention`; the total order pinned there
    now binds it.
+5. **The rename gate's read** (tool rev 16): a rename needs the key's
+   labels, so it pays this section's same whole-chain read class as
+   every other rule-5 check — accepted; renames are rare. The
+   single-pair `contested_resolved` derivation covers the `title`
+   pseudo-field too: a rename asserts exactly one title, so the heads
+   it collapses are that one pair's, computed off the same per-attempt
+   read.
 
 (The single amendment to the PARENT spec — the watch batch bound —
 is named in Addition 2 and the header.)
