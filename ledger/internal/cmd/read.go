@@ -49,6 +49,10 @@ type row struct {
 	ID       string   `json:"id"`
 	Evidence []string `json:"evidence"`
 	Title    string   `json:"title,omitempty"`
+	// Renamed is present exactly when Title is a renamed title: a title
+	// never renders unlabeled, so a reader can always see it is no longer
+	// the seed's own message, and who changed it.
+	Renamed *board.RenameInfo `json:"renamed,omitempty"`
 }
 
 func rowOf(key, f string, ev model.Event) row {
@@ -427,7 +431,7 @@ func runShow(c *Ctx, ledgerFlag string, whereRaw []string, idFlag string) error 
 	if ready {
 		for i := range rows {
 			if k, exists := b.Keys[rows[i].Key]; exists {
-				rows[i].Title = k.Title
+				rows[i].Title, rows[i].Renamed = k.Title, k.RenameInfo()
 			}
 		}
 	}

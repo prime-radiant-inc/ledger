@@ -31,14 +31,27 @@ func init() { register(newSetCmd) }
 
 func newSetCmd(c *Ctx) *cobra.Command {
 	var o writeOpts
-	var expect string
+	var expect, rename string
 	var override bool
-	cmd := &cobra.Command{Use: "set <key> <FIELD=VALUE|VALUE>...", Short: "record field values for an item",
-		Args: cobra.MinimumNArgs(2),
+	cmd := &cobra.Command{Use: `set <key> <FIELD=VALUE|VALUE>...   |   set <key> --rename "<new title>"`,
+		Short: "record field values for an item, or retitle it",
+		// One positional (the key) is the floor: a rename carries no
+		// assignments at all, and a bare `set <key>` is caught below with the
+		// grammar rather than by cobra's own arity message.
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cc *cobra.Command, args []string) error {
 			expectSet := cc.Flags().Changed("expect")
+			if cc.Flags().Changed("rename") {
+				return runRename(c, args[0], args[1:], o, rename, expect, expectSet, override)
+			}
+			if len(args) < 2 {
+				return out.Errf("bad_usage",
+					`ledger set <key> <field>=<value>... — or ledger set <key> --rename "<new title>" to retitle`, 4,
+					"set needs at least one field=value assignment")
+			}
 			return runSet(c, args[0], args[1:], o, expect, expectSet, override)
 		}}
+	cmd.Flags().StringVar(&rename, "rename", "", `retitle the key; the rename IS the event (no fields, no evidence, no -m)`)
 	cmd.Flags().StringVar(&o.ledger, "ledger", "", "target ledger")
 	cmd.Flags().StringVar(&o.as, "as", "", "author identity")
 	cmd.Flags().StringVarP(&o.m, "message", "m", "", "short annotation")
@@ -123,8 +136,13 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts, expect string
 
 	author := model.ResolveAuthor(o.as)
 	if o.idemKey != "" {
+		// Scoped SYMMETRICALLY (bridge design rev 6): a field write dedupes
+		// only against an earlier FIELD-CARRYING event sharing its (author,
+		// key, idem) — never against a rename, which asserts something else
+		// entirely (rename.go's own scan is the mirror image).
 		for _, ev := range led.Events {
-			if ev.Type == "set" && ev.IdempotencyKey == o.idemKey && ev.Author == author && ev.Key == key {
+			if ev.Type == "set" && len(ev.Fields) > 0 && ev.IdempotencyKey == o.idemKey &&
+				ev.Author == author && ev.Key == key {
 				payload := map[string]any{"id": ev.ID, "ledger": led.Slug, "deduped": true, "by": ev.Author}
 				if due, ok := dueAfter(c, led.Slug); ok {
 					payload["rollup_due"] = due
@@ -177,16 +195,8 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts, expect string
 // that. Below git's own abbreviation floor (4 hex characters) is rejected
 // too: a shorter prefix is unusably ambiguous as a CAS target.
 func resolveExpectTarget(fields map[string]string, guard []string, slug, expect string, expectSet bool) (target string, usageErr error) {
-	if expectSet {
-		trimmed := strings.TrimSpace(expect)
-		if trimmed == "" {
-			return "", out.Errf("bad_usage", "pass --expect <event-id> or --expect none", 4,
-				"--expect requires an event id or the literal 'none' (got empty — an unset shell variable?)")
-		}
-		if trimmed != "none" && len(trimmed) < 4 {
-			return "", out.Errf("bad_usage", "pass at least 4 hex characters of the event id, or --expect none", 4,
-				"--expect '%s' is shorter than git's own minimum abbreviation (4 hex characters)", trimmed)
-		}
+	if err := checkExpectSyntax(expect, expectSet); err != nil {
+		return "", err
 	}
 	var guardedTouched []string
 	for _, g := range guard {
@@ -217,6 +227,31 @@ func resolveExpectTarget(fields map[string]string, guard []string, slug, expect 
 	default:
 		return "", nil
 	}
+}
+
+// checkExpectSyntax rejects an unusable --expect value before any CAS runs,
+// on either stream (field-scoped here, rename-scoped in rename.go). A
+// flag value of "" (trimmed) is rejected outright: both CAS checks match
+// via strings.HasPrefix(latest.ID, expect), which is vacuously true for "",
+// so an empty --expect would silently pass unconditionally instead of
+// failing closed. The realistic trigger is `--expect "$ID"` against an
+// unset shell variable, so the message names that. Below git's own
+// abbreviation floor (4 hex characters) is rejected too: a shorter prefix
+// is unusably ambiguous as a CAS target.
+func checkExpectSyntax(expect string, expectSet bool) error {
+	if !expectSet {
+		return nil
+	}
+	trimmed := strings.TrimSpace(expect)
+	if trimmed == "" {
+		return out.Errf("bad_usage", "pass --expect <event-id> or --expect none", 4,
+			"--expect requires an event id or the literal 'none' (got empty — an unset shell variable?)")
+	}
+	if trimmed != "none" && len(trimmed) < 4 {
+		return out.Errf("bad_usage", "pass at least 4 hex characters of the event id, or --expect none", 4,
+			"--expect '%s' is shorter than git's own minimum abbreviation (4 hex characters)", trimmed)
+	}
+	return nil
 }
 
 // setPrecondition builds the closure AppendChecked runs against a fresh,
@@ -311,7 +346,8 @@ func setPrecondition(key string, fields map[string]string, target, expect string
 			if len(signals) > 0 {
 				if !override {
 					return out.Errf("needs_override", `--override -m "<why>"`, 4,
-						"'%s' has standing signal(s) that guard this write: %s", key, formatSignals(signals))
+						"'%s' has standing signal(s) that guard this write: %s", key, formatSignals(signals)).
+						WithSignals(signalNameList(signals))
 				}
 				*overrideOut = signalNames(signals)
 			}
@@ -422,11 +458,20 @@ func formatSignals(signals []board.Signal) string {
 // signalNames comma-joins signal names for the event's override record —
 // tool-computed, never caller-asserted (spec rule 5).
 func signalNames(signals []board.Signal) string {
+	return strings.Join(signalNameList(signals), ",")
+}
+
+// signalNameList is the same names as a list, for the needs_override error
+// document's machine-readable "signals" field. A consumer deciding whether
+// to auto-override (a claim dissolves on the clock) or to refuse (a human
+// label does not) needs the NAMES, and reading them out of the English
+// message would be a prose dependency in a machine contract.
+func signalNameList(signals []board.Signal) []string {
 	names := make([]string, len(signals))
 	for i, s := range signals {
 		names[i] = s.Name
 	}
-	return strings.Join(names, ",")
+	return names
 }
 
 func renderFields(fields map[string]string) string {
