@@ -75,14 +75,16 @@ func readyLines(slug string, env board.Envelope) []string {
 	lines := []string{fmt.Sprintf("%s  frontier=%s  ready=%d held=%d blocked=%d attention=%d",
 		slug, env.Frontier, env.Totals.Ready, env.Totals.Held, env.Totals.Blocked, env.Totals.Attention)}
 	for _, e := range env.Ready {
-		l := fmt.Sprintf("  ready    %-20s by %-12s [%s]  %q", out.EscapeControls(e.Key), out.EscapeControls(e.By), e.ID, out.EscapeControls(e.Title))
+		l := fmt.Sprintf("  ready    %-20s by %-12s [%s]  %q%s", out.EscapeControls(e.Key), out.EscapeControls(e.By), e.ID,
+			out.EscapeControls(e.Title), renamedMark(e.Renamed))
 		if len(e.UnblockedWithoutEvidence) > 0 {
 			l += "  unblocked_without_evidence=" + strings.Join(e.UnblockedWithoutEvidence, ",")
 		}
 		lines = append(lines, l+contestedMark(e.Contested))
 	}
 	for _, e := range env.Held {
-		l := fmt.Sprintf("  held     %-20s %-6s by %-12s [%s]  %q", out.EscapeControls(e.Key), e.Kind, out.EscapeControls(e.By), e.ID, out.EscapeControls(e.Title))
+		l := fmt.Sprintf("  held     %-20s %-6s by %-12s [%s]  %q%s", out.EscapeControls(e.Key), e.Kind,
+			out.EscapeControls(e.By), e.ID, out.EscapeControls(e.Title), renamedMark(e.Renamed))
 		if e.Stale != nil {
 			l += fmt.Sprintf("  age=%s stale=%v", e.Age, *e.Stale)
 		}
@@ -92,14 +94,18 @@ func readyLines(slug string, env board.Envelope) []string {
 		lines = append(lines, l+contestedMark(e.Contested))
 	}
 	for _, e := range env.Blocked {
-		l := fmt.Sprintf("  blocked  %-20s by %-12s [%s]  waiting_on=%s", out.EscapeControls(e.Key), out.EscapeControls(e.By), e.ID, waitingOnLine(e.WaitingOn))
+		// The title on this line is one of rev 16's three deliberate output
+		// changes: a blocked key is read and acted on here like any other,
+		// and it was the one list line that named no title at all.
+		l := fmt.Sprintf("  blocked  %-20s by %-12s [%s]  %q%s  waiting_on=%s", out.EscapeControls(e.Key),
+			out.EscapeControls(e.By), e.ID, out.EscapeControls(e.Title), renamedMark(e.Renamed), waitingOnLine(e.WaitingOn))
 		lines = append(lines, l+contestedMark(e.Contested))
 	}
 	for _, e := range env.Attention {
 		switch e.Reason {
 		case "stale-claim":
-			lines = append(lines, fmt.Sprintf("  attn     stale-claim  %-20s by %-12s age=%s [%s]",
-				out.EscapeControls(e.Key), out.EscapeControls(e.By), e.Age, e.ID))
+			lines = append(lines, fmt.Sprintf("  attn     stale-claim  %-20s by %-12s age=%s [%s]%s",
+				out.EscapeControls(e.Key), out.EscapeControls(e.By), e.Age, e.ID, renamedMark(e.Renamed)))
 		case "statusless":
 			lines = append(lines, "  attn     statusless   "+out.EscapeControls(e.Key))
 		case "cycle":
@@ -130,8 +136,9 @@ func readyLines(slug string, env board.Envelope) []string {
 			// adjudicates the field's VALUE, never the key's identity, so the
 			// caller is told to read both heads first — two seeds can collide
 			// under one key and hide two genuinely different tasks.
-			l := fmt.Sprintf("  attn     contested    %-20s field=%s heads=%s expect=%s",
-				out.EscapeControls(e.Key), out.EscapeControls(c.Field), strings.Join(heads, ","), c.Expect)
+			l := fmt.Sprintf("  attn     contested    %-20s field=%s heads=%s expect=%s%s",
+				out.EscapeControls(e.Key), out.EscapeControls(c.Field), strings.Join(heads, ","), c.Expect,
+				renamedMark(e.Renamed))
 			l += "  read both heads before collapsing (show --id <sha>)"
 			if c.Human {
 				l += " (human-labeled: the collapsing write needs --override)"
@@ -140,6 +147,18 @@ func readyLines(slug string, env board.Envelope) []string {
 		}
 	}
 	return lines
+}
+
+// renamedMark is the mandatory label on a renamed title: wherever a title
+// renders on a TTY, a title that is no longer its key's seeded one says so
+// and names an author the reader can hold to it (the full history is one
+// `show` away, in the identity header). Absent — never "(not renamed)" —
+// when the key still carries its seed title.
+func renamedMark(info *board.RenameInfo) string {
+	if info == nil {
+		return ""
+	}
+	return " (renamed by " + out.EscapeControls(info.By) + ")"
 }
 
 // contestedMark labels a ready/held/blocked line whose key carries a live

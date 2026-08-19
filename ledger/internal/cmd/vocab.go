@@ -35,6 +35,14 @@ func runVocabAdd(c *Ctx, slug, field, value, asFlag, mFlag string) error {
 		return out.Errf("closed", "closed ledgers refuse new vocabulary — ledger create <new-slug> --scope <ref> for further work", 4,
 			"'%s' is %s and refuses vocab changes", led.Slug, led.State)
 	}
+	if field == model.TitleFieldName {
+		// Reserved (bridge design rev 6): a title is derived, never declared
+		// — and a board minted before the reservation could still carry a
+		// declared 'title', so this refuses on the name, not on the schema.
+		return out.Errf("bad_value",
+			`titles come from the seed's -m and `+"`set <key> --rename \"<new title>\"`"+` — there is no vocabulary to extend`, 4,
+			"'%s' is reserved: a key's title is derived, never a declared field", model.TitleFieldName)
+	}
 	vocab, declared := led.Schema[field]
 	if !declared {
 		return out.Errf("unknown_field", "declared fields: "+strings.Join(led.Meta.FieldOrder, ", "), 4,

@@ -43,6 +43,29 @@ import (
 // parents have consumed it, so peak residency is DAG width × candidate
 // pairs — and a sentinel-merge history's width is the replica count.
 
+// TitleField is the pseudo-field the RENAME stream contests under. It is
+// not a declared field and can never become one (model.ValidateDeclarations
+// reserves the name) — but the write-heads definition is about a stream of
+// writes to ONE thing, and a key's renames are exactly that stream. Without
+// it, concurrent cross-replica renames would merge in silence while the
+// identical status race raised an entry, and `prior` could not tell a race
+// loss from a sequential retitle.
+const TitleField = model.TitleFieldName
+
+// writesField is the write-heads definition's membership test: does e write
+// `field` on its key? An ordinary field write carries it in Fields; a
+// rename carries it as the event's own Rename. One definition, both streams.
+func writesField(e model.Event, field string) bool {
+	if e.Type != "set" {
+		return false
+	}
+	if field == TitleField {
+		return e.Rename != ""
+	}
+	_, ok := e.Fields[field]
+	return ok
+}
+
 // Contest is one (key, field) antichain of competing write-heads — the
 // nested ticket a contested attention entry carries, mirroring `break`'s
 // shape rather than flattening new fields into the envelope. Key is which
@@ -92,8 +115,16 @@ func (b *Board) ComputeContests(events []model.Event, d dag.Result) {
 // scan that collects the guarded writes, latest write wins, which is
 // Build's own rule for the labels multi-field.
 func AllContests(meta model.Meta, events []model.Event, d dag.Result) []Contest {
-	if !model.ReadyCapable(meta) || len(meta.Guard) == 0 {
-		return nil // scope: guarded fields on ready-capable boards only
+	// Scope: ready-capable boards — their guarded fields, plus the rename
+	// stream. The title stream is unguardable, so the old
+	// `|| len(meta.Guard) == 0` half of this short-circuit is gone: it would
+	// now silence a whole stream it does not bound. (Every minting path —
+	// create, import, adopt — refuses a ready-capable board without
+	// --guard status, so that half was unreachable in production anyway;
+	// this package is pure and takes whatever meta it is handed, so the
+	// rule is stated here rather than assumed.)
+	if !model.ReadyCapable(meta) {
+		return nil
 	}
 	if len(events) == 0 || len(d.Order) != len(events) {
 		return nil
@@ -105,6 +136,18 @@ func AllContests(meta model.Meta, events []model.Event, d dag.Result) []Contest 
 	var writeCount []int
 	evPairs := make([][]int, len(events))
 	human := map[string]bool{}
+	add := func(i int, key, field string) {
+		p := pair{key, field}
+		id, seen := pairID[p]
+		if !seen {
+			id = len(pairs)
+			pairID[p] = id
+			pairs = append(pairs, p)
+			writeCount = append(writeCount, 0)
+		}
+		writeCount[id]++
+		evPairs[i] = append(evPairs[i], id)
+	}
 	for i, e := range events {
 		if e.Type != "set" || e.Key == "" {
 			continue
@@ -116,16 +159,10 @@ func AllContests(meta model.Meta, events []model.Event, d dag.Result) []Contest 
 			if !model.Contains(meta.Guard, f) {
 				continue
 			}
-			p := pair{e.Key, f}
-			id, seen := pairID[p]
-			if !seen {
-				id = len(pairs)
-				pairID[p] = id
-				pairs = append(pairs, p)
-				writeCount = append(writeCount, 0)
-			}
-			writeCount[id]++
-			evPairs[i] = append(evPairs[i], id)
+			add(i, e.Key, f)
+		}
+		if e.Rename != "" {
+			add(i, e.Key, TitleField)
 		}
 	}
 
@@ -276,12 +313,13 @@ func coverSetHeads(d dag.Result, evPairs [][]int, candidate []bool, numPairs int
 // order, winner last), or nil when the field was never written on the key.
 //
 // This is the write path's form. A conditional set touches exactly one
-// guarded field (issues rule 2), so the `contested_resolved` a collapsing
-// write records is the heads of that single pair — computed from the
-// whole-chain precondition read already in hand, inside the CAS retry loop,
-// against each attempt's fresh read. Callers scope it: contested covers
-// guarded fields on ready-capable boards only, and this function checks
-// neither (it has no meta to check them against).
+// guarded field (issues rule 2) and a rename asserts exactly one title, so
+// the `contested_resolved` either records is the heads of that single pair
+// — computed from the whole-chain precondition read already in hand, inside
+// the CAS retry loop, against each attempt's fresh read. Callers scope it:
+// contested covers ready-capable boards only, and this function checks
+// nothing (it has no meta to check against); pass TitleField for the rename
+// stream.
 func WriteHeads(events []model.Event, d dag.Result, key, field string) []int {
 	if len(events) == 0 || len(d.Order) != len(events) {
 		return nil
@@ -290,14 +328,12 @@ func WriteHeads(events []model.Event, d dag.Result, key, field string) []int {
 	total := 0
 	last := -1
 	for i, e := range events {
-		if e.Type != "set" || e.Key != key {
+		if e.Key != key || !writesField(e, field) {
 			continue
 		}
-		if _, ok := e.Fields[field]; ok {
-			writes[i] = true
-			total++
-			last = i
-		}
+		writes[i] = true
+		total++
+		last = i
 	}
 	switch total {
 	case 0:

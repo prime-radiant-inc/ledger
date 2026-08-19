@@ -25,6 +25,9 @@ func ReadyCapable(m Meta) bool {
 // names its fix, since a bad declaration has no repair path once the
 // ledger exists.
 func ValidateDeclarations(m Meta) *DeclErr {
+	if e := validateReservedNames(m); e != nil {
+		return e
+	}
 	if e := validateSubsets(m); e != nil {
 		return e
 	}
@@ -38,6 +41,35 @@ func ValidateDeclarations(m Meta) *DeclErr {
 		return e
 	}
 	return validateReadyCapableShape(m)
+}
+
+// TitleFieldName is the one reserved field name: a key's title is not a
+// board field. It is derived (the seed message, then rename events) and
+// read as a pseudo-field by the contested pass, which unions BOTH title
+// streams; a board that could also declare and guard a real "title" field
+// would split that read path from the rename write path, so no board may
+// declare, guard, or extend one.
+const TitleFieldName = "title"
+
+// validateReservedNames enforces the reserved name, ahead of every other
+// check so a `--guard title` reads as reserved rather than as the
+// undeclared-field error validateGuard would otherwise reach first.
+func validateReservedNames(m Meta) *DeclErr {
+	reserved := func(flag string) *DeclErr {
+		return &DeclErr{Ident: "bad_value",
+			Hint: "titles come from the seed's -m and `set <key> --rename \"<new title>\"` — drop the declaration",
+			Msg:  fmt.Sprintf("%s %s is reserved: a key's title is derived, never a declared field", flag, TitleFieldName)}
+	}
+	if _, declared := m.Fields[TitleFieldName]; declared {
+		return reserved("--field")
+	}
+	if Contains(m.MultiFields, TitleFieldName) {
+		return reserved("--multi-field")
+	}
+	if Contains(m.Guard, TitleFieldName) {
+		return reserved("--guard")
+	}
+	return nil
 }
 
 // validateSubsets enforces rule 1: --terminal and --require-evidence

@@ -54,6 +54,9 @@ func TestValidateDeclarations(t *testing.T) {
 		{"missing labels", func(m *Meta) { m.MultiFields = []string{"blocked-by"} }, "labels"},
 		{"blocked-by unguarded", func(m *Meta) { m.Guard = []string{"status"} }, "--guard blocked-by"},
 		{"multi-field collides with enum", func(m *Meta) { m.MultiFields = append(m.MultiFields, "status") }, "collides"},
+		{"title declared as an enum field", func(m *Meta) { m.Fields["title"] = []string{"a", "b"} }, "reserved"},
+		{"title declared as a multi-field", func(m *Meta) { m.MultiFields = append(m.MultiFields, "title") }, "reserved"},
+		{"title guarded", func(m *Meta) { m.Guard = append(m.Guard, "title") }, "reserved"},
 	}
 	for _, c := range cases {
 		m := deepCopyMeta(ok)

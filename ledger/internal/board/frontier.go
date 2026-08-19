@@ -23,14 +23,15 @@ func alwaysTrue(*Key) bool { return true }
 // placement — but the flag rides along so the race is visible at the point
 // of decision. Absent, never false: only a live contest says anything.
 type ReadyEntry struct {
-	Key                      string   `json:"key"`
-	Title                    string   `json:"title"`
-	Note                     string   `json:"note"`
-	TS                       string   `json:"ts"`
-	By                       string   `json:"by"`
-	ID                       string   `json:"id"`
-	Contested                bool     `json:"contested,omitempty"`
-	UnblockedWithoutEvidence []string `json:"unblocked_without_evidence,omitempty"`
+	Key                      string      `json:"key"`
+	Title                    string      `json:"title"`
+	Renamed                  *RenameInfo `json:"renamed,omitempty"`
+	Note                     string      `json:"note"`
+	TS                       string      `json:"ts"`
+	By                       string      `json:"by"`
+	ID                       string      `json:"id"`
+	Contested                bool        `json:"contested,omitempty"`
+	UnblockedWithoutEvidence []string    `json:"unblocked_without_evidence,omitempty"`
 }
 
 // WaitingOn is one blocker's classified state, shared by held's
@@ -58,6 +59,7 @@ type WaitingOn struct {
 type HeldEntry struct {
 	Key       string      `json:"key"`
 	Title     string      `json:"title"`
+	Renamed   *RenameInfo `json:"renamed,omitempty"`
 	Kind      string      `json:"kind"`
 	Status    string      `json:"status,omitempty"`
 	By        string      `json:"by"`
@@ -77,6 +79,7 @@ type HeldEntry struct {
 type BlockedEntry struct {
 	Key       string      `json:"key"`
 	Title     string      `json:"title"`
+	Renamed   *RenameInfo `json:"renamed,omitempty"`
 	Note      string      `json:"note"`
 	TS        string      `json:"ts"`
 	By        string      `json:"by"`
@@ -87,8 +90,7 @@ type BlockedEntry struct {
 
 // AttentionEntry is one triage-queue item. Reason discriminates the shape:
 // "stale-claim" carries key/title/by/age/id (human-labeled stale claims
-// included — title appears on this reason only); "statusless" carries only
-// key (a half-seed or an orphan reference); "cycle" carries Keys (every
+// included); "statusless" carries key (a half-seed or an orphan reference); "cycle" carries Keys (every
 // member of the cycle) instead of a singular Key, plus Break, the
 // self-service paste-ready fix (spec: "a cycle entry carries its own fix");
 // "unknown-status" carries key/value/by/ts/id — a non-human key whose
@@ -97,13 +99,17 @@ type BlockedEntry struct {
 // vocab that was extended out from under board.Build's classification
 // switch (see vocab.go's rejection of exactly that on a ready-capable
 // board) or folded from an already-polluted or imported chain;
-// "contested" carries key/title (title omitted when the key is statusless,
-// per the immutable-title law) plus Contest, the nested ticket naming the
-// racing write-heads and the CAS target that collapses them.
+// "contested" carries key/title plus Contest, the nested ticket naming the
+// racing write-heads and the CAS target that collapses them. Title (and,
+// when the key has been renamed, Renamed) rides EVERY entry whose key has a
+// title at all — statusless entries included, since a fold-total rename can
+// title a key no status write ever touched; it is omitted only when the key
+// has no title from any source.
 type AttentionEntry struct {
 	Reason  string      `json:"reason"`
 	Key     string      `json:"key,omitempty"`
 	Title   string      `json:"title,omitempty"`
+	Renamed *RenameInfo `json:"renamed,omitempty"`
 	Value   string      `json:"value,omitempty"`
 	By      string      `json:"by,omitempty"`
 	Age     string      `json:"age,omitempty"`
@@ -381,7 +387,7 @@ func (b *Board) buildLists(now time.Time) (ready []ReadyEntry, held []HeldEntry,
 		if k.Status != nil && k.Status.Value == "in-progress" {
 			if stale {
 				attention = append(attention, AttentionEntry{
-					Reason: "stale-claim", Key: k.Name, Title: k.Title,
+					Reason: "stale-claim", Key: k.Name, Title: k.Title, Renamed: k.RenameInfo(),
 					By: k.Status.Author, Age: FormatAge(age), ID: k.Status.ID,
 				})
 				attSeen[k.Name] = true
@@ -391,7 +397,8 @@ func (b *Board) buildLists(now time.Time) (ready []ReadyEntry, held []HeldEntry,
 			}
 		}
 		if k.Status == nil {
-			attention = append(attention, AttentionEntry{Reason: "statusless", Key: k.Name})
+			attention = append(attention, AttentionEntry{Reason: "statusless", Key: k.Name,
+				Title: k.Title, Renamed: k.RenameInfo()})
 			attSeen[k.Name] = true
 		}
 	}
@@ -417,13 +424,14 @@ func (b *Board) buildLists(now time.Time) (ready []ReadyEntry, held []HeldEntry,
 }
 
 // contestedEntries renders one attention entry per live contest — per
-// (key, field), never per racing write. Title is the KEY's title under the
-// issues spec's unamended law (the first status event's message, immutable,
-// identical in every projection), so it is absent on a statusless key: the
-// heads are field writes carrying no title of their own, and a two-root key
-// collision genuinely holds one key's title over two seeded tasks. Doctrine
-// covers that hazard — read both heads before collapsing — since a collapse
-// adjudicates the field value, never the identity.
+// (key, field), the rename stream's pseudo-field "title" included, never per
+// racing write. Title is the KEY's current title (the latest rename in fold
+// order, else the seed message) with its rename label attached, so it is
+// absent only on a key with no title at all. A two-root key collision
+// genuinely holds one key's title over two seeded tasks, and the losing
+// root's seed title appears in no rename structure — doctrine covers that
+// hazard (read both heads before collapsing), since a collapse adjudicates
+// the contested stream's value, never the identity.
 func (b *Board) contestedEntries() []AttentionEntry {
 	if len(b.Contests) == 0 {
 		return nil
@@ -435,6 +443,7 @@ func (b *Board) contestedEntries() []AttentionEntry {
 			e := AttentionEntry{Reason: "contested", Key: name, Contest: &c}
 			if k := b.Keys[name]; k != nil {
 				e.Title = k.Title
+				e.Renamed = k.RenameInfo()
 			}
 			entries = append(entries, e)
 		}
@@ -442,9 +451,28 @@ func (b *Board) contestedEntries() []AttentionEntry {
 	return entries
 }
 
-// contested reports whether k has a live contest on any guarded field —
-// the flag every ready/held/blocked entry for that key carries.
-func (b *Board) contested(k *Key) bool { return len(b.Contests[k.Name]) > 0 }
+// contested reports whether k has a live contest on any GUARDED field — the
+// flag every ready/held/blocked entry for that key carries. A title contest
+// is deliberately not one of them: it surfaces in attention alone (bridge
+// design rev 6), since a cosmetic cross-replica retitle must not mark a
+// pickable key as raced.
+func (b *Board) contested(k *Key) bool {
+	for _, c := range b.Contests[k.Name] {
+		if c.Field != TitleField {
+			return true
+		}
+	}
+	return false
+}
+
+// movesFrontier reports whether an attention entry can move the verdict off
+// all-handled. Every entry can except a title contest: holding a whole fleet
+// in the picking loop over two replicas' wording is exactly the cost the
+// attention-only ruling refuses. The entry is still listed, and
+// totals.attention still counts it — a triage cue, not a stop.
+func movesFrontier(e AttentionEntry) bool {
+	return !(e.Reason == "contested" && e.Contest != nil && e.Contest.Field == TitleField)
+}
 
 // cycleSurvivesFilter reports whether any of a cycle attention entry's
 // member keys matches filter — the composition rule filterAttention applies
@@ -464,12 +492,21 @@ func cycleSurvivesFilter(b *Board, entry AttentionEntry, filter func(*Key) bool)
 // ever walked once. work-available: anything pickable now (non-empty ready)
 // or reclaimable (a stale claim on a non-human-labeled key); else
 // attention-needed: the attention list (stale claims, statusless
-// references, cycles, unknown-status keys) is non-empty; else all-handled.
+// references, cycles, unknown-status keys, guarded-field contests) holds at
+// least one entry that moves the verdict — every kind but a title contest,
+// which is listed without ever holding the fleet (see movesFrontier); else
+// all-handled.
 func frontierVerdict(ready []ReadyEntry, attention []AttentionEntry, workAvailable bool) string {
+	blocking := 0
+	for _, a := range attention {
+		if movesFrontier(a) {
+			blocking++
+		}
+	}
 	switch {
 	case len(ready) > 0 || workAvailable:
 		return "work-available"
-	case len(attention) > 0:
+	case blocking > 0:
 		return "attention-needed"
 	default:
 		// VERIFIED, not a fallback: ready empty and attention empty together
@@ -706,7 +743,7 @@ func (b *Board) waitingOnList(k *Key, now time.Time) []WaitingOn {
 // walk (the same one that confirmed k is fully edge-terminal) rather than
 // re-walked here.
 func (b *Board) readyEntry(k *Key, unblockedWithoutEvidence []string) ReadyEntry {
-	return ReadyEntry{Key: k.Name, Title: k.Title, Note: k.Status.Note, TS: k.Status.TS, By: k.Status.Author, ID: k.Status.ID,
+	return ReadyEntry{Key: k.Name, Title: k.Title, Renamed: k.RenameInfo(), Note: k.Status.Note, TS: k.Status.TS, By: k.Status.Author, ID: k.Status.ID,
 		Contested: b.contested(k), UnblockedWithoutEvidence: unblockedWithoutEvidence}
 }
 
@@ -716,7 +753,7 @@ func (b *Board) readyEntry(k *Key, unblockedWithoutEvidence []string) ReadyEntry
 // "blocked is not locked" is exercisable straight from this entry.
 func (b *Board) blockedEntry(k *Key, now time.Time) BlockedEntry {
 	return BlockedEntry{
-		Key: k.Name, Title: k.Title, Note: k.Status.Note, TS: k.Status.TS,
+		Key: k.Name, Title: k.Title, Renamed: k.RenameInfo(), Note: k.Status.Note, TS: k.Status.TS,
 		By: k.Status.Author, ID: k.Status.ID, Contested: b.contested(k),
 		WaitingOn: b.waitingOnList(k, now),
 	}
@@ -734,7 +771,7 @@ func (b *Board) blockedEntry(k *Key, now time.Time) BlockedEntry {
 // has at least one unresolved edge — claimed-but-blocked and human-but-
 // blocked are both legal and visible.
 func (b *Board) heldEntry(k *Key, kind string, now time.Time, stale bool, age time.Duration) HeldEntry {
-	e := HeldEntry{Key: k.Name, Title: k.Title, Kind: kind, By: k.Status.Author, ID: k.Status.ID,
+	e := HeldEntry{Key: k.Name, Title: k.Title, Renamed: k.RenameInfo(), Kind: kind, By: k.Status.Author, ID: k.Status.ID,
 		Contested: b.contested(k)}
 	if kind == "human" {
 		e.Status = k.Status.Value

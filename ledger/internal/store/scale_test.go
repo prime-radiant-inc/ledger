@@ -122,6 +122,7 @@ func TestScaleMergedReadyWithContestsBound(t *testing.T) {
 	var samples [3]time.Duration
 	var lastEnv board.Envelope
 	var evCount, contested int
+	byField := map[string]int{}
 	for i := range samples {
 		start := time.Now()
 		evs, _, d, err := s.EventsDAG("board")
@@ -134,12 +135,24 @@ func TestScaleMergedReadyWithContestsBound(t *testing.T) {
 		samples[i] = time.Since(start)
 		evCount = len(evs)
 		contested = len(b.Contests)
+		byField = map[string]int{}
+		for _, cs := range b.Contests {
+			for _, c := range cs {
+				byField[c.Field]++
+			}
+		}
 	}
 	if contested == 0 {
 		t.Fatal("the fixture must actually be contested, or this measures the wrong thing")
 	}
-	t.Logf("merged ready envelope @%d events, %d contested keys, 3 samples: %v (ready=%d held=%d blocked=%d attention=%d)",
-		evCount, contested, samples, len(lastEnv.Ready), len(lastEnv.Held), len(lastEnv.Blocked), lastEnv.Totals.Attention)
+	// The pass carries TWO streams now (guarded fields and the rename/title
+	// pseudo-field), so a fixture contesting only one of them would price
+	// half the work.
+	if byField["status"] == 0 || byField[board.TitleField] == 0 {
+		t.Fatalf("the fixture must contest BOTH streams at full strength, got %v", byField)
+	}
+	t.Logf("merged ready envelope @%d events, %d contested keys %v, 3 samples: %v (ready=%d held=%d blocked=%d attention=%d)",
+		evCount, contested, byField, samples, len(lastEnv.Ready), len(lastEnv.Held), len(lastEnv.Blocked), lastEnv.Totals.Attention)
 
 	median := medianDuration(samples[:])
 	if median > 350*time.Millisecond {

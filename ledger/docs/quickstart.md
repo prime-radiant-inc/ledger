@@ -78,7 +78,10 @@ take `--ledger <slug>`, ambient when one ledger's open — except `ls`/`sync`):
 claim, what needs a person (`frontier`, then `ready`/`held`/`blocked`/
 `attention`). Claim: `set <key> status=in-progress --expect <id> -m
 "claiming"`. Close: `set <key> status=closed --evidence <ref> --expect
-<own claim id> -m "done"`. Two rules to know cold: guarded fields always
+<own claim id> -m "done"`. Titles are stable, not immutable: the seed's
+`-m` IS the title, and `set <key> --rename "<new title>"` corrects one with
+attribution (no fields, no `-m`; `human` gates it; `--expect` targets the
+key's latest rename). Two rules to know cold: guarded fields always
 take `--expect`; `needs_override` names which of three signals stopped
 you — `human` is a stop sign, walk away; `claim` and `settled` mean you
 are revising a live claim or a settled outcome, so re-read it and say

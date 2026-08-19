@@ -97,8 +97,12 @@ blocked is derived state.
 
 **Titles** (ready-capable boards only — plain boards keep the parent
 spec's `set` semantics): a key's title is the message of its first
-status event, computed from history rather than stored, immutable,
-carried by every `ready`/`held`/`blocked` entry, every `show` row, and
+status event, computed from history rather than stored, STABLE BY
+DEFAULT — changed only by explicit, labeled rename events (tool rev 16:
+`set <key> --rename "<new title>"`, whose text wins over the seed
+message from the latest rename in fold order, and which every
+title-bearing surface renders as renamed with attribution) — carried by
+every `ready`/`held`/`blocked` entry, every `show` row, and
 `attention`'s stale-claim entries — structurally absent only where no
 single titled key exists (`statusless` entries precede any status
 event; `cycle` entries name several keys). The first status write
@@ -133,7 +137,13 @@ the single interference gate that replaced three enumerated ones.
    never exclusive; it is never accepted-and-ignored.
 3. `--expect <event-id>` (SHA prefix accepted): succeeds only if the
    written guarded field's latest event on this key is still that event
-   at append time. **Field-scoped**: other fields' events never
+   at append time. A SECOND, rename-scoped CAS stream exists alongside
+   this field-scoped one (tool rev 16): on `set --rename`, `--expect` is
+   never required and, when passed, is CAS against the key's latest
+   RENAME event, with `--expect none` meaning never renamed. Its
+   `claim_lost` names the rename that won — `event <id> by <author>
+   already renamed '<key>' to "<title>"` — and hints "read the current
+   title first". **Field-scoped**: other fields' events never
    invalidate it; notes never invalidate it. Mismatch → `claim_lost`,
    exit 4; the message names the winning event's id, author, and the
    exact value it wrote to this field (tested format — a trial shipped a
@@ -162,8 +172,12 @@ the single interference gate that replaced three enumerated ones.
    has no `status` vocab or `labels` reservation to compute signals
    from, so its guarded writes get the CAS rules (1–4, 6–8) and nothing
    else. **Scope, stated**: `human` is key-scoped and gates every guarded
-   write; `claim` and `settled` are computed from the key's `status`
-   field and gate `status` writes only. An edge edit on a claimed or
+   write — and, as a named exception class OUTSIDE guarded-field writes,
+   it additionally gates a RENAME (tool rev 16), recorded with the same
+   `override:` field: retitling a person's reserved issue under them is
+   the friction the label exists to create. `claim` and `settled` are
+   computed from the key's `status` field and gate `status` writes only;
+   neither gates a rename, because a title is not an outcome. An edge edit on a claimed or
    settled key is deliberately ungated beyond CAS and `human`: an edge
    added to a live claim surfaces in its `held` entry's `waiting_on`,
    and a settled key's own edges are moot — its terminal value already

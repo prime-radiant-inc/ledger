@@ -16,12 +16,26 @@ import (
 type CLIError struct {
 	Code, Message, Hint string
 	ExitCode            int
+	// Signals names the standing rule-5 signals that produced a
+	// needs_override error, machine-readable. The message already renders
+	// them for a person ("human (labeled 'human')"), but a program deciding
+	// what to do next — override a dissolving claim, refuse a human label —
+	// must never have to parse English to tell them apart. Empty on every
+	// other error.
+	Signals []string
 }
 
 func (e *CLIError) Error() string { return e.Code + ": " + e.Message }
 
 func Errf(code, hint string, exit int, format string, a ...any) *CLIError {
 	return &CLIError{Code: code, Message: fmt.Sprintf(format, a...), Hint: hint, ExitCode: exit}
+}
+
+// WithSignals attaches the signal names to a needs_override error. Returned
+// for call-site chaining, so the error stays one expression.
+func (e *CLIError) WithSignals(names []string) *CLIError {
+	e.Signals = names
+	return e
 }
 
 func Emit(w io.Writer, tty bool, payload map[string]any, lines []string) {
@@ -51,7 +65,11 @@ func WriteError(w io.Writer, tty bool, e *CLIError) {
 		}
 		return
 	}
-	doc, _ := json.Marshal(map[string]string{"error": e.Code, "message": e.Message, "hint": e.Hint})
+	payload := map[string]any{"error": e.Code, "message": e.Message, "hint": e.Hint}
+	if len(e.Signals) > 0 {
+		payload["signals"] = e.Signals
+	}
+	doc, _ := json.Marshal(payload)
 	fmt.Fprintln(w, string(doc))
 }
 

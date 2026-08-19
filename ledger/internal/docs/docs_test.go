@@ -13,13 +13,19 @@ import (
 	"ledger/internal/cmd"
 )
 
+// quickstartLineBudget is the doctrine's kata-sized cap. Raised 120 -> 124
+// by the GitHub-bridge design's quickstart amendment, which added the
+// `set --rename` line: a cold agent must not keep the immutable-title
+// belief.
+const quickstartLineBudget = 124
+
 func TestQuickstartLengthBudget(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "quickstart.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := bytes.Count(data, []byte("\n")); n > 120 {
-		t.Fatalf("quickstart is %d lines; budget is 120 (spec: kata-sized)", n)
+	if n := bytes.Count(data, []byte("\n")); n > quickstartLineBudget {
+		t.Fatalf("quickstart is %d lines; budget is %d (spec: kata-sized)", n, quickstartLineBudget)
 	}
 	for _, must := range []string{"--as", "verify", "testimony", "secrets", "scratch", "cursor", "vocab add", "--from-file"} {
 		if !bytes.Contains(bytes.ToLower(data), []byte(must)) {
