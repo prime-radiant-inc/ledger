@@ -1,15 +1,15 @@
 {
- "ts": "2026-08-19T03:34:03.721",
+ "ts": "2026-08-19T04:26:59.188",
  "type": "note",
  "key": "github-bridge",
- "text": "ruling from jesse: NO dedicated bridge identity — must work with multiple GitHub logins at sync time; echo suppression becomes verified-marker (format + event id resolves on chain); spike v2 building the rev-2 six laws + this ruling; then spec rev 3, then gauntlet round 2",
+ "text": "spike v2 DONE (crash sweep 16/16, live trial all green incl. crash-resume + marker edges); spec rev 3 committed (0-findings-dropped fold of 28); gauntlet round 2 next",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 68915,
+  "pid": 33544,
   "branch": "main",
-  "head": "0f068c4",
+  "head": "5e4579b",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
   "session_source": "CLAUDE_CODE_SESSION_ID"
  }
