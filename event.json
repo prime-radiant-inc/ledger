@@ -1,16 +1,16 @@
 {
- "ts": "2026-08-19T18:24:39",
+ "ts": "2026-08-19T18:49:50",
  "type": "note",
  "key": "github-bridge",
  "kind": "status-update",
- "text": "gauntlet round 4 (three reviewers on the rev-7 restructure): 34 findings, unanimous NOT clarity-grade — but the restructure itself held (only 2 rewrite-introduced defects); the Criticals are pre-existing Part B holes newly visible: unbounded terminal set (probed board corruption), unspecified reopen trigger (fabricated overrides), reclassification flip-flop, Law6/Law2 axis contradiction, ASPECT record collision. rev 8 (f7d67f4) applies all rulings incl. startup terminal-set refusal, convergence axis = terminality+close-reason, CLASS coordinate on divergence records, --state all pinned, Title mapping + issue-creation added. rename build amended mid-flight (guard-free fixture unbuildable, probed+verified). Part B build gate stays with jesse.",
+ "text": "rename build (feat/rename, 8 commits) reviewed: spec APPROVED, quality APPROVED, recommend merge. Five Low/Info follow-ups recorded, none blocking: (1) stale-claim/contested TTY lines print '(renamed by X)' with no title beside it — dropping the mark is cleaner; (2) IMPORTANT for later readers: the vocab legacy-board guard closes VOCAB EXTENSION only, not the room — a legacy board guarding a declared title would make AllContests and writesField disagree (unreachable today, do not summarize as 'the hole is closed'); (3) writesField rule re-implemented inline in AllContests (comment overstates); (4) show vs render guard renamedKeys differently; (5) titleOf builds a second board per status \u003ckey\u003e, paid for at current scale.",
  "author": "claude-code",
  "origin": {
   "host": "m4.local",
-  "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 48694,
-  "branch": "main",
-  "head": "f7d67f4",
+  "cwd": "/Users/jesse/git/ledger-research/.worktrees/rename",
+  "pid": 50321,
+  "branch": "feat/rename",
+  "head": "69ddd92",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
   "session_source": "CLAUDE_CODE_SESSION_ID"
  }
