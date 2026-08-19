@@ -1,16 +1,13 @@
 {
- "ts": "2026-08-19T00:13:43.481",
- "type": "set",
+ "ts": "2026-08-19T00:13:43.632",
+ "type": "note",
  "key": "tracking-ref-reads",
- "fields": {
-  "status": "open"
- },
- "text": "v2: tool-side reads of tracking-only refs for multi-root diagnosis",
+ "text": "migrated from https://github.com/prime-radiant-inc/ledger/issues/9",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 6993,
+  "pid": 7012,
   "branch": "main",
   "head": "cb04ecd",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
