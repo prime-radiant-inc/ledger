@@ -1,16 +1,16 @@
 {
- "ts": "2026-08-19T18:49:50",
+ "ts": "2026-08-19T19:26:01",
  "type": "note",
  "key": "github-bridge",
- "kind": "status-update",
- "text": "rename build (feat/rename, 8 commits) reviewed: spec APPROVED, quality APPROVED, recommend merge. Five Low/Info follow-ups recorded, none blocking: (1) stale-claim/contested TTY lines print '(renamed by X)' with no title beside it — dropping the mark is cleaner; (2) IMPORTANT for later readers: the vocab legacy-board guard closes VOCAB EXTENSION only, not the room — a legacy board guarding a declared title would make AllContests and writesField disagree (unreachable today, do not summarize as 'the hole is closed'); (3) writesField rule re-implemented inline in AllContests (comment overstates); (4) show vs render guard renamedKeys differently; (5) titleOf builds a second board per status \u003ckey\u003e, paid for at current scale.",
+ "kind": "gotcha",
+ "text": "scale-bound flake on merged main full-suite run: TestScaleReadyEnvelopeBound median 161ms vs 140ms bound under parallel-package contention (cmd's 232s subprocess storm); passes in isolation (0.6ms-class) and passed 2 prior full runs on identical code. Absolute wall-clock bounds cannot be pristine under uncontrolled parallel load; min-of-N and retry both fail this mode (contention outlives store's run). Fix requires a contract decision: ratio-to-in-run-baseline, bound-behind-flag with serial invocation, or accept occasional flake. Parked for jesse.",
  "author": "claude-code",
  "origin": {
   "host": "m4.local",
-  "cwd": "/Users/jesse/git/ledger-research/.worktrees/rename",
-  "pid": 50321,
-  "branch": "feat/rename",
-  "head": "69ddd92",
+  "cwd": "/Users/jesse/git/ledger-research/ledger",
+  "pid": 52785,
+  "branch": "main",
+  "head": "6573522",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
   "session_source": "CLAUDE_CODE_SESSION_ID"
  }
