@@ -1,16 +1,13 @@
 {
- "ts": "2026-08-19T00:13:42.655",
- "type": "set",
+ "ts": "2026-08-19T00:13:42.801",
+ "type": "note",
  "key": "watch-fastpath",
- "fields": {
-  "status": "open"
- },
- "text": "watch idle-poll costs 5 subprocesses per tick — take the tip fast path",
+ "text": "migrated from https://github.com/prime-radiant-inc/ledger/issues/5",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 6896,
+  "pid": 6912,
   "branch": "main",
   "head": "cb04ecd",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
