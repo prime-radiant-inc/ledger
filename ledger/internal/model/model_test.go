@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -64,6 +65,45 @@ func TestNewEventShape(t *testing.T) {
 	ev := NewEvent("set", "alice", gitx.Repo{})
 	if ev.Type != "set" || ev.Author != "alice" || len(ev.TS) != 23 { // 2026-08-13T21:00:00.000
 		t.Fatalf("event: %+v", ev)
+	}
+}
+
+// TestRenameIsATopLevelFieldOnASetEvent pins the rename encoding (bridge
+// design rev 6, Part A): a rename is a top-level "rename" string on an
+// ordinary type:"set" event — never a sixth event type — so cursors,
+// dedupe, watch --key and rollup coverage all treat it as the keyed write
+// it is. The field is omitted entirely on every other set event, which is
+// what keeps an unrenamed board's bytes unchanged.
+func TestRenameIsATopLevelFieldOnASetEvent(t *testing.T) {
+	ev := NewEvent("set", "alice", gitx.Repo{})
+	ev.Key, ev.Rename = "task-1", "a better title"
+	b, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc["type"] != "set" {
+		t.Fatalf("a rename rides a set event, not its own type: %s", b)
+	}
+	if doc["rename"] != "a better title" {
+		t.Fatalf("rename must be a top-level field: %s", b)
+	}
+	if _, has := doc["fields"]; has {
+		t.Fatalf("the rename IS the event — no fields ride along: %s", b)
+	}
+
+	plain := NewEvent("set", "alice", gitx.Repo{})
+	plain.Key, plain.Fields = "task-1", map[string]string{"status": "open"}
+	pb, _ := json.Marshal(plain)
+	var plainDoc map[string]any
+	if err := json.Unmarshal(pb, &plainDoc); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := plainDoc["rename"]; has {
+		t.Fatalf("an ordinary set event must carry no rename key at all: %s", pb)
 	}
 }
 

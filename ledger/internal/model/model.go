@@ -47,6 +47,12 @@ type Origin struct {
 	SessionSource string `json:"session_source,omitempty"`
 }
 
+// Event is one chain record. Rename carries a key's new title on an
+// otherwise-empty "set" event: the rename IS the event, so a rename has no
+// Fields and no Evidence, and its wire `type` stays "set" so cursors,
+// idempotency dedupe, `watch --key` and rollup coverage all treat it as
+// the ordinary keyed write it is. The fold tells the two apart with one
+// string test.
 type Event struct {
 	TS                string            `json:"ts"`
 	Type              string            `json:"type"`
@@ -54,6 +60,7 @@ type Event struct {
 	Fields            map[string]string `json:"fields,omitempty"`
 	Kind              string            `json:"kind,omitempty"`
 	Text              string            `json:"text,omitempty"`
+	Rename            string            `json:"rename,omitempty"`
 	Field             string            `json:"field,omitempty"`
 	Value             string            `json:"value,omitempty"`
 	Reason            string            `json:"reason,omitempty"`
