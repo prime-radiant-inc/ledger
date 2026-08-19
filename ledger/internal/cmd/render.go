@@ -7,7 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"ledger/internal/board"
 	"ledger/internal/fold"
+	"ledger/internal/model"
 	"ledger/internal/out"
 )
 
@@ -65,6 +67,12 @@ func renderLines(c *Ctx, led *fold.Ledger) []string {
 	}
 	lines = append(lines, fmt.Sprintf("%s  scope=%s  base=%s  state=%s  events=%d  head=%s",
 		led.Slug, led.Meta.Scope, led.Meta.Base, led.State, eventCount, led.Head()))
+	// The same title history show's identity header carries — render is
+	// show's projection, and a renamed title never renders unlabeled.
+	if model.ReadyCapable(led.Meta) {
+		renamedLines, _ := renamedKeys(board.Build(led.Meta, led.Events))
+		lines = append(lines, renamedLines...)
+	}
 	for _, r := range rows {
 		lines = append(lines, spineLine(r))
 	}

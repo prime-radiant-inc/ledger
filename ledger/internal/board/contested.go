@@ -116,9 +116,13 @@ func (b *Board) ComputeContests(events []model.Event, d dag.Result) {
 // Build's own rule for the labels multi-field.
 func AllContests(meta model.Meta, events []model.Event, d dag.Result) []Contest {
 	// Scope: ready-capable boards — their guarded fields, plus the rename
-	// stream. The title stream is unguardable, so a len(Guard)==0
-	// short-circuit no longer bounds the pass: a guard-free ready-capable
-	// board still has titles, and its renames still race.
+	// stream. The title stream is unguardable, so the old
+	// `|| len(meta.Guard) == 0` half of this short-circuit is gone: it would
+	// now silence a whole stream it does not bound. (Every minting path —
+	// create, import, adopt — refuses a ready-capable board without
+	// --guard status, so that half was unreachable in production anyway;
+	// this package is pure and takes whatever meta it is handed, so the
+	// rule is stated here rather than assumed.)
 	if !model.ReadyCapable(meta) {
 		return nil
 	}

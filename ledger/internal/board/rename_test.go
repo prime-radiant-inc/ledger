@@ -199,10 +199,12 @@ func TestTitleContestCollapsesLikeAnyOtherStream(t *testing.T) {
 	}
 }
 
-// TestTitleStreamContestsOnAGuardFreeReadyCapableBoard: the title stream is
-// unguardable, so a len(Guard)==0 short-circuit may no longer bound the pass
-// — a ready-capable board declaring no guards still has titles, and its
-// renames still race.
+// TestTitleStreamContestsOnAGuardFreeReadyCapableBoard pins the pass's scope
+// rule directly: guards do not bound the title stream. No minting path can
+// produce this meta (create/import/adopt all require --guard status on a
+// ready-capable board), so it is hand-built here — this package is pure and
+// folds whatever meta it is handed, and the removed `len(Guard)==0`
+// short-circuit would silence a stream it never bounded.
 func TestTitleStreamContestsOnAGuardFreeReadyCapableBoard(t *testing.T) {
 	meta := contestMeta()
 	meta.Guard = nil

@@ -376,10 +376,26 @@ func runStatus(c *Ctx, key, field string, byBranch bool, ledgerFlag string) erro
 
 	payload := map[string]any{"ledger": led.Slug, "key": key, "values": values,
 		"notes": notes, "history": eventsJSON(history)}
+	// The drill-down is the one read that names a single key, and the last
+	// place a renamed title could still hide: a reader deciding what to do
+	// with this key must see the title they will act on AND that somebody
+	// changed it. (Deliberate output change, rev 16 — ready-capable boards
+	// only; plain boards have no titles and are untouched.)
+	title, renamed := titleOf(led, key)
+	if title != "" {
+		payload["title"] = title
+		if renamed != nil {
+			payload["renamed"] = renamed
+		}
+	}
 	c.attachFreshness(led, payload)
 
 	lines := addRedirect(c, led, payload)
-	lines = append(lines, key+" on "+led.Slug)
+	head := key + " on " + led.Slug
+	if title != "" {
+		head += `  "` + out.EscapeControls(title) + `"` + renamedMark(renamed)
+	}
+	lines = append(lines, head)
 	for _, f := range fieldNames {
 		lines = append(lines, spineLine(values[f]))
 	}
@@ -469,6 +485,13 @@ func runShow(c *Ctx, ledgerFlag string, whereRaw []string, idFlag string) error 
 	lines := addRedirect(c, led, payload)
 	lines = append(lines, fmt.Sprintf("%s  scope=%s  base=%s  state=%s  events=%d  head=%s",
 		led.Slug, led.Meta.Scope, led.Meta.Base, led.State, eventCount, led.Head()))
+	// The identity header carries the title history: a renamed title never
+	// renders unlabeled, here or on any row. Nothing at all on a board with
+	// no renames.
+	if renamedLines, renamedDocs := renamedKeys(b); renamedDocs != nil {
+		payload["renamed_keys"] = renamedDocs
+		lines = append(lines, renamedLines...)
+	}
 	for _, r := range rows {
 		lines = append(lines, spineLine(r))
 	}
@@ -477,6 +500,57 @@ func runShow(c *Ctx, ledgerFlag string, whereRaw []string, idFlag string) error 
 	}
 	outEmit(c, payload, lines)
 	return nil
+}
+
+// titleOf is the per-key title lookup the drill-down needs: the key's
+// current title and, when that title is not the seed's, who renamed it.
+// Plain boards have no titles at all, so they get ("", nil) and the
+// drill-down renders exactly as it always did.
+func titleOf(led *fold.Ledger, key string) (string, *board.RenameInfo) {
+	if !model.ReadyCapable(led.Meta) {
+		return "", nil
+	}
+	k := board.Build(led.Meta, led.Events).Keys[key]
+	if k == nil {
+		return "", nil
+	}
+	return k.Title, k.RenameInfo()
+}
+
+// renamedKeys is show's (and render's) identity-header addition: one entry
+// per renamed key, listing its prior titles oldest first alongside the
+// current one and who last set it. Returns (nil, nil) when nothing on the
+// board has been renamed, so an unrenamed board's render is byte-identical
+// to what it was before renames existed.
+func renamedKeys(b *board.Board) ([]string, []map[string]any) {
+	if b == nil {
+		return nil, nil
+	}
+	var names []string
+	for name, k := range b.Keys {
+		if len(k.Renames) > 0 {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return nil, nil
+	}
+	sort.Strings(names)
+	lines := make([]string, 0, len(names))
+	docs := make([]map[string]any, 0, len(names))
+	for _, name := range names {
+		k := b.Keys[name]
+		info := k.RenameInfo()
+		prior := make([]string, 0, len(info.Prior))
+		for _, p := range info.Prior {
+			prior = append(prior, `"`+out.EscapeControls(p)+`"`)
+		}
+		lines = append(lines, "  renamed  "+out.EscapeControls(name)+
+			"  prior: "+strings.Join(prior, " -> ")+
+			`  now: "`+out.EscapeControls(k.Title)+`" (by `+out.EscapeControls(info.By)+", ["+info.ID+"])")
+		docs = append(docs, map[string]any{"key": name, "title": k.Title, "renamed": info})
+	}
+	return lines, docs
 }
 
 // findByID resolves a possibly-short --id argument (prefix match, mirroring
@@ -577,6 +651,12 @@ func showIDLines(ev model.Event, committers map[string]string) []string {
 			parts = append(parts, out.EscapeControls(f)+"="+out.EscapeControls(ev.Fields[f]))
 		}
 		lines = append(lines, "  fields: "+strings.Join(parts, " "))
+	}
+	if ev.Rename != "" {
+		// show --id is the pinned ticket-read path for a contest's heads, and
+		// a rename event's whole payload IS its title — rendering it as a
+		// fieldless, bodyless event would hand a reader nothing to judge.
+		lines = append(lines, `  rename: "`+out.EscapeControls(ev.Rename)+`"`)
 	}
 	if len(ev.Evidence) > 0 {
 		lines = append(lines, "  evidence: "+out.EscapeControls(strings.Join(ev.Evidence, " ")))
