@@ -1,18 +1,18 @@
 {
- "ts": "2026-08-19T00:14:39.128",
+ "ts": "2026-08-19T00:17:38.905",
  "type": "set",
- "key": "probe-key",
+ "key": "migration-learnings",
  "fields": {
-  "status": "wontfix"
+  "status": "open"
  },
- "text": "probe artifact, not real work",
+ "text": "implement the migration-learnings plan (docs/superpowers/plans/2026-08-18-migration-learnings.md)",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 8355,
+  "pid": 10600,
   "branch": "main",
-  "head": "cb04ecd",
+  "head": "46bc965",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
   "session_source": "CLAUDE_CODE_SESSION_ID"
  }
