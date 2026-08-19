@@ -1,13 +1,16 @@
 {
- "ts": "2026-08-19T00:17:39.072",
- "type": "note",
- "key": "migration-learnings",
- "text": "plan committed on main; five tasks: override echo, init-from-subdir, skill doctrine x3, gh-migration recipe, board bookkeeping",
+ "ts": "2026-08-19T02:32:08.599",
+ "type": "set",
+ "key": "github-bridge",
+ "fields": {
+  "status": "open"
+ },
+ "text": "GitHub bridge: rename events + Level 1/2 sync (spike, then spec, then gauntlet)",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 10618,
+  "pid": 65379,
   "branch": "main",
   "head": "46bc965",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
