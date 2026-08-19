@@ -1,15 +1,15 @@
 {
- "ts": "2026-08-19T03:03:06.163",
+ "ts": "2026-08-19T03:23:05.048",
  "type": "note",
  "key": "github-bridge",
- "text": "spike DONE (all 5 trial steps green, 17 findings); spec rev 1 committed; gauntlet next",
+ "text": "gauntlet round 1 done: G1 won on severity (19v19 tie, 4C/10M), 9 convergences; spec rev 2 committed — six laws, amendment inventory x6",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 52542,
+  "pid": 63815,
   "branch": "main",
-  "head": "130efa7",
+  "head": "0f068c4",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
   "session_source": "CLAUDE_CODE_SESSION_ID"
  }
