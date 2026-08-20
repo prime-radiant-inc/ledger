@@ -65,13 +65,6 @@ type Syncer struct {
 	ghTitle    map[int]string
 	ghState    map[int]ghStateBits
 	ghComments map[int][]ghComment
-	// claimOnly names the keys whose drain carries status events that are ALL
-	// `in-progress` — a CLAIM-ONLY drain. It pushes nothing and creates
-	// nothing: a claim has no GitHub representation at all, so minting an
-	// issue for one shows a reader nothing they did not already know. A drain
-	// that also carries an `open` seed or a terminal close is not claim-only,
-	// and does create.
-	claimOnly map[string]bool
 	// pendingStatus/pendingRename are the outbound half of echo safety, per
 	// aspect, carrying the value the mirror is ABOUT to push. Intake runs
 	// after the drain is READ: at intake time GitHub still shows the state
@@ -444,8 +437,6 @@ func (s *Syncer) boardValueForMirror(level string) string {
 // with it: a claimed key that stops accepting GitHub closes, permanently.
 func (s *Syncer) scanDrain() {
 	s.pendingStatus, s.pendingRename = map[string]string{}, map[string]string{}
-	s.claimOnly = map[string]bool{}
-	sawNonClaim := map[string]bool{}
 	for _, ev := range s.events {
 		if s.suppressedAuthor(ev) {
 			if strings.HasPrefix(ev.Author, ghAuthorPrefix) {
@@ -465,14 +456,6 @@ func (s *Syncer) scanDrain() {
 		}
 		if v := ev.Fields["status"]; v != "" {
 			s.pendingStatus[ev.Key] = v
-			if v == claimValue {
-				if !sawNonClaim[ev.Key] {
-					s.claimOnly[ev.Key] = true
-				}
-			} else {
-				sawNonClaim[ev.Key] = true
-				delete(s.claimOnly, ev.Key)
-			}
 		}
 	}
 }
@@ -1080,12 +1063,17 @@ func (s *Syncer) mirrorTitle(ev Event) error {
 // reading made the two contradict, and its probed resolution reopened a
 // human's close and published a claim message.
 func (s *Syncer) mirrorStatus(ev Event) error {
-	// The issue-creation rule, checked BEFORE anything can create: a
-	// CLAIM-ONLY drain pushes nothing and creates nothing. A claim has no
-	// GitHub representation at all, so minting an issue for one shows a
-	// reader nothing they did not already know — and nothing is dropped
-	// either, because there was nothing to drop.
-	if _, linked := s.byKey[ev.Key]; !linked && s.claimOnly[ev.Key] {
+	// The issue-creation rule, read on the LEVEL and checked BEFORE anything
+	// can create. A key whose current level is the claim value has nothing to
+	// push — a claim has no GitHub representation at all — so it creates
+	// nothing, HOWEVER its drain was batched. The mirror is a function of the
+	// fold; drain batching must not decide whether an issue exists. The issue
+	// appears when the level next becomes pushable (open, or a terminal), and
+	// notes stay event-driven creators.
+	//
+	// Nothing is "dropped" here either: there was nothing to drop.
+	level := s.currentStatus(ev.Key, ev.Fields["status"])
+	if _, linked := s.byKey[ev.Key]; !linked && level == claimValue {
 		return nil
 	}
 	n, err := s.ensureIssue(ev.Key, ev.ID)
@@ -1096,7 +1084,6 @@ func (s *Syncer) mirrorStatus(ev Event) error {
 		s.dropped(ev, "status")
 		return nil
 	}
-	level := s.currentStatus(ev.Key, ev.Fields["status"])
 	want := s.boardValueForMirror(level)
 	have := s.ghValue(s.ghState[n])
 	if want == have {

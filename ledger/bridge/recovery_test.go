@@ -288,15 +288,13 @@ func itoa(n int) string {
 	return string(b)
 }
 
-// TestClaimOnlyDrainCreatesNothing is rev 8.2's sharpened issue-creation
-// rule. A claim has NO GitHub representation at all, so minting an issue for
-// one shows a reader nothing — "a claim-only drain pushes nothing and creates
-// nothing".
-//
-// The rule is about the DRAIN, not the level: a drain that also carries the
-// key's `open` seed does have something to push, and does create.
-func TestClaimOnlyDrainCreatesNothing(t *testing.T) {
-	t.Run("a claim-only drain creates no issue and warns nothing", func(t *testing.T) {
+// TestClaimLevelCreatesNothing is rev 8.2's issue-creation rule, which reads
+// on the LEVEL and not on the drain: a key whose current level is the claim
+// value has nothing to push and creates nothing, HOWEVER its drain was
+// batched. The mirror is a function of the fold, so drain batching must not
+// decide whether an issue exists.
+func TestClaimLevelCreatesNothing(t *testing.T) {
+	t.Run("a claim level creates no issue and warns nothing", func(t *testing.T) {
 		f := newIssueFixture(t)
 		f.seed("cache-warm", "warm the cache on boot", "jesse")
 		f.converge("operator", 3) // the seed is mirrored and behind the cursor
@@ -326,19 +324,56 @@ func TestClaimOnlyDrainCreatesNothing(t *testing.T) {
 		}
 	})
 
-	t.Run("a drain carrying the seed does create", func(t *testing.T) {
+	// The case that separates the two readings, and the one the ruling
+	// settles: a seed and its claim batched into ONE drain. Drain-shaped, the
+	// drain is not claim-only and the issue would be created; level-shaped,
+	// the level is the claim value and nothing is created — the same answer
+	// the bridge gives when the two events arrive in separate runs.
+	t.Run("a seed and its claim in one drain still create nothing", func(t *testing.T) {
 		f := newIssueFixture(t)
 		f.seed("cache-warm", "warm the cache on boot", "jesse")
 		f.setStatus("cache-warm", "in-progress", "and claiming it immediately", "ash")
+
 		r := f.syncOK("operator")
+		if got := f.countIssues(); got != 0 {
+			t.Fatalf("the level is the claim value, so no issue may exist however the drain was "+
+				"batched, got %d: %s", got, mustJSON(t, r))
+		}
+		if r.GHMutations != 0 {
+			t.Fatalf("nothing may be pushed: %s", mustJSON(t, r))
+		}
+		for _, w := range r.Warnings {
+			if strings.Contains(w, "dropped") {
+				t.Fatalf("nothing was dropped — there was nothing to drop: %q", w)
+			}
+		}
+		f.converge("operator", 3)
+		if got := f.countIssues(); got != 0 {
+			t.Fatalf("converging created %d issues", got)
+		}
+
+		// The issue appears when the level next becomes PUSHABLE, and arrives
+		// carrying its close and its message.
+		f.setStatus("cache-warm", "closed", "fixed in a1b2c3", "ash", "commit:a1b2c3")
+		r = f.syncOK("operator")
 		if f.countIssues() != 1 {
-			t.Fatalf("a drain carrying the key's seed must create its issue: %s", mustJSON(t, r))
+			t.Fatalf("a terminal level must create the issue: %s", mustJSON(t, r))
 		}
-		if state, _ := f.issueState(1); state != "OPEN" {
-			t.Fatalf("and leave it open, got %s", state)
+		n := f.ghLoad().Issues[0].Number
+		if state, reason := f.issueState(n); state != "CLOSED" || reason != "COMPLETED" {
+			t.Fatalf("and close it, got %s/%s", state, reason)
 		}
-		if len(f.commentBodies(1)) != 0 {
-			t.Fatalf("the claim message must not reach GitHub: %v", f.commentBodies(1))
+		bodies := f.commentBodies(n)
+		if len(bodies) != 1 || !strings.Contains(bodies[0], "fixed in a1b2c3") {
+			t.Fatalf("the close must carry its message: %v", bodies)
+		}
+		if !strings.Contains(bodies[0], "commit:a1b2c3") {
+			t.Fatalf("and its evidence: %v", bodies)
+		}
+		for _, b := range bodies {
+			if strings.Contains(b, "claiming it immediately") {
+				t.Fatalf("the claim message must never reach GitHub: %q", b)
+			}
 		}
 		f.converge("operator", 3)
 	})
