@@ -634,10 +634,13 @@ no-op".
   claim message). Under this axis `open`↔`in-progress` is never a
   difference — Law 6's mirrors-to-nothing is this rule's corollary,
   not an exception. When the difference is a REOPEN from a
-  non-terminal board level (issue CLOSED, board active), the mirror
-  reopens with a FIXED marked text naming the divergence — never a
-  board message (there is none to carry that isn't a claim/touch-base
-  message, which never reach GitHub). The value the mirror pushes is
+  non-terminal board level (issue CLOSED, board active): if the drain
+  event IS the level and the level is the open value (an event-driven
+  reopen — a human wrote `open` with a message), the reopen comment
+  carries that event's message; otherwise (convergence-driven, or the
+  level is a claim value) the mirror reopens with a FIXED marked text
+  naming the divergence — never a claim/touch-base message, which
+  never reach GitHub. The value the mirror pushes is
   the board's current FOLDED state (post-intake), with the drain
   supplying only marker ids and, when the event IS the level, the
   message. A drain-derived
@@ -865,8 +868,9 @@ identity mapping; non-terminal transition mirroring.
    `override: settled`, no fabricated evidence, across three
    attempts); an open issue over a claimed key writes NOTHING inbound
    (no reopen-to-open, no fabricated auto-override, across runs); a
-   closed issue over a non-terminal board level reopens with the
-   FIXED text and never a claim message.
+   closed issue over an event-driven `open` reopens carrying that
+   event's message, while a convergence-driven reopen uses the FIXED
+   text — and a claim message reaches GitHub in neither case.
 5. Idempotence: crash injection at every transport call site in BOTH
    modes — fail-BEFORE and fail-AFTER the effect (fail-before alone
    never creates the orphan that mints duplicates) ⇒ every replay
