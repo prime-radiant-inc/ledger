@@ -383,8 +383,13 @@ fires only when the two sides' current titles differ.
 
 **Issue creation, stated**: a key gains an issue the FIRST time the
 mirror has something to push for it AND the key has a title (Part
-A's fold rule) — a claim-only drain pushes nothing and creates
-nothing; the issue is created with the key's current title
+A's fold rule) — and "something to push" reads on the LEVEL, not the
+drain: a key whose current level is the claim value has nothing to
+push and creates nothing, however its drain was batched (the mirror
+is a function of the fold; drain batching must not decide whether an
+issue exists). The issue appears when the level next becomes
+pushable — open, or a terminal — and a note also creates (notes stay
+event-driven); the issue is created with the key's current title
 and a body carrying the STAMP and the `ledger-key: <key>` hint, and
 the link note is written immediately after. A titleless key never
 gains an issue, and a status or title mirror dropped for want of an
