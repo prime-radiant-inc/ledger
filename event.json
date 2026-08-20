@@ -1,18 +1,21 @@
 {
- "ts": "2026-08-20T19:39:28.615",
+ "ts": "2026-08-20T20:51:45.855",
  "type": "set",
  "key": "brew-name-collision",
  "fields": {
-  "status": "in-progress"
+  "status": "closed"
  },
- "text": "jesse ruled: rename the tool to chit (repo name stays); command surface only — wire formats (.ledger.toml, refs/ledger/*, --ledger flag, module path) keep their names; ledger-gh becomes chit-gh; tap swap ships chit.rb and removes ledger.rb; ledger-memory plugin needs a companion update after merge. Build running on feat/chit-rename",
+ "text": "tool renamed to chit: v0.3.0 released (chit assets, chit.rb in tap, ledger.rb retired), jesse's machine on chit 0.3.0, ledger-memory 0.1.4 pushed (chit-first resolution, guard denies both names). Old ledger 0.2.0 keg left installed as the plugin's fallback until the plugin update is pulled",
+ "evidence": [
+  "commit:56529e3"
+ ],
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 42162,
+  "pid": 90491,
   "branch": "main",
-  "head": "4cf27fc",
+  "head": "56529e3",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
   "session_source": "CLAUDE_CODE_SESSION_ID"
  }
