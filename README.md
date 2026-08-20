@@ -81,9 +81,9 @@ JSON document in each tree. Consequences worth knowing:
 - Cost honesty: ~640 bytes per event packed. A heavy year of constant use
   is megabytes, not gigabytes.
 
-v1 is local-per-clone. Ledgers travel by `export`/`import` (JSONL);
-fetch/push synchronization between clones is designed (see the spec) but
-not yet built.
+Ledgers travel by `export`/`import` (JSONL) and replicate between
+clones with `chit sync` / `chit push` (tracking refs under
+`refs/ledger-remote/*`, conflict-free sentinel merges).
 
 ## The trust model
 

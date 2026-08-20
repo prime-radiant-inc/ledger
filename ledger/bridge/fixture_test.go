@@ -333,7 +333,7 @@ func (f *fixture) syncMode(login string, failAt, failAfter int) (*Report, error)
 // two goroutines sharing this test's memory would not be two operators.
 func (f *fixture) runBridgeBinary() (string, error) {
 	cmd := exec.Command(bridgeBin, "sync", "--repo", f.repo, "--ledger", f.slug,
-		"--store", f.dir, "--ledger-bin", ledgerBin, "--gh-bin", ghBin,
+		"--store", f.dir, "--chit-bin", ledgerBin, "--gh-bin", ghBin,
 		"--done", f.done, "--not-planned", f.notPlanned, "--list-limit", fmt.Sprint(f.listLimit))
 	cmd.Env = append(os.Environ(),
 		fakegh.EnvState+"="+f.ghState, fakegh.EnvLogin+"=operator",

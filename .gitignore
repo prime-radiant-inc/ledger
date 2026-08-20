@@ -3,3 +3,6 @@ data/
 .private-journal/
 # build-tarballs.sh output
 dist/
+# locally built binaries
+ledger/chit
+ledger/chit-gh

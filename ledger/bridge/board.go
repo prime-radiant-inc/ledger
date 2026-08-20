@@ -210,7 +210,7 @@ func (b Board) CheckCapable() error {
 		return fmt.Errorf("the chit binary %q predates tool rev 16: `set --rename` is missing. "+
 			"The bridge needs it for title mirroring, and rev 16's machine-readable `signals` in "+
 			"needs_override documents for Law 5 — without it every guarded intake write takes the "+
-			"refusal path. Upgrade chit (chit update), or point --ledger-bin at a rev-16 binary", b.Bin)
+			"refusal path. Upgrade chit (chit update), or point --chit-bin at a rev-16 binary", b.Bin)
 	}
 	return nil
 }

@@ -57,7 +57,7 @@ func run(argv []string, stdout, stderr *os.File) int {
 	repo := fs.String("repo", "", "GitHub repository, owner/repo (required)")
 	slug := fs.String("ledger", "", "board slug (required)")
 	store := fs.String("store", "", "chit store path")
-	ledgerBin := fs.String("ledger-bin", "chit", "path to the chit binary")
+	ledgerBin := fs.String("chit-bin", "chit", "path to the chit binary")
 	ghBin := fs.String("gh-bin", "gh", "path to the gh binary")
 	// The board's two MIRRORED TERMINALS, configured rather than assumed: a
 	// legal ready-capable board can call these done/dropped. Startup refuses

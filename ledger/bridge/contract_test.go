@@ -39,7 +39,7 @@ func TestExitContract(t *testing.T) {
 		return code, so.String(), se.String()
 	}
 	ok := []string{"sync", "--repo", f.repo, "--ledger", f.slug, "--store", f.dir,
-		"--ledger-bin", ledgerBin, "--gh-bin", ghBin, "--done", f.done, "--not-planned", f.notPlanned}
+		"--chit-bin", ledgerBin, "--gh-bin", ghBin, "--done", f.done, "--not-planned", f.notPlanned}
 
 	// 2 — usage.
 	for _, args := range [][]string{
@@ -86,7 +86,7 @@ func TestExitContract(t *testing.T) {
 	// 1 — error document on STDERR. A second repo is the refusal at hand.
 	code, stdout, stderr = run(append(append([]string{}, ok[:1]...),
 		"--repo", "prime-radiant-inc/elsewhere", "--ledger", f.slug, "--store", f.dir,
-		"--ledger-bin", ledgerBin, "--gh-bin", ghBin, "--done", f.done, "--not-planned", f.notPlanned)...)
+		"--chit-bin", ledgerBin, "--gh-bin", ghBin, "--done", f.done, "--not-planned", f.notPlanned)...)
 	if code != exitError {
 		t.Fatalf("want exit 1, got %d", code)
 	}

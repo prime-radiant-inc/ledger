@@ -63,7 +63,7 @@ cmd_setup() {
 cmd_sync() {
   log "chit-gh sync $*"
   run "$BRIDGE" sync --repo "$REPO" --ledger "$SLUG" --store "$A" \
-    --ledger-bin "$LEDGER" "$@"
+    --chit-bin "$LEDGER" "$@"
 }
 
 cmd_ledger() {
