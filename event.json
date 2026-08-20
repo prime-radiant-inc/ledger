@@ -1,21 +1,18 @@
 {
- "ts": "2026-08-20T01:58:08.420",
+ "ts": "2026-08-20T18:56:44.211",
  "type": "set",
- "key": "github-bridge",
+ "key": "brew-name-collision",
  "fields": {
-  "status": "closed"
+  "status": "open"
  },
- "text": "bridge shipped: rename (Part A) + ledger-gh (Part B) both on main; spec at rev 8.2 after 4 spikes, 4 gauntlets, build + fix round + mutation-probed re-review",
- "evidence": [
-  "commit:41c99c8"
- ],
+ "text": "brew formula name 'ledger' is shadowed by homebrew-core's ledger-cli (accounting, 3.4.x): bare 'brew upgrade ledger' replaces our tool with the accounting program (happened live on jesse's machine cutting v0.2.0; repaired via fully-qualified reinstall). Fix candidates: rename the formula, conflicts_with declaration, or document fully-qualified install/upgrade everywhere",
  "author": "claude",
  "origin": {
   "host": "m4.local",
-  "cwd": "/Users/jesse/git/ledger-research/ledger",
-  "pid": 97581,
+  "cwd": "/Users/jesse/git/ledger-research",
+  "pid": 22993,
   "branch": "main",
-  "head": "b04774f",
+  "head": "4cf27fc",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
   "session_source": "CLAUDE_CODE_SESSION_ID"
  }
