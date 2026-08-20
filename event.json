@@ -1,14 +1,19 @@
 {
- "ts": "2026-08-20T01:57:40",
- "type": "note",
+ "ts": "2026-08-20T01:58:08.420",
+ "type": "set",
  "key": "github-bridge",
- "kind": "status-update",
- "text": "SHIPPED: ledger-gh merged to main at 41c99c8 (fix round 1 + level-shaped creation, scoped re-review APPROVED with 26/26 mutation-probed items; migration-learnings merged at 7c08c9e). Re-review residue, parked as follow-ups: (a) fakegh --repo validation untested; (b) dropped() title branch untested; (c) the four !deduped caller guards are unreachable end-to-end in the fixture (Retracted short-circuits them — board-level plumbing IS pinned; do not mistake the guards for tested); (d) no decoy warning for gh-issue-\u003cn\u003e seed idem keys (board-side writer can bind an issue silently — inside the asserted-authorship v1 model, worth a warnDecoyIdemKeys sibling); (e) sync.go:617 dead assignment. Note: bridge package needs go test -timeout 30m (spec'd).",
- "author": "claude-code",
+ "fields": {
+  "status": "closed"
+ },
+ "text": "bridge shipped: rename (Part A) + ledger-gh (Part B) both on main; spec at rev 8.2 after 4 spikes, 4 gauntlets, build + fix round + mutation-probed re-review",
+ "evidence": [
+  "commit:41c99c8"
+ ],
+ "author": "claude",
  "origin": {
   "host": "m4.local",
-  "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 97075,
+  "cwd": "/Users/jesse/git/ledger-research/ledger",
+  "pid": 97581,
   "branch": "main",
   "head": "b04774f",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
