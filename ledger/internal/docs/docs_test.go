@@ -74,7 +74,7 @@ func TestQuickstartExamplesExecute(t *testing.T) {
 // curatedOutOfQuickstart are verbs deliberately absent from the quickstart's
 // doctrine: render/version/update/quickstart act on the binary or a file
 // path rather than board/coordination doctrine, and completion/help are
-// cobra machinery, not ledger verbs.
+// cobra machinery, not chit verbs.
 var curatedOutOfQuickstart = map[string]bool{
 	"render": true, "version": true, "update": true, "quickstart": true,
 	"completion": true, "help": true,

@@ -58,7 +58,7 @@ func ledgerIssuesSkillMDPath(t *testing.T) string {
 // doctrineBinary is the exact placeholder every command line in the
 // section must open with — the skill's absolute-binary-path convention
 // for this section (spec "The write idioms": doctrine lines that carry a
-// bare `ledger` get typed as bare `ledger`, a trial-proven failure mode).
+// bare `chit` get typed as bare `chit`, a trial-proven failure mode).
 const doctrineBinary = "~/path-to/chit"
 
 // doctrineCdTokens is the exact three-token prefix every command line in
@@ -82,7 +82,7 @@ var expectCommentRE = regexp.MustCompile(`^(.*?)\s+# expect: exit (\d+)(?: error
 // doctrineCmd is one parsed, not-yet-substituted command line from the
 // section: verb+args (binary placeholder already stripped) plus its
 // documented outcome (default: exit 0, no error). pipeTo is non-empty for
-// a line shaped `<ledger invocation> | <shell tail>` (e.g. the triage
+// a line shaped `<chit invocation> | <shell tail>` (e.g. the triage
 // sweep's `| grep '"override"'`) — the raw text after the pipe, verbatim,
 // deliberately NOT tokenized by tokenizeCommand: a real shell (`sh -c`)
 // runs it against the ledger invocation's captured stdout, so single-quote
@@ -224,7 +224,7 @@ var inlineCodeRE = regexp.MustCompile("`([^`]+)`")
 
 // checkNoBareInlineDoctrineSnippets is the belt-and-braces guard against
 // the exact class of drift that let finding 2 slip through: a runnable-
-// looking ledger command written as prose (an inline single-backtick span)
+// looking chit command written as prose (an inline single-backtick span)
 // instead of a fenced block, so parseDoctrineCommands' fence-only walk
 // above never sees it and it silently goes unexecuted forever. Any inline
 // span that opens with the binary placeholder is, by construction, never
