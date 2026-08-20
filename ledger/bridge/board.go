@@ -9,14 +9,14 @@ import (
 	"strings"
 )
 
-// Board is the board side of the bridge, reached ONLY through the `ledger`
+// Board is the board side of the bridge, reached ONLY through the `chit`
 // CLI as a subprocess (spec rule, v1). Board doctrine — CAS, standing
 // signals, evidence — binds the bridge exactly as it binds any agent, so
 // every write here goes through the same doors an agent's would.
 type Board struct {
 	Bin   string // path to the chit binary
 	Slug  string
-	Store string // --store, empty to let ledger resolve
+	Store string // --store, empty to let chit resolve
 }
 
 // openValue is the board value a seed and an inbound reopen write. There is
@@ -25,7 +25,7 @@ type Board struct {
 // non-terminal value is refused at create), so reopen ⇒ `open`, always.
 const openValue = "open"
 
-// BoardErr is a ledger CLI error with its machine-readable identifier — the
+// BoardErr is a chit CLI error with its machine-readable identifier — the
 // bridge's whole decision logic (claim_lost, needs_override,
 // reset_required, partial_failure) keys off it, never off English prose.
 type BoardErr struct {
@@ -122,7 +122,7 @@ func (b Board) args(extra []string) []string {
 	return append(args, "--ledger", b.Slug)
 }
 
-// run invokes one ledger verb and decodes its JSON envelope. stdout is
+// run invokes one chit verb and decodes its JSON envelope. stdout is
 // always JSON here: the subprocess has no TTY, which is exactly when the
 // tool's JSON-by-default rule applies.
 func (b Board) run(extra ...string) (map[string]any, error) {
@@ -188,7 +188,7 @@ func (b Board) exec(args []string) (map[string]any, error) {
 	return doc, nil
 }
 
-// CheckCapable is the PRE-SYNC binary capability probe: does this `ledger`
+// CheckCapable is the PRE-SYNC binary capability probe: does this `chit`
 // understand the rename event, i.e. is it tool rev 16 or later?
 //
 // It is a refusal by name rather than a runtime surprise because Law 5's

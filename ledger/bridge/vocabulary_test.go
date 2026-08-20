@@ -251,7 +251,7 @@ func TestCapabilityProbeRefusesAPreRev16Binary(t *testing.T) {
 	}
 	// And a binary that cannot run at all is a different, named failure.
 	if err := (Board{Bin: filepath.Join(dir, "nope"), Slug: "issues"}).CheckCapable(); err == nil ||
-		!strings.Contains(err.Error(), "cannot run the ledger binary") {
+		!strings.Contains(err.Error(), "cannot run the chit binary") {
 		t.Fatalf("a missing binary must be named: %v", err)
 	}
 }

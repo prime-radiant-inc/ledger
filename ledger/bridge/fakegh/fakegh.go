@@ -6,7 +6,7 @@
 // safely, never double-post, never mint a duplicate issue — are promises
 // about what happens BETWEEN two transport calls, and a live repo cannot be
 // failed on demand at the tenth call, thirty times in a row. The board side
-// of those tests is the real `ledger` binary against a real store: only
+// of those tests is the real `chit` binary against a real store: only
 // GitHub is faked.
 //
 // FIXTURE FAITHFULNESS is a test-plan law, not a nicety. Four real defects

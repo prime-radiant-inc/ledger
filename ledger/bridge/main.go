@@ -84,7 +84,7 @@ func run(argv []string, stdout, stderr *os.File) int {
 	}
 
 	board := Board{Bin: *ledgerBin, Slug: *slug, Store: *store}
-	// The pre-sync capability probe: an old `ledger` is refused BY NAME
+	// The pre-sync capability probe: an old `chit` is refused BY NAME
 	// rather than silently taking Law 3's refusal path on every guarded
 	// intake write.
 	if err := board.CheckCapable(); err != nil {

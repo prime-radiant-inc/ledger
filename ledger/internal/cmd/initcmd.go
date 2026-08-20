@@ -47,15 +47,15 @@ func ledgerTomlFor(remote string) string {
 	if remote != "" {
 		remoteLine = fmt.Sprintf("remote = %q  # default sync remote (name only)\n", remote)
 	}
-	return "# This repo uses `ledger` for durable agent working-state (git phantom refs).\n" +
+	return "# This repo uses `chit` for durable agent working-state (git phantom refs).\n" +
 		"# Bootstrap in a fresh clone:  " + bootstrapCmd + "\n" +
 		"# Docs: run `chit quickstart`\n" +
 		remoteLine
 }
 
 var claudeStanzaLines = []string{
-	"  ## Ledger",
-	"  This repo tracks agent working-state with `ledger` (durable, git-backed).",
+	"  ## chit",
+	"  This repo tracks agent working-state with `chit` (durable, git-backed).",
 	"  Run `chit ls` at the start of a session to see open work before starting new work.",
 	"  Record status and handoffs with `chit set` / `chit note`; never write secrets into a ledger entry.",
 }
@@ -79,7 +79,7 @@ var adminPointerLine = "docs: " + bootstrapHint + "; " +
 // follow-on work with the sync plan, and the spec's own "printed, never
 // auto-edited" rule for CLAUDE.md governs here too.
 const hooksSnippet = "Paste this into `.claude/settings.json` yourself (merge with any existing " +
-	"\"SessionStart\" hooks — ledger never edits harness config directly):\n\n" +
+	"\"SessionStart\" hooks — chit never edits harness config directly):\n\n" +
 	"```json\n" +
 	"{\n" +
 	"  \"hooks\": {\n" +

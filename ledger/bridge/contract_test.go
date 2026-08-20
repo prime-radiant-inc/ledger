@@ -147,7 +147,7 @@ func TestSlugificationIsPinned(t *testing.T) {
 // slug failed; warn on every other slug's failure. A blanket abort couples
 // the bridge's availability to every dead remote in the operator's store.
 //
-// Driven against a stand-in `ledger` so both branches are reachable
+// Driven against a stand-in `chit` so both branches are reachable
 // deterministically — and so the exit-3 document is read off STDOUT, which is
 // where sync and push write it.
 func TestSyncFailureScoping(t *testing.T) {

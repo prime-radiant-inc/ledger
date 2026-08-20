@@ -77,7 +77,7 @@ func TestPositionalSlugOnReadVerbSuggestsLedgerFlag(t *testing.T) {
 		if code != 4 || !strings.Contains(se, "bad_usage") {
 			t.Fatalf("%s <slug> must be bad_usage exit 4: %d %q", verb, code, se)
 		}
-		if !strings.Contains(se, "did you mean: ledger "+verb+" --ledger demo?") {
+		if !strings.Contains(se, "did you mean: chit "+verb+" --ledger demo?") {
 			t.Fatalf("%s <slug> hint must name --ledger: %q", verb, se)
 		}
 		if strings.Contains(se, "empty_body") || strings.Contains(se, "conflicting_body") {

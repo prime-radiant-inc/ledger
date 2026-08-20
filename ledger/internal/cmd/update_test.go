@@ -182,7 +182,7 @@ func TestUpdateRefusesHomebrewInstall(t *testing.T) {
 
 	restore := updateTarget
 	updateTarget = func() (string, error) {
-		return "/opt/homebrew/Cellar/ledger/0.1.0/bin/ledger", nil
+		return "/opt/homebrew/Cellar/chit/0.1.0/bin/chit", nil
 	}
 	defer func() { updateTarget = restore }()
 
@@ -276,11 +276,11 @@ func TestPassiveCheckGating(t *testing.T) {
 	selfupdate.SaveState(stateDir, selfupdate.State{CheckedAt: time.Now(), Latest: "v0.2.0"})
 	restoreT := updateTarget
 	updateTarget = func() (string, error) {
-		return "/opt/homebrew/Cellar/ledger/0.1.0/bin/ledger", nil
+		return "/opt/homebrew/Cellar/chit/0.1.0/bin/chit", nil
 	}
 	defer func() { updateTarget = restoreT }()
 	passiveUpdateCheck(&Ctx{TTY: true, Stderr: &se}, "show")
-	if !strings.Contains(se.String(), "brew upgrade ledger") || strings.Contains(se.String(), "chit update") {
+	if !strings.Contains(se.String(), "brew upgrade chit") || strings.Contains(se.String(), "chit update") {
 		t.Fatalf("brew-managed nag must point at brew upgrade: %q", se.String())
 	}
 }

@@ -14,7 +14,7 @@ import (
 )
 
 // The bridge's tests run against a FIXTURE transport for GitHub and the REAL
-// ledger binary for the board. Faking the board would mean asserting against
+// chit binary for the board. Faking the board would mean asserting against
 // a mock of the very machinery the bridge's correctness depends on — CAS,
 // standing signals, idempotency-key dedupe, the cursor contract — so the
 // board here is a real store, real git, real subprocesses. Only GitHub is

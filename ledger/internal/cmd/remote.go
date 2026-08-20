@@ -79,7 +79,7 @@ func breadcrumbExists(repoDir string) bool {
 // signal that `chit init` (or a `sync`/`push` repair) has run at least
 // once in THIS clone. Refspec and config are repo-local and never clone
 // (spec: "every clone bootstraps itself"), so a fresh clone of a repo that
-// already uses ledger starts with this false even though its breadcrumb is
+// already uses chit starts with this false even though its breadcrumb is
 // committed and present.
 func installedRefspec(repo gitx.Repo) bool {
 	for _, r := range remotes(repo) {

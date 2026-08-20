@@ -262,7 +262,7 @@ func TestInitRepoJSONHasDoctrineFields(t *testing.T) {
 			t.Fatalf("missing/empty %q in JSON payload: %v", field, doc)
 		}
 	}
-	if !strings.Contains(doc["stanza"].(string), "Ledger") {
+	if !strings.Contains(doc["stanza"].(string), "## chit") {
 		t.Fatalf("stanza should carry the actual CLAUDE.md/AGENTS.md text: %v", doc["stanza"])
 	}
 	if !strings.Contains(doc["commit_hint"].(string), "commit") {

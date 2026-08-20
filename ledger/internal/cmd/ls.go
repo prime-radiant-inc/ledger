@@ -36,10 +36,10 @@ func newLsCmd(c *Ctx) *cobra.Command {
 // lsBootstrapHint is what `ls` prints in place of an empty listing when the
 // committed breadcrumb (.ledger.toml) is present but no ledger refspec has
 // been installed in this clone (installedRefspec, remote.go) — a fresh
-// clone of a repo that uses ledger, before its own `chit init && chit
+// clone of a repo that uses chit, before its own `chit init && chit
 // sync` has ever run here. Without this, the first `ls` in that clone reads
 // as "no ledgers exist" when the truth is "nothing has been synced yet".
-const lsBootstrapHint = "this repo uses ledger, but it hasn't been bootstrapped in this clone — run `" + bootstrapCmd + "`"
+const lsBootstrapHint = "this repo uses chit, but it hasn't been bootstrapped in this clone — run `" + bootstrapCmd + "`"
 
 func runLs(c *Ctx, all bool) error {
 	slugs, err := c.Store.Slugs()
