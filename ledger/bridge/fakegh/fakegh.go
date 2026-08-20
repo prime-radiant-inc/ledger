@@ -199,6 +199,15 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if login == "" {
 		login = "operator"
 	}
+	// --repo faithfulness: the real `gh` talks to the repo it is told to,
+	// and a test that points a bridge at the wrong fixture repo must fail
+	// the way a real mis-pointed run would, not silently answer with some
+	// other repo's issues. `gh api` addresses the repo inside its path
+	// instead, so it is checked there.
+	if repo := flagOf(args, "--repo"); repo != "" && repo != st.Repo {
+		fmt.Fprintf(stderr, "fakegh: this repo is %q, not %q\n", st.Repo, repo)
+		return 1
+	}
 	st.Calls++
 	st.Log = append(st.Log, strings.Join(args, " "))
 	flakeBefore, flakeAfter := flakeAt(st.Calls)
@@ -270,6 +279,15 @@ func flakeAt(n int) (before, after bool) {
 		return false, true
 	}
 	return true, false
+}
+
+func flagOf(args []string, name string) string {
+	for i, a := range args {
+		if a == name && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
 }
 
 func dispatch(st *State, args []string, login string, stdout, stderr io.Writer) int {
@@ -441,6 +459,10 @@ func apiCall(st *State, args []string, login string, flagVal func(string) string
 		fmt.Fprintf(stderr, "fakegh: unsupported api path %q\n", path)
 		return 1
 	}
+	if !strings.Contains(path, "repos/"+st.Repo+"/") {
+		fmt.Fprintf(stderr, "fakegh: this repo is %q, but the path is %q\n", st.Repo, path)
+		return 1
+	}
 	trimmed := strings.SplitN(path, "?", 2)[0]
 	parts := strings.Split(strings.TrimSuffix(trimmed, "/timeline"), "/")
 	n := parts[len(parts)-1]
@@ -472,6 +494,10 @@ func apiCall(st *State, args []string, login string, flagVal func(string) string
 // patchIssue applies `-f state=...` / `-f state_reason=...`, which is how
 // the bridge closes, reclassifies and reopens.
 func patchIssue(st *State, path, login string, args []string, stdout, stderr io.Writer) int {
+	if !strings.Contains(path, "repos/"+st.Repo+"/") {
+		fmt.Fprintf(stderr, "fakegh: this repo is %q, but the path is %q\n", st.Repo, path)
+		return 1
+	}
 	parts := strings.Split(strings.SplitN(path, "?", 2)[0], "/")
 	is := issueArg(st, parts[len(parts)-1], stderr)
 	if is == nil {

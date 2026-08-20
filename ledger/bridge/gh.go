@@ -184,6 +184,14 @@ func (g GH) SetState(n int, closed, notPlanned bool) error {
 // Comment posts a comment and returns it as the API would have listed it, so
 // the caller can fold it into this run's view of the issue and never
 // double-post after a mid-run failure.
+//
+// The returned ghComment is SYNTHETIC and deliberately carries no author:
+// `gh issue comment` prints only the new comment's URL, and inventing a
+// login here would be a guess. It is safe because the only thing this run
+// does with it is the outbound "have I posted this event already" marker
+// check, which reads the BODY. If it ever reached the inbound comment path
+// instead, the author-less guard there refuses it rather than writing a bare
+// `github:@` to the board — the second, independent defence.
 func (g GH) Comment(n int, body string) (ghComment, error) {
 	out, err := g.run("issue", "comment", fmt.Sprint(n), "--body", body)
 	if err != nil {

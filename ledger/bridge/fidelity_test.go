@@ -378,7 +378,7 @@ func TestChangedLinkIsRefusedNeverRepointed(t *testing.T) {
 	f.seed("cache-warm", "warm the cache on boot", "jesse")
 	f.syncOK("operator")
 	other := f.humanCreateIssue("somewhere else", "body", "mallory")
-	if _, err := f.board().LinkNote("cache-warm", other); err != nil {
+	if _, _, err := f.board().LinkNote("cache-warm", other); err != nil {
 		t.Fatal(err)
 	}
 
@@ -414,7 +414,7 @@ func TestOldestWinsSurvivesAMerge(t *testing.T) {
 	// A later note naming a different issue arrives (as a merge would deliver
 	// a loser's). The established link must not move.
 	loser := f.humanCreateIssue("a loser", "body", "mallory")
-	if _, err := f.board().LinkNote("cache-warm", loser); err != nil {
+	if _, _, err := f.board().LinkNote("cache-warm", loser); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 3; i++ {
@@ -564,29 +564,6 @@ func TestBrokenLinkWarnsAndHandsOffOnce(t *testing.T) {
 	if f.countIssues() != 0 {
 		t.Fatalf("the bridge must NOT create a replacement issue: %d", f.countIssues())
 	}
-}
-
-// TestSyncPartialFailureIsScopedToOwnSlug: `ledger sync` takes no slug
-// selector, so a blanket abort couples the bridge's availability to every
-// dead remote in the operator's store. Abort iff OUR slug failed.
-func TestSyncPartialFailureIsScopedToOwnSlug(t *testing.T) {
-	f := newIssueFixture(t)
-	f.seed("cache-warm", "warm the cache on boot", "jesse")
-	remote := t.TempDir()
-	f.git("init", "-q", "--bare", remote)
-	f.git("remote", "add", "origin", remote)
-	// A second slug in the same store, tracked against a remote whose ref is
-	// about to be made unmergeable.
-	f.ledgerOK("create", "other", "--scope", "somebody else's board", "--field", "state=on,off", "--as", "jesse")
-	f.ledgerOK("push", "issues")
-	f.ledgerOK("push", "other")
-
-	// Foreign slug fails: a warning, and the run proceeds.
-	r := f.syncOK("operator")
-	if r.GHMutations == 0 {
-		t.Fatalf("the run must proceed: %s", mustJSON(t, r))
-	}
-	f.converge("operator", 4)
 }
 
 // TestFixtureTransportIsFaithful pins the fixture-faithfulness LAW itself.

@@ -223,7 +223,7 @@ func TestTwoIssuesOneKeyEstablishedLinkWins(t *testing.T) {
 	// A duplicate issue and a second link note, as a concurrent run would
 	// have left behind.
 	dup := f.humanCreateIssue("warm the cache on boot", keyLinePrefix+"cache-warm\n"+bridgeStamp, "operator")
-	if _, err := f.board().LinkNote("cache-warm", dup); err != nil {
+	if _, _, err := f.board().LinkNote("cache-warm", dup); err != nil {
 		t.Fatal(err)
 	}
 

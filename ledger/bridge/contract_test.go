@@ -233,15 +233,19 @@ func TestSyncFailureAbortsBeforeTouchingGitHub(t *testing.T) {
 	}
 }
 
-// TestReBridgedRepoReImportsPriorMirrors pins a KNOWN HAZARD as documented
-// behaviour, not as a defect: the marker is board-scoped only by luck. A
-// well-formed marker from ANOTHER board's bridge does not resolve here, so it
-// imports as if a person had written it.
+// TestStampedForeignIssueIsRefused is the repo-side half of
+// one-repo-one-board, and the mitigation for a gap this build demonstrated
+// LIVE: a second board bridged to an already-bound repo seeded 14 keys and
+// rewrote the `ledger-key:` lines of issues the first board owned — which
+// destroys the stamp's crash-recovery guarantee for every orphan still in
+// the adoption window.
 //
-// This is why one repo binds to one board PERMANENTLY, and why a
-// board-discriminated marker (format v3) is the v2 fix. The test exists so
-// that whoever ships format v3 has a red test telling them what changed.
-func TestReBridgedRepoReImportsPriorMirrors(t *testing.T) {
+// A STAMPED issue whose hint names a key not on this board provably belongs
+// to another board's bridge. It is warned and SKIPPED: never seeded, never
+// body-rewritten, and its mirrored comments never re-imported. This is the
+// hijack rule's conservatism applied to the stamp — a refusal, granting the
+// body no new authority.
+func TestStampedForeignIssueIsRefused(t *testing.T) {
 	first := newIssueFixture(t)
 	first.seed("cache-warm", "warm the cache on boot", "jesse")
 	first.ledgerOK("note", "-k", kindHand, "--key", "cache-warm", "-m", "the first board said this", "--as", "jesse")
@@ -249,17 +253,60 @@ func TestReBridgedRepoReImportsPriorMirrors(t *testing.T) {
 	if countSubstr(first.commentBodies(1), "the first board said this") != 1 {
 		t.Fatalf("setup: %v", first.commentBodies(1))
 	}
+	bodyBefore := first.ghLoad().Issue(1).Body
 
 	// A FRESH board bridged to the same repo. Its chain resolves none of the
-	// first board's event ids.
+	// first board's event ids, so without the refusal every mirrored comment
+	// would import as a human's.
+	second := newIssueFixture(t)
+	second.ghState, second.repo = first.ghState, first.repo
+	r := second.syncOK("operator")
+
+	if !hasWarning(r, "belongs to another board's bridge") {
+		t.Fatalf("the stamped foreign issue must be refused by name: %s", mustJSON(t, r))
+	}
+	if got := len(second.keyList()); got != 0 {
+		t.Fatalf("it must not be seeded, got keys %v", second.keyList())
+	}
+	if got := len(second.notes("comment")); got != 0 {
+		t.Fatalf("its comments must not import: %+v", second.notes("comment"))
+	}
+	if got := second.ghLoad().Issue(1).Body; got != bodyBefore {
+		t.Fatalf("the body must not be rewritten:\n%q\n%q", bodyBefore, got)
+	}
+	if r.GHMutations != 0 {
+		t.Fatalf("a refused issue must cost zero GitHub writes: %s", mustJSON(t, r))
+	}
+	// And it converges: a run that refuses everything is a fixed point.
+	second.converge("operator", 3)
+}
+
+// TestUnstampedForeignIssueStillBinds pins the BOUND the refusal leaves,
+// honestly. The stamp is the only repo-side evidence there is; strip it (a
+// human editing the body, an issue the bridge never created) and the binding
+// doctrine is back to "whichever board runs first, permanently".
+//
+// If a board-discriminated marker (format v3) ever lands, this is the test
+// that should go red and tell whoever shipped it what changed.
+func TestUnstampedForeignIssueStillBinds(t *testing.T) {
+	first := newIssueFixture(t)
+	first.seed("cache-warm", "warm the cache on boot", "jesse")
+	first.ledgerOK("note", "-k", kindHand, "--key", "cache-warm", "-m", "the first board said this", "--as", "jesse")
+	first.converge("operator", 4)
+
+	// A person edits the stamp out of the body.
+	st := first.ghLoad()
+	st.Issue(1).Body = strings.ReplaceAll(st.Issue(1).Body, bridgeStamp, "")
+	first.ghSave(st)
+
 	second := newIssueFixture(t)
 	second.ghState, second.repo = first.ghState, first.repo
 	r := second.syncOK("operator")
 
 	texts := noteTexts(second.notes("comment"))
 	if countSubstr(texts, "the first board said this") != 1 {
-		t.Fatalf("DOCUMENTED HAZARD CHANGED: a re-bridged repo should re-import the prior board's "+
-			"mirrored comments as human ones. If a board-discriminated marker (format v3) has "+
-			"landed, this test is the one to update. Got: %v\n%s", texts, mustJSON(t, r))
+		t.Fatalf("DOCUMENTED BOUND CHANGED: with the stamp gone, a re-bridged repo still re-imports the "+
+			"prior board's mirrored comments as human ones (the marker is not board-scoped). If format v3 "+
+			"has landed, this test is the one to update. Got: %v\n%s", texts, mustJSON(t, r))
 	}
 }

@@ -377,6 +377,12 @@ type LinkMap struct {
 	ByIssue map[int]string
 	Changed map[string][]int
 	Foreign []string // "key -> #n by author", for the warning
+	// Retracted is every issue number the bridge has retracted, for ANY key.
+	// A retracted number takes the retraction path SILENTLY thereafter: its
+	// `ledger-key:` line is the bridge's own cleaned-up artifact, so firing
+	// the hijack warning at it forever would make the converging cleanup
+	// doctrine converge everywhere except in the operator's log.
+	Retracted map[int]bool
 }
 
 // Links reads the identity map off the chain. Two body shapes, both authored
@@ -402,7 +408,8 @@ func (b Board) Links() (*LinkMap, error) {
 	}
 	var order []candidate
 	retracted := map[candidate]bool{}
-	m := &LinkMap{ByKey: map[string]int{}, ByIssue: map[int]string{}, Changed: map[string][]int{}}
+	m := &LinkMap{ByKey: map[string]int{}, ByIssue: map[int]string{}, Changed: map[string][]int{},
+		Retracted: map[int]bool{}}
 	for _, n := range notes {
 		key, _ := n["key"].(string)
 		body, _ := n["text"].(string)
@@ -418,6 +425,7 @@ func (b Board) Links() (*LinkMap, error) {
 		c := candidate{key, num}
 		if isRetraction {
 			retracted[c] = true
+			m.Retracted[c.num] = true
 			continue
 		}
 		order = append(order, c)
@@ -557,24 +565,59 @@ type idemScope struct{ author, kind, key, idem string }
 // The idempotency keys are what let Law 2 delete the stored high-water map:
 // they are ON THE CHAIN already, so the same set is derived instead of
 // stored — mergeable, and nothing to lose on a sentinel merge.
-func (b Board) ChainIndex() (evs []Event, ids map[string]bool, idem map[idemScope]bool, err error) {
-	evs, _, err = b.Since("")
+func (b Board) ChainIndex() (idx *chainIndex, err error) {
+	evs, _, err := b.Since("")
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
-	ids, idem = make(map[string]bool, len(evs)), map[idemScope]bool{}
+	idx = &chainIndex{
+		events:       evs,
+		ids:          make(map[string]bool, len(evs)),
+		idem:         map[idemScope]bool{},
+		seededFrom:   map[int]string{},
+		importedFrom: map[string]string{},
+	}
 	for _, ev := range evs {
 		if ev.ID != "" {
-			ids[ev.ID] = true
+			idx.ids[ev.ID] = true
 		}
 		if ev.ImportedFrom != "" {
-			ids[ev.ImportedFrom] = true
+			idx.ids[ev.ImportedFrom] = true
+			idx.importedFrom[ev.ID] = ev.ImportedFrom
 		}
-		if ev.IdemKey != "" {
-			idem[idemScope{ev.Author, ev.Kind, ev.Key, ev.IdemKey}] = true
+		if ev.IdemKey == "" {
+			continue
+		}
+		idx.idem[idemScope{ev.Author, ev.Kind, ev.Key, ev.IdemKey}] = true
+		// The inbound-seed map, scoped to the bridge's OWN write shape: a
+		// `set` on a board key authored github:@<login>. Anything else
+		// carrying the key is a decoy and must not be able to bind an issue
+		// to a key of somebody else's choosing — the same lesson the derived
+		// idempotency index learned from the censorship probe.
+		if n, ok := issueFromIdem(ev.IdemKey); ok &&
+			ev.Type == "set" && ev.Key != "" && strings.HasPrefix(ev.Author, ghAuthorPrefix) {
+			if _, seen := idx.seededFrom[n]; !seen {
+				idx.seededFrom[n] = ev.Key
+			}
 		}
 	}
-	return evs, ids, idem, nil
+	return idx, nil
+}
+
+// chainIndex is the one whole-chain read every per-run question shares:
+// the marker ORACLE's domain, the derived idempotency index, and the
+// inbound-seed map.
+type chainIndex struct {
+	events []Event
+	ids    map[string]bool
+	idem   map[idemScope]bool
+	// seededFrom maps a GitHub issue number to the board key an earlier run
+	// seeded for it, oldest write wins. It is the durable half of the
+	// seed->link crash window's fix.
+	seededFrom map[int]string
+	// importedFrom maps an event's current id to the id it carried before an
+	// export/import, for the reads that only have the id.
+	importedFrom map[string]string
 }
 
 // Sync is Law 1 step 1: fetch and merge remote ledger history before doing
@@ -665,8 +708,18 @@ func (b Board) writeDetail(extra ...string) (string, bool, error) {
 
 // Seed opens a brand-new key at `open` with the GitHub issue's title as the
 // seed message — which IS the key's title under Part A's fold rule.
-func (b Board) Seed(key, title, as string) (string, error) {
-	return b.write("set", key, "status="+openValue, "--expect", "none", "-m", title, "--as", as)
+//
+// The write carries `--idempotency-key gh-issue-<n>`, which closes the
+// probed seed->link crash window. The key alone does not close it — the
+// tool's dedupe for a `set` is scoped to (author, key, idempotency-key), and
+// a re-run that mints a DIFFERENT (suffixed) key would not dedupe against
+// the first. What closes it is the DERIVED index: the chain now carries a
+// third, durable copy of the identity map, mapping a spent seed key back to
+// the board key it minted, and issue resolution consults that mapping before
+// minting anything.
+func (b Board) Seed(key, title, as string, issue int) (string, error) {
+	return b.write("set", key, "status="+openValue, "--expect", "none", "-m", title,
+		"--as", as, "--idempotency-key", issueIdem(issue))
 }
 
 // Rename writes an intake rename, CAS'd against the key's own rename stream
@@ -761,10 +814,15 @@ func (b Board) Note(key, kind, body, as, idemKey string) (string, bool, error) {
 	return b.writeDetail(args...)
 }
 
-func (b Board) LinkNote(key string, issue int) (string, error) {
-	id, _, err := b.Note(key, kindLink, fmt.Sprintf("%s%d", linkPrefix, issue), bridgeAuthor,
+// LinkNote writes a key's link note and reports whether the board DEDUPED
+// it. The flag is load-bearing at every caller: a deduped write is not a
+// write, and counting one makes `board_writes > 0` on a chain that never
+// grew — which keeps Law 1's persistence rule true forever and writes a
+// fresh state note on every run. Reachable through the adoption path, whose
+// idempotency key is by construction already spent.
+func (b Board) LinkNote(key string, issue int) (string, bool, error) {
+	return b.Note(key, kindLink, fmt.Sprintf("%s%d", linkPrefix, issue), bridgeAuthor,
 		fmt.Sprintf("gh-link-%s-%d", key, issue))
-	return id, err
 }
 
 // SaveState writes the bridge's cursor and standing divergence records back

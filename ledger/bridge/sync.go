@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -36,6 +37,10 @@ const (
 	// board message: the only messages a non-terminal board level carries
 	// are claim and touch-base messages, and those never reach GitHub.
 	reopenText = "reopened to match the board: this key is active there again."
+	// claimValue is the one non-terminal transition with no GitHub
+	// representation at all. `ledger create` pins the non-terminal vocabulary
+	// to {open, in-progress}, so this is the whole of it.
+	claimValue = "in-progress"
 )
 
 // Syncer holds one run's whole working set.
@@ -60,6 +65,13 @@ type Syncer struct {
 	ghTitle    map[int]string
 	ghState    map[int]ghStateBits
 	ghComments map[int][]ghComment
+	// claimOnly names the keys whose drain carries status events that are ALL
+	// `in-progress` — a CLAIM-ONLY drain. It pushes nothing and creates
+	// nothing: a claim has no GitHub representation at all, so minting an
+	// issue for one shows a reader nothing they did not already know. A drain
+	// that also carries an `open` seed or a terminal close is not claim-only,
+	// and does create.
+	claimOnly map[string]bool
 	// pendingStatus/pendingRename are the outbound half of echo safety, per
 	// aspect, carrying the value the mirror is ABOUT to push. Intake runs
 	// after the drain is READ: at intake time GitHub still shows the state
@@ -70,16 +82,11 @@ type Syncer struct {
 	pendingRename map[string]string
 	events        []Event
 	nextCursor    string
-	// chainIDs is the marker ORACLE's domain: every event id on the chain
-	// UNION every imported_from UNION every id THIS RUN wrote.
-	chainIDs map[string]bool
-	// chainIdem is the derived idempotency index, scoped exactly as the
-	// tool's own dedupe is — (author, kind, key, idempotency-key).
-	chainIdem map[idemScope]bool
-	chain     []Event // the whole chain, oldest first
-	// importedFrom maps an event's current id to the id it carried before an
-	// export/import, for the reads that only have the id.
-	importedFrom map[string]string
+	// chain is the ONE whole-chain read every per-run question shares: the
+	// marker ORACLE's domain (every event id UNION every imported_from UNION
+	// every id THIS RUN wrote), the derived idempotency index scoped exactly
+	// as the tool's own dedupe is, and the inbound-seed map.
+	chain *chainIndex
 	// reDrained is set when the stored cursor no longer resolved and the run
 	// re-drained from empty. MIRROREDVIEW has no meaning then (the drain IS
 	// the whole chain), so the divergence warning is suppressed entirely
@@ -437,6 +444,8 @@ func (s *Syncer) boardValueForMirror(level string) string {
 // with it: a claimed key that stops accepting GitHub closes, permanently.
 func (s *Syncer) scanDrain() {
 	s.pendingStatus, s.pendingRename = map[string]string{}, map[string]string{}
+	s.claimOnly = map[string]bool{}
+	sawNonClaim := map[string]bool{}
 	for _, ev := range s.events {
 		if s.suppressedAuthor(ev) {
 			if strings.HasPrefix(ev.Author, ghAuthorPrefix) {
@@ -454,8 +463,16 @@ func (s *Syncer) scanDrain() {
 		if ev.Rename != "" {
 			s.pendingRename[ev.Key] = ev.Rename
 		}
-		if ev.Fields["status"] != "" {
-			s.pendingStatus[ev.Key] = ev.Fields["status"]
+		if v := ev.Fields["status"]; v != "" {
+			s.pendingStatus[ev.Key] = v
+			if v == claimValue {
+				if !sawNonClaim[ev.Key] {
+					s.claimOnly[ev.Key] = true
+				}
+			} else {
+				sawNonClaim[ev.Key] = true
+				delete(s.claimOnly, ev.Key)
+			}
 		}
 	}
 }
@@ -589,7 +606,37 @@ func (s *Syncer) resolveKey(is ghIssue) (string, bool, error) {
 	if key, ok := s.byIssue[is.Number]; ok {
 		return key, true, nil
 	}
+	// A RETRACTED issue number takes the retraction path silently. It is the
+	// bridge's own cleaned-up artifact — its body still carries the stamp and
+	// the `ledger-key:` line the bridge itself wrote — so every other branch
+	// below would fire on it forever, which is the opposite of a cleanup
+	// doctrine that converges.
+	if s.links.Retracted[is.Number] {
+		return "", false, nil
+	}
+	// The bridge's OWN prior seed for this issue, recovered from the chain.
+	// This is consulted BEFORE any key is minted: a crash between the seed
+	// and its link note otherwise mints a second, suffixed key on the next
+	// run and a second GitHub issue for the first, permanently.
+	if key, err := s.seededKeyFor(is.Number); err != nil {
+		return "", false, err
+	} else if key != "" && s.keys[key] != nil {
+		if !s.byIssueFree(is.Number, key) {
+			return "", false, nil
+		}
+		id, deduped, err := s.Board.LinkNote(key, is.Number)
+		if err != nil {
+			return "", false, err
+		}
+		if !deduped {
+			s.report.board("link %s <-> #%d (recovered a seed this bridge wrote but never linked)", key, is.Number)
+		}
+		_ = id
+		s.byKey[key], s.byIssue[is.Number] = is.Number, key
+		return key, true, nil
+	}
 	hint := ledgerKeyFromBody(is.Body)
+	stamped := s.adoptable(is)
 	switch {
 	case hint == stateKey:
 		// The reserved state key defends itself: a real seizure artifact
@@ -602,20 +649,39 @@ func (s *Syncer) resolveKey(is ghIssue) (string, bool, error) {
 		s.report.warn("issue #%d claims key '%s', which is already linked to #%d — the linked issue wins; "+
 			"a human must resolve this", is.Number, hint, s.byKey[hint])
 		return "", false, nil
-	case hint != "" && s.keys[hint] != nil && s.adoptable(is):
+	case hint != "" && s.keys[hint] != nil && stamped:
 		// ADOPTION: the stamp AND the key hint are present and the key has
 		// no linked issue, so this is an issue the bridge created and then
 		// crashed before linking. Recovered from the bulk list already in
 		// hand — no search call.
-		if _, err := s.Board.LinkNote(hint, is.Number); err != nil {
+		_, deduped, err := s.Board.LinkNote(hint, is.Number)
+		if err != nil {
 			return "", false, err
 		}
-		s.report.board("link %s <-> #%d (adopted an issue this bridge created but never linked)", hint, is.Number)
+		if !deduped {
+			s.report.board("link %s <-> #%d (adopted an issue this bridge created but never linked)", hint, is.Number)
+		}
 		s.byKey[hint], s.byIssue[is.Number] = is.Number, hint
 		return hint, true, nil
 	case hint != "" && s.keys[hint] != nil:
 		s.report.warn("issue #%d claims existing key '%s' but carries no bridge stamp and the board has no "+
 			"link note for it — not intaken, not seeded over", is.Number, hint)
+		return "", false, nil
+	case hint != "" && stamped:
+		// The STAMPED-FOREIGN-HINT refusal, and the repo-side half of
+		// one-repo-one-board. The stamp is proof some bridge created this
+		// issue, and the hint names a key that is not on THIS board — so it
+		// provably belongs to another board's bridge. Seeding it is how a
+		// second board was observed live rewriting a bound repo's
+		// `ledger-key:` lines, which destroys the stamp's crash-recovery
+		// guarantee for every orphan still in the adoption window.
+		//
+		// This is the hijack rule's conservatism applied to the stamp: a
+		// refusal, granting the body no new authority.
+		s.report.warn("issue #%d carries the bridge stamp but names ledger-key '%s', which is not on this "+
+			"board — it belongs to another board's bridge; skipped, not seeded and not rewritten. "+
+			"One repo binds to one board: bridge %s from the board that owns it, or retract the link there",
+			is.Number, hint, s.GH.Repo)
 		return "", false, nil
 	}
 	// An unlinked, unclaimed issue (or one naming a key this board does not
@@ -629,8 +695,33 @@ func (s *Syncer) resolveKey(is ghIssue) (string, bool, error) {
 		s.report.warn("issue #%d names ledger-key '%s', which is not on this board — seeding it as a new key instead",
 			is.Number, hint)
 	}
-	key, err := s.seedFromIssue(is)
-	return key, err == nil, err
+	key, ok, err := s.seedFromIssue(is)
+	return key, ok, err
+}
+
+// byIssueFree guards the recovered-seed path against binding an issue that
+// some OTHER key has already established a link to.
+func (s *Syncer) byIssueFree(n int, key string) bool {
+	if have, ok := s.byIssue[n]; ok && have != key {
+		s.report.warn("issue #%d was seeded as key '%s' but is established to '%s' — leaving the established "+
+			"link alone; a human must resolve this", n, key, have)
+		return false
+	}
+	if have, ok := s.byKey[key]; ok && have != n {
+		s.report.warn("key '%s' was seeded from issue #%d but is established to #%d — leaving the established "+
+			"link alone; a human must resolve this", key, n, have)
+		return false
+	}
+	return true
+}
+
+// seededKeyFor answers "did an earlier run of this bridge seed a board key
+// for this issue?" off the shared whole-chain read.
+func (s *Syncer) seededKeyFor(n int) (string, error) {
+	if err := s.loadChainIndex(); err != nil {
+		return "", err
+	}
+	return s.chain.seededFrom[n], nil
 }
 
 // adoptable is the crash-window recogniser. A human who copies the stamp
@@ -646,31 +737,49 @@ func (s *Syncer) adoptable(is ghIssue) bool {
 // key seeded under the GitHub author's namespaced identity, linked in both
 // directions. The seeded key's TITLE is the GitHub issue title (it is the
 // seed `-m`), and the SLUG is derived from that title.
-func (s *Syncer) seedFromIssue(is ghIssue) (string, error) {
+func (s *Syncer) seedFromIssue(is ghIssue) (string, bool, error) {
+	if is.Author.Login == "" {
+		// A deleted GitHub account leaves an author-less issue. There is
+		// nobody to attribute the seed to, and `--as github:@` is a
+		// meaningless identity to put on a board — so warn and SKIP, exactly
+		// as this issue's comments already do. Propagating the error instead
+		// aborts the run, and since the issue never goes away that bricks
+		// every future run too.
+		s.report.warn("issue #%d names no author (a deleted account?) — not seeded; "+
+			"a maintainer can open a replacement issue if the work still matters", is.Number)
+		return "", false, nil
+	}
 	key := s.uniqueKey(slugify(is.Title), is.Number)
 	as := ghAuthorPrefix + is.Author.Login
-	if is.Author.Login == "" {
-		s.report.warn("issue #%d names no author — not seeded", is.Number)
-		return "", fmt.Errorf("issue #%d has no author", is.Number)
-	}
-	id, err := s.Board.Seed(key, is.Title, as)
+	id, err := s.Board.Seed(key, is.Title, as, is.Number)
 	if err != nil {
-		return "", fmt.Errorf("seeding issue #%d as '%s': %w", is.Number, key, err)
+		return "", false, fmt.Errorf("seeding issue #%d as '%s': %w", is.Number, key, err)
 	}
 	s.report.board("seed %s status=%s by %s (from #%d)", key, openValue, as, is.Number)
 	s.keys[key] = &KeyState{Key: key, Title: is.Title, Status: openValue, StatusID: id}
-
-	if _, err := s.Board.LinkNote(key, is.Number); err != nil {
-		return "", err
+	// The seed is now on the chain under gh-issue-<n>, so a crash before the
+	// link note lands is recoverable on the next run. Register it in this
+	// run's view too, since the chain index is loaded once.
+	if s.chain != nil {
+		if _, seen := s.chain.seededFrom[is.Number]; !seen {
+			s.chain.seededFrom[is.Number] = key
+		}
 	}
-	s.report.board("link %s <-> #%d", key, is.Number)
+
+	_, deduped, err := s.Board.LinkNote(key, is.Number)
+	if err != nil {
+		return "", false, err
+	}
+	if !deduped {
+		s.report.board("link %s <-> #%d", key, is.Number)
+	}
 	s.byKey[key], s.byIssue[is.Number] = is.Number, key
 
 	if err := s.GH.EditBody(is.Number, s.issueBody(key, is.Body)); err != nil {
-		return "", err
+		return "", false, err
 	}
 	s.report.gh("#%d body carries ledger-key: %s", is.Number, key)
-	return key, nil
+	return key, true, nil
 }
 
 // intakeTitle is a GitHub title edit becoming a rename event on the board,
@@ -943,8 +1052,12 @@ func (s *Syncer) mirror() error {
 // override justification never leaves the board.
 func (s *Syncer) mirrorTitle(ev Event) error {
 	n, err := s.ensureIssue(ev.Key, ev.ID)
-	if err != nil || n == 0 {
+	if err != nil {
 		return err
+	}
+	if n == 0 {
+		s.dropped(ev, "title")
+		return nil
 	}
 	title := s.currentTitle(ev.Key, ev.Rename)
 	if s.ghTitle[n] == title {
@@ -967,9 +1080,21 @@ func (s *Syncer) mirrorTitle(ev Event) error {
 // reading made the two contradict, and its probed resolution reopened a
 // human's close and published a claim message.
 func (s *Syncer) mirrorStatus(ev Event) error {
+	// The issue-creation rule, checked BEFORE anything can create: a
+	// CLAIM-ONLY drain pushes nothing and creates nothing. A claim has no
+	// GitHub representation at all, so minting an issue for one shows a
+	// reader nothing they did not already know — and nothing is dropped
+	// either, because there was nothing to drop.
+	if _, linked := s.byKey[ev.Key]; !linked && s.claimOnly[ev.Key] {
+		return nil
+	}
 	n, err := s.ensureIssue(ev.Key, ev.ID)
-	if err != nil || n == 0 {
+	if err != nil {
 		return err
+	}
+	if n == 0 {
+		s.dropped(ev, "status")
+		return nil
 	}
 	level := s.currentStatus(ev.Key, ev.Fields["status"])
 	want := s.boardValueForMirror(level)
@@ -981,15 +1106,30 @@ func (s *Syncer) mirrorStatus(ev Event) error {
 	// Law 6: EVERY status mirror carries its message, and the comment goes
 	// up FIRST, so a GitHub reader sees why even if the state call itself is
 	// the one that crashes.
-	text := reopenText
-	if closed {
-		// The message rides only when this event IS the level; carrying an
-		// older event's reason for a different value would be a lie.
-		explain := ev
-		if ev.Fields["status"] != level {
-			explain = Event{ID: ev.ID, ImportedFrom: ev.ImportedFrom, Author: ev.Author}
-		}
+	//
+	// The message rides only when this event IS the level; carrying an older
+	// event's reason for a different value would be a lie.
+	isLevel := ev.Fields["status"] == level
+	explain := ev
+	if !isLevel {
+		explain = Event{ID: ev.ID, ImportedFrom: ev.ImportedFrom, Author: ev.Author}
+	}
+	var text string
+	switch {
+	case closed:
 		text = closeText(explain, level)
+	case isLevel && level == openValue:
+		// An EVENT-DRIVEN reopen: a person wrote `open` with a reason, and
+		// that reason is exactly what a GitHub reader needs. Law 6's "a
+		// REOPEN likewise comments its reason before reopening".
+		text = reopenTextFor(explain)
+	default:
+		// A CONVERGENCE-driven reopen: either no board event stands behind
+		// the difference, or the level is `in-progress`, whose only message
+		// is a claim or touch-base message. Law 2's fixed text, and never a
+		// board message — publishing a claim to a public issue is the probed
+		// failure this guards.
+		text = reopenText
 	}
 	if err := s.postMirrored(n, markerIDs(ev.ID, ev.ImportedFrom), ev.Author, text); err != nil {
 		return err
@@ -1004,6 +1144,19 @@ func (s *Syncer) mirrorStatus(ev Event) error {
 		s.report.gh("#%d reopened (status=%s)", n, level)
 	}
 	return nil
+}
+
+// dropped reports a mirror that had nowhere to land. A close that mirrors
+// to nothing while the report stays clean is exactly the silent-failure
+// shape the saturation rules exist to prevent, so a dropped state or title
+// mirror warns naming its event id — the same treatment a dropped note gets.
+func (s *Syncer) dropped(ev Event, aspect string) {
+	reason := "the key has no title yet"
+	if n, linked := s.byKey[ev.Key]; linked {
+		reason = fmt.Sprintf("its issue #%d is not in this repo's listing", n)
+	}
+	s.report.warn("%s mirror %s on '%s' has no GitHub issue to land on (%s) — dropped",
+		aspect, ev.ID, ev.Key, reason)
 }
 
 // currentStatus / currentTitle are the LEVEL the mirror pushes: the key's
@@ -1022,6 +1175,17 @@ func (s *Syncer) currentTitle(key, fallback string) string {
 		return ks.Title
 	}
 	return fallback
+}
+
+// reopenTextFor is the body of an EVENT-DRIVEN reopen's comment: the board
+// event's own reason. Only reachable when the event IS the level and the
+// level is the open value — see mirrorStatus.
+func reopenTextFor(ev Event) string {
+	body := fmt.Sprintf("reopened on the board (status=%s)", openValue)
+	if strings.TrimSpace(ev.Text) != "" {
+		body += ": " + ev.Text
+	}
+	return body
 }
 
 // closeText is the body of the comment that precedes a mirrored close.
@@ -1083,10 +1247,10 @@ func (s *Syncer) postMirrored(n int, ids []string, author, text string) error {
 	// a board note under an empty login. Registering the id here covers
 	// every marker the bridge emits, because a marker id is by construction
 	// an id the bridge wrote.
-	if s.chainIDs != nil {
+	if s.chain != nil {
 		for _, id := range ids {
 			if id != "" {
-				s.chainIDs[id] = true
+				s.chain.ids[id] = true
 			}
 		}
 	}
@@ -1130,10 +1294,13 @@ func (s *Syncer) ensureIssue(key, forEvent string) (int, error) {
 
 	// The link note is written IMMEDIATELY after the create. The crash
 	// window between the two is closed by ADOPTION, not by search.
-	if _, err := s.Board.LinkNote(key, n); err != nil {
+	_, deduped, err := s.Board.LinkNote(key, n)
+	if err != nil {
 		return 0, err
 	}
-	s.report.board("link %s <-> #%d", key, n)
+	if !deduped {
+		s.report.board("link %s <-> #%d", key, n)
+	}
 	s.byKey[key], s.byIssue[n] = n, key
 
 	// Law 6's backfill: the key may have collected notes while it had no
@@ -1366,10 +1533,26 @@ func (s *Syncer) isBridgeEcho(body string) (bool, error) {
 	if err := s.loadChainIndex(); err != nil {
 		return false, err
 	}
-	return s.chainIDs[id], nil
+	return s.chain.ids[id], nil
 }
 
 func commentIdem(restID string) string { return "gh-comment-" + restID }
+
+// issueIdem is the idempotency key an inbound SEED carries, and the handle
+// the derived seed map is built from.
+func issueIdem(n int) string { return fmt.Sprintf("gh-issue-%d", n) }
+
+func issueFromIdem(key string) (int, bool) {
+	rest, ok := strings.CutPrefix(key, "gh-issue-")
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
+}
 
 // markerIDs is the ORACLE's domain for ONE event: its current id and, if it
 // crossed an export/import boundary, the id it carried before. BOTH
@@ -1391,24 +1574,18 @@ func (s *Syncer) idemSpent(scope idemScope) (bool, error) {
 	if err := s.loadChainIndex(); err != nil {
 		return false, err
 	}
-	return s.chainIdem[scope], nil
+	return s.chain.idem[scope], nil
 }
 
 func (s *Syncer) loadChainIndex() error {
-	if s.chainIDs != nil {
+	if s.chain != nil {
 		return nil
 	}
-	evs, ids, idem, err := s.Board.ChainIndex()
+	idx, err := s.Board.ChainIndex()
 	if err != nil {
 		return err
 	}
-	s.chain, s.chainIDs, s.chainIdem = evs, ids, idem
-	s.importedFrom = map[string]string{}
-	for _, ev := range evs {
-		if ev.ImportedFrom != "" {
-			s.importedFrom[ev.ID] = ev.ImportedFrom
-		}
-	}
+	s.chain = idx
 	s.warnDecoyIdemKeys()
 	return nil
 }
@@ -1421,7 +1598,7 @@ func (s *Syncer) importedFromOf(id string) string {
 	if err := s.loadChainIndex(); err != nil {
 		return ""
 	}
-	return s.importedFrom[id]
+	return s.chain.importedFrom[id]
 }
 
 // warnDecoyIdemKeys reports chain events carrying a `gh-comment-*`
@@ -1433,7 +1610,7 @@ func (s *Syncer) importedFromOf(id string) string {
 // dedupe is the arbiter. That is the whole point — the poison fails LOUDLY
 // instead of succeeding silently.
 func (s *Syncer) warnDecoyIdemKeys() {
-	for _, ev := range s.chain {
+	for _, ev := range s.chain.events {
 		if !strings.HasPrefix(ev.IdemKey, commentIdem("")) {
 			continue
 		}
@@ -1477,7 +1654,7 @@ func (s *Syncer) mirroredView() (map[string]string, map[string]string, error) {
 		}
 	}
 	status, title := map[string]string{}, map[string]string{}
-	for _, ev := range s.chain {
+	for _, ev := range s.chain.events {
 		if excluded[ev.ID] || ev.Type != "set" || ev.Key == "" {
 			continue
 		}

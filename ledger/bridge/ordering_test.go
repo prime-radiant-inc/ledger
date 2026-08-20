@@ -327,3 +327,84 @@ func TestClosedIssueOverActiveBoardReopensWithFixedText(t *testing.T) {
 	}
 	f.converge("operator", 3)
 }
+
+// TestEventDrivenReopenCarriesItsMessage is the other half of the reopen
+// rule, and the half Law 6 states: a reopen COMMENTS ITS REASON before
+// reopening, and only a CONVERGENCE-driven reopen — one with no board event
+// behind it — falls back to Law 2's fixed text.
+//
+// The condition is exact: the drain event IS the level AND the level is the
+// open value. A human writing `status=open -m "why"` has a reason worth
+// publishing; the sibling test above has `in-progress` as its level, where
+// the only message available is a claim message and the fixed text is the
+// only safe thing to say.
+func TestEventDrivenReopenCarriesItsMessage(t *testing.T) {
+	f := newIssueFixture(t)
+	f.seed("cache-warm", "warm the cache on boot", "jesse")
+	f.syncOK("operator")
+	f.setStatus("cache-warm", "closed", "fixed", "jesse", "commit:a1b2c3")
+	f.converge("operator", 3)
+	if state, _ := f.issueState(1); state != "CLOSED" {
+		t.Fatalf("setup: issue is %s", state)
+	}
+
+	// The sole status event in the drain: a human reopening WITH a reason.
+	f.setStatusOverride("cache-warm", openValue, "the fix regressed on staging overnight", "jesse")
+	r := f.syncOK("operator")
+
+	if state, _ := f.issueState(1); state != "OPEN" {
+		t.Fatalf("the issue must be reopened, got %s: %s", state, mustJSON(t, r))
+	}
+	bodies := f.commentBodies(1)
+	last := bodies[len(bodies)-1]
+	if !strings.Contains(last, "the fix regressed on staging overnight") {
+		t.Fatalf("an event-driven reopen must carry ITS event's message, got %q", last)
+	}
+	if strings.Contains(last, reopenText) {
+		t.Fatalf("the fixed text is for convergence-driven reopens only, got %q", last)
+	}
+	if !strings.HasPrefix(last, "**jesse** (via ledger, ") {
+		t.Fatalf("every bridge comment opens with the marker: %q", last)
+	}
+	f.converge("operator", 3)
+	if got := countSubstr(f.commentBodies(1), "the fix regressed on staging overnight"); got != 1 {
+		t.Fatalf("the reopen comment was re-posted: %d", got)
+	}
+}
+
+// TestConvergenceDrivenReopenUsesTheFixedText: no board event stands behind
+// the difference — the level came from an intake write, which outbound
+// suppression skips — so there is no message to carry and the fixed text is
+// what the reopen says.
+func TestConvergenceDrivenReopenUsesTheFixedText(t *testing.T) {
+	f := newIssueFixture(t)
+	f.seed("cache-warm", "warm the cache on boot", "jesse")
+	f.syncOK("operator")
+	// GitHub closes it; intake writes `closed` on the board.
+	f.humanClose(1, false, "mallory")
+	f.converge("operator", 4)
+	if f.status("cache-warm") != "closed" {
+		t.Fatalf("setup: board says %q", f.status("cache-warm"))
+	}
+	// A board-side reopen whose own event is NOT the level: the level moves
+	// on to in-progress, so the reopen the mirror performs is driven by
+	// convergence against the fold, not by the claim event that set it.
+	f.setStatusOverride("cache-warm", openValue, "reopening", "jesse")
+	f.setStatus("cache-warm", "in-progress", "claiming this — mine now", "ash")
+
+	r := f.syncOK("operator")
+	if state, _ := f.issueState(1); state != "OPEN" {
+		t.Fatalf("the issue must be reopened, got %s: %s", state, mustJSON(t, r))
+	}
+	bodies := f.commentBodies(1)
+	last := bodies[len(bodies)-1]
+	if !strings.Contains(last, reopenText) {
+		t.Fatalf("a reopen whose level is non-terminal-but-not-open must use the FIXED text, got %q", last)
+	}
+	for _, b := range bodies {
+		if strings.Contains(b, "mine now") {
+			t.Fatalf("a claim message reached GitHub: %q", b)
+		}
+	}
+	f.converge("operator", 3)
+}
