@@ -121,6 +121,12 @@ func runRename(c *Ctx, key string, assignments []string, o writeOpts, rename, ex
 		payload["contested_resolved"] = ev.ContestedResolved
 		line += "  " + out.ContestedResolvedMarker(ev.ContestedResolved)
 	}
+	// And the override the tool computed, for the same reason (runSet's echo
+	// is the mirror image).
+	if ev.Override != "" {
+		payload["override"] = ev.Override
+		line += "  " + out.OverrideMarker(ev.Override)
+	}
 	if due, ok := dueAfter(c, led.Slug); ok {
 		payload["rollup_due"] = due
 	}

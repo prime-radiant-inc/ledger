@@ -146,31 +146,85 @@ func TestInitWithoutHooksSkipsSnippet(t *testing.T) {
 	}
 }
 
-// TestInitFromSubdirectoryErrors is round-1 review finding 1 (critical): init
-// run from a subdirectory of a git repo must not misclassify it as non-git
-// and create a shadow bare store — it must hard-error, naming the real repo
-// root, and create nothing anywhere.
-func TestInitFromSubdirectoryErrors(t *testing.T) {
+// TestInitFromSubdirectoryResolvesToRepoRoot: init standing in a
+// subdirectory of a git repo initializes the REPO — breadcrumb at the root,
+// refspec installed, `path` naming the root — the same ancestor resolution
+// every other verb already does from a subdirectory.
+//
+// Behavior before this test: a bad_value refusal (exit 4) naming the root and
+// creating nothing, which is how the 2026-08-18 migration ended up with no
+// breadcrumb anywhere (its `ledger init` ran from ledger/ and its error was
+// swallowed by a jq pipe). The refusal's own invariant survives: no shadow
+// .ledger.git may ever appear in the subdirectory.
+func TestInitFromSubdirectoryResolvesToRepoRoot(t *testing.T) {
+	dir := initRepo(t)
+	git(t, dir, "remote", "add", "upstream", "https://example.invalid/x.git")
+	sub := filepath.Join(dir, "a", "b")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LEDGER_DIR", "")
+	t.Chdir(sub)
+
+	so, se, code := ambient(t, "init")
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d: stdout=%s stderr=%s", code, so, se)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(so), &doc); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, so)
+	}
+	wantRoot, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotRoot, err := filepath.EvalSymlinks(doc["path"].(string))
+	if err != nil {
+		t.Fatalf("path %v: %v", doc["path"], err)
+	}
+	if gotRoot != wantRoot {
+		t.Fatalf("path must name the repo root: got %q want %q", gotRoot, wantRoot)
+	}
+	if doc["kind"] != "repo" {
+		t.Fatalf("kind must be repo: %s", so)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".ledger.toml")); err != nil {
+		t.Fatalf("breadcrumb must land at the repo root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(sub, ".ledger.toml")); err == nil {
+		t.Fatal("the breadcrumb must never be written in the subdirectory")
+	}
+	if _, err := os.Stat(filepath.Join(sub, ".ledger.git")); err == nil {
+		t.Fatal("must not create a shadow store inside a repo subdirectory")
+	}
+	fetch, _ := exec.Command("git", "-C", dir, "config", "--get-all", "remote.upstream.fetch").Output()
+	if !strings.Contains(string(fetch), "refs/ledger/") {
+		t.Fatalf("init from a subdirectory must still install the refspec: %q", fetch)
+	}
+}
+
+// TestInitStoreFlagAtSubdirectoryResolvesToRepoRoot: the same resolution when
+// the subdirectory arrives as --store rather than as the cwd — one code path,
+// so a --store pointed inside a repo can never mint a shadow bare store there
+// either. --hooks rides along to the root with everything else.
+func TestInitStoreFlagAtSubdirectoryResolvesToRepoRoot(t *testing.T) {
 	dir := initRepo(t)
 	sub := filepath.Join(dir, "a", "b")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	so, se, code := run(t, sub, "init")
-	if code != 4 {
-		t.Fatalf("expected exit 4, got %d: stdout=%s stderr=%s", code, so, se)
+	so, se, code := run(t, sub, "init", "--hooks")
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d: stdout=%s stderr=%s", code, so, se)
 	}
-	if !strings.Contains(se, "bad_value") {
-		t.Fatalf("expected bad_value error: %s", se)
+	if _, err := os.Stat(filepath.Join(dir, ".ledger.toml")); err != nil {
+		t.Fatalf("breadcrumb must land at the repo root: %v", err)
 	}
-	if !strings.Contains(se, filepath.Base(dir)) {
-		t.Fatalf("error should name the repo root: %s", se)
+	if _, err := os.Stat(filepath.Join(dir, ".ledger-hooks.md")); err != nil {
+		t.Fatalf("--hooks must write at the repo root too: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(sub, ".ledger.git")); err == nil {
 		t.Fatal("must not create a shadow store inside a repo subdirectory")
-	}
-	if _, err := os.Stat(filepath.Join(dir, ".ledger.toml")); err == nil {
-		t.Fatal("must not write the breadcrumb from the wrong location either")
 	}
 }
 

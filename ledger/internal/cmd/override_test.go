@@ -300,6 +300,64 @@ func TestOverrideWithNoStandingSignalIsLegalNoOp(t *testing.T) {
 	}
 }
 
+// TestOverrideEchoedInSetResponse: the write's response ECHOES the
+// tool-computed override, symmetric with contested_resolved — a writer must
+// be able to see what the tool recorded in their name without re-reading the
+// chain with `show --id`. A write that overrode nothing carries no field at
+// all (the same shape an uncontested write's response has).
+func TestOverrideEchoedInSetResponse(t *testing.T) {
+	dir := setupReady(t)
+	so, _, code := run(t, dir, "set", "k1", "status=open", "--expect", "none", "-m", "title", "--as", "a")
+	if code != 0 {
+		t.Fatal(so)
+	}
+	seedID := mustJSON(t, so)["id"].(string)
+	if _, present := mustJSON(t, so)["override"]; present {
+		t.Fatalf("a write that overrode nothing must not carry override: %s", so)
+	}
+	_, _, code = run(t, dir, "set", "k1", "labels=human", "--expect", "none", "--as", "a")
+	if code != 0 {
+		t.Fatal("labels=human should succeed")
+	}
+
+	so2, se2, code := run(t, dir, "set", "k1", "status=in-progress", "--expect", seedID,
+		"--override", "-m", "triage says take it", "--as", "bob")
+	if code != 0 {
+		t.Fatalf("override must land: %d %s", code, se2)
+	}
+	doc := mustJSON(t, so2)
+	if doc["override"] != "human" {
+		t.Fatalf(`the set response must ECHO override: want "human", got %v: %s`, doc["override"], so2)
+	}
+}
+
+// TestOverrideEchoedInRenameResponse: the rename stream's response echoes the
+// override for the same reason the field stream's does — both record it on
+// the event, so both must show it.
+func TestOverrideEchoedInRenameResponse(t *testing.T) {
+	dir := setupReady(t)
+	seedKey(t, dir, "k1", "the title", "ash")
+	mustRun(t, dir, "set", "k1", "labels=human", "--expect", "none", "--as", "ash")
+
+	so, se, code := run(t, dir, "set", "k1", "--rename", "a better title",
+		"--override", "-m", "jesse asked for the retitle", "--as", "kit")
+	if code != 0 {
+		t.Fatalf("override must land: %d %s", code, se)
+	}
+	doc := mustJSON(t, so)
+	if doc["override"] != "human" {
+		t.Fatalf(`the rename response must ECHO override: want "human", got %v: %s`, doc["override"], so)
+	}
+
+	// Nothing standing: no field at all.
+	seedKey(t, dir, "k2", "another title", "ash")
+	so2 := mustRun(t, dir, "set", "k2", "--rename", "renamed",
+		"--override", "-m", "override unnecessary here", "--as", "kit")
+	if _, present := mustJSON(t, so2)["override"]; present {
+		t.Fatalf("a rename that overrode nothing must not carry override: %s", so2)
+	}
+}
+
 // TestMultiSignalMessageAndRecording: multiple standing signals (claim and
 // human) list together in the needs_override message and record together
 // on the event as override: claim,human.

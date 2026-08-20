@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"ledger/internal/gitx"
-	"ledger/internal/out"
 )
 
 func init() { register(newInitCmd) }
@@ -108,14 +107,16 @@ func runInit(c *Ctx, hooks bool) error {
 		target = wd
 	}
 
-	// A target that's inside a git repo but isn't its root must never fall
-	// through to the bare-store branch below: that would silently create a
-	// shadow .ledger.git next to the real repo, and store resolution's
-	// ancestor walk would then find the shadow before the real repo's own
-	// (as-yet-uninstalled) store — a trap sprung on every future command run
-	// from that subdirectory. Detect via git itself, comparing symlink-
-	// resolved paths (macOS routes /tmp through /private/tmp, so a raw
-	// string compare of an unresolved target against git's resolved
+	// A target inside a git repo initializes THE REPO, from however deep in
+	// it the caller happens to be standing — git's own toplevel (already
+	// resolved above) is the answer, mirroring the ancestor resolution every
+	// other verb gets from store resolution. It must never fall through to the bare-store branch
+	// below: that would silently create a shadow .ledger.git next to the real
+	// repo, and store resolution's ancestor walk would then find the shadow
+	// before the real repo's own (as-yet-uninstalled) store — a trap sprung on
+	// every future command run from that subdirectory. Detect via git itself,
+	// comparing symlink-resolved paths (macOS routes /tmp through /private/tmp,
+	// so a raw string compare of an unresolved target against git's resolved
 	// toplevel would false-positive on every plain temp-dir repo).
 	toplevel, _, code := (gitx.Repo{Dir: target}).Git("", "rev-parse", "--show-toplevel")
 	var lines []string
@@ -129,11 +130,14 @@ func runInit(c *Ctx, hooks bool) error {
 			return err
 		}
 		if !atRoot {
-			return out.Errf("bad_value",
-				fmt.Sprintf("run `ledger init` from the repo root (cd %s), or pass --store %s", toplevel, toplevel),
-				4, "this is a subdirectory of git repo %s", toplevel)
+			// Everything below — breadcrumb, refspec, --hooks — lands at the
+			// root, and the payload's "path" says so.
+			target = toplevel
+			lines = append(lines, "[ledger] resolved to the repo root "+toplevel)
 		}
-		lines, payload, err = initRepoCase(target)
+		var repoLines []string
+		repoLines, payload, err = initRepoCase(target)
+		lines = append(lines, repoLines...)
 	default:
 		lines, payload, err = initBareCase(target)
 	}

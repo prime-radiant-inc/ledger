@@ -173,6 +173,14 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts, expect string
 		payload["contested_resolved"] = ev.ContestedResolved
 		line += "  " + out.ContestedResolvedMarker(ev.ContestedResolved)
 	}
+	// Same rule for the other tool-computed attribution: --override asks for
+	// permission, the tool decides what was actually standing, and the writer
+	// must be able to see what it recorded in their name without re-reading
+	// the chain.
+	if ev.Override != "" {
+		payload["override"] = ev.Override
+		line += "  " + out.OverrideMarker(ev.Override)
+	}
 	if due, ok := dueAfter(c, led.Slug); ok {
 		payload["rollup_due"] = due
 	}

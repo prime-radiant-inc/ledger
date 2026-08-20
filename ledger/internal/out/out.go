@@ -122,6 +122,17 @@ func ContestedResolvedMarker(losers []string) string {
 	return "contested_resolved: " + strings.Join(losers, ",")
 }
 
+// OverrideMarker renders the standing signals a write overrode, for a TTY —
+// the peer of ContestedResolvedMarker and for the same reason: the writer
+// must see the attribution the tool just recorded in their name. Empty when
+// the write overrode nothing.
+func OverrideMarker(signals string) string {
+	if signals == "" {
+		return ""
+	}
+	return "override: " + signals
+}
+
 // EscapeControls neutralizes C0 controls and ESC so a note body can never
 // visually overwrite the render on a TTY (counterfeit-provenance attack).
 func EscapeControls(s string) string {

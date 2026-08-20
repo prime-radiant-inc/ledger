@@ -18,7 +18,11 @@ the discipline that keeps any ledger trustworthy.
 For coordinating unblocked work on a shared board: create it with guarded
 `status`/`blocked-by` fields and a `labels` reservation (`ledger create
 --help` has the declaration flags; this pattern is everything downstream
-of that). First read is always `ready` — its envelope answers what to
+of that). Pick `--stale-after` from the board's TEMPO: hours for an agent
+fleet running the claim-reclaim loop, a week or more for a human-paced
+backlog — a horizon shorter than the real work cadence turns every honest
+claim stale and invites reclaiming work that is still being done. First
+read is always `ready` — its envelope answers what to
 pick, what to respect, and whether anything needs a person, including a
 computed `frontier` verdict, so no agent re-derives graph logic by hand;
 `show --where status=open` is the flat listing when you want one.
@@ -81,6 +85,15 @@ included, not just the idioms that spell it out — carries `--override -m
 "<why>"` per the standing-signal rule; that variant isn't repeated per
 idiom below.
 
+**`--expect` scope**: on a guarded field (`status`, `blocked-by`)
+`--expect` is REQUIRED — that is the invariant every claim, close and
+edge edit below rests on. On an unguarded field it is optional but
+VALIDATED whenever you pass it: `--expect none` against a field that
+already has history fails `claim_lost` ("beat you to"), which is CAS
+working, not a bug — re-read the field and pass its latest id instead
+(the Label-edit idiom below is that protected form). Omit the flag
+entirely for a plain unguarded write.
+
 **Titles**: the seed's `-m` IS the key's title — carried by every
 listing forever, so write a title ("fix the retry storm bug"), never a
 status update ("creating retry task"). Titles are stable, not immutable:
@@ -129,6 +142,23 @@ rename is the honest fix.
   cd <board dir> && ~/path-to/ledger set design-review labels=human --expect none -m "reserving for jesse" --as ash --ledger issues
   cd <board dir> && ~/path-to/ledger set design-review status=open --expect none -m "pick the retry API shape" --as ash --ledger issues  # expect: exit 4 error needs_override
   cd <board dir> && ~/path-to/ledger set design-review status=open --expect none --override -m "pick the retry API shape -- reserved for jesse: needs a human call on the retry contract" --as ash --ledger issues
+  ```
+
+- **Retire a mistake**: a junk key — a probe, a typo'd name, a seed that
+  turned out to be somebody else's issue — cannot be deleted; the chain is
+  immutable, so you RETIRE it. In order: clear a `human` label if it
+  carries one (a plain unguarded write, no `--expect` — the label's
+  history means `--expect none` would lose, and clearing it is what lifts
+  the stop sign); seed a status if the key has none, since `wontfix` is a
+  guarded write and needs something to CAS against; then `wontfix` with a
+  message saying plainly that the key is an artifact, so a reader sweeping
+  the board later doesn't mistake it for abandoned work:
+
+  ```
+  cd <board dir> && ~/path-to/ledger set probe-key labels=human --expect none -m "reserving while probing CAS behavior" --as ash --ledger issues
+  cd <board dir> && ~/path-to/ledger set probe-key labels= --as ash --ledger issues
+  cd <board dir> && ~/path-to/ledger set probe-key status=open --expect none -m "probe key: minted while probing CAS behavior" --as ash --ledger issues
+  cd <board dir> && ~/path-to/ledger set probe-key status=wontfix --expect <probe-key's seed id> -m "retiring: artifact of a CAS probe, never real work" --as ash --ledger issues
   ```
 
 - **Retitle** (rare, and never a workflow step): `set <key> --rename
