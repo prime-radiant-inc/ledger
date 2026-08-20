@@ -960,7 +960,10 @@ identity mapping; non-terminal transition mirroring.
     open-only listing bug).
 14. Bridge tests run against a FIXTURE transport; ONE live acceptance
     trial against a scratch repo (below). Skill/doctrine harness
-    re-runs over the amended SKILL.md lines.
+    re-runs over the amended SKILL.md lines. The bridge package's
+    crash sweep exceeds Go's default 10-minute per-package test
+    timeout — run it with `-timeout 30m` (plain `go test ./...`
+    panics at 10m with every sub-test passing).
 
 ## Trial plan (acceptance, live)
 
