@@ -1,16 +1,16 @@
 {
- "ts": "2026-08-20T18:56:44.211",
+ "ts": "2026-08-20T19:39:28.615",
  "type": "set",
  "key": "brew-name-collision",
  "fields": {
-  "status": "open"
+  "status": "in-progress"
  },
- "text": "brew formula name 'ledger' is shadowed by homebrew-core's ledger-cli (accounting, 3.4.x): bare 'brew upgrade ledger' replaces our tool with the accounting program (happened live on jesse's machine cutting v0.2.0; repaired via fully-qualified reinstall). Fix candidates: rename the formula, conflicts_with declaration, or document fully-qualified install/upgrade everywhere",
+ "text": "jesse ruled: rename the tool to chit (repo name stays); command surface only — wire formats (.ledger.toml, refs/ledger/*, --ledger flag, module path) keep their names; ledger-gh becomes chit-gh; tap swap ships chit.rb and removes ledger.rb; ledger-memory plugin needs a companion update after merge. Build running on feat/chit-rename",
  "author": "claude",
  "origin": {
   "host": "m4.local",
   "cwd": "/Users/jesse/git/ledger-research",
-  "pid": 22993,
+  "pid": 42162,
   "branch": "main",
   "head": "4cf27fc",
   "session": "ecb81c5a-acff-4095-8fe9-5d7cdd1e33ee",
