@@ -5,7 +5,7 @@
 // children.
 //
 // The contraction is the load-bearing half. A sync sentinel is minted by
-// whichever host happened to run `ledger sync`, carrying that host's clock;
+// whichever host happened to run `chit sync`, carrying that host's clock;
 // leaving it in the heap would let the syncing host's clock decide
 // last-write-wins outcomes between two OTHER hosts' writes. Contracted out,
 // a sentinel can neither delay nor reorder a real event — it only carries

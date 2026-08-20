@@ -55,7 +55,7 @@ func newUpdateCmd(c *Ctx) *cobra.Command {
 			if check {
 				line := fmt.Sprintf("up to date (%s)", Version)
 				if avail {
-					line = fmt.Sprintf("update available: %s (you have %s) — run `ledger update`", latest, Version)
+					line = fmt.Sprintf("update available: %s (you have %s) — run `chit update`", latest, Version)
 				}
 				out.Emit(c.Stdout, c.TTY, map[string]any{
 					"current": Version, "latest": latest, "update_available": avail,
@@ -146,17 +146,17 @@ func passiveUpdateCheck(c *Ctx, verb string) {
 		selfupdate.SaveState(dir, st)
 	}
 	if st.Latest != "" && selfupdate.CompareVersions(Version, st.Latest) < 0 {
-		fix := "run `ledger update`"
+		fix := "run `chit update`"
 		if target, err := updateTarget(); err == nil {
 			if resolved, rerr := filepath.EvalSymlinks(target); rerr == nil {
 				target = resolved
 			}
 			if selfupdate.ManagedByHomebrew(target) {
-				// `ledger update` refuses brew installs — don't nag toward a
+				// `chit update` refuses brew installs — don't nag toward a
 				// command that will only bounce the user to another one
 				fix = "run `brew upgrade ledger`"
 			}
 		}
-		fmt.Fprintf(c.Stderr, "ledger %s is available (you have %s) — %s\n", st.Latest, Version, fix)
+		fmt.Fprintf(c.Stderr, "chit %s is available (you have %s) — %s\n", st.Latest, Version, fix)
 	}
 }

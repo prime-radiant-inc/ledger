@@ -1,12 +1,12 @@
 ---
 name: using-ledger
-description: Use when work spans sessions or agents and needs durable, verifiable state — starting multi-session or multi-agent work, dispatching subagent fleets, resuming after context death, handing off, tracking an investigation, running an issue board, picking unblocked work, or deciding "should this be a ledger?". Teaches when and how to use the `ledger` CLI's patterns; command mechanics live in `ledger quickstart`.
+description: Use when work spans sessions or agents and needs durable, verifiable state — starting multi-session or multi-agent work, dispatching subagent fleets, resuming after context death, handing off, tracking an investigation, running an issue board, picking unblocked work, or deciding "should this be a ledger?". Teaches when and how to use the `ledger` CLI's patterns; command mechanics live in `chit quickstart`.
 ---
 
 # Using ledger
 
 Nine patterns for when and how to reach for a ledger. This is judgment,
-not mechanics — every command shape here is spelled out in full in `ledger
+not mechanics — every command shape here is spelled out in full in `chit
 quickstart`; read that before your first real write.
 
 ## When to reach for a ledger (and when not)
@@ -39,10 +39,10 @@ running low, don't just stop — write the handoff note (see Checkpoint,
 below) so the spine's last entry is a bridge, not a cliff.
 
 ```
-ledger set task-3 status=done --evidence commit:a1b2c3d -m "tests pass, spec section 4 covered"
+chit set task-3 status=done --evidence commit:a1b2c3d -m "tests pass, spec section 4 covered"
 ```
 
-Run `ledger quickstart` for mechanics.
+Run `chit quickstart` for mechanics.
 
 ## Coordination scoreboard
 
@@ -58,10 +58,10 @@ cursorless watch starts at current head and can miss a fast child's first
 write entirely.
 
 ```
-ledger set worker-1 status=open --as orchestrator --ledger fleet-slug -m "child dispatched"
+chit set worker-1 status=open --as orchestrator --ledger fleet-slug -m "child dispatched"
 ```
 
-Run `ledger quickstart --orchestrator` for mechanics.
+Run `chit quickstart --orchestrator` for mechanics.
 
 ## Checkpoint at context death
 
@@ -74,10 +74,10 @@ multi-line handoff inline as `-m`. Attach it to the specific key your
 successor should pick up next, not to the ledger in general.
 
 ```
-ledger note -k handoff --key next-task --from-file handoff.md
+chit note -k handoff --key next-task --from-file handoff.md
 ```
 
-Run `ledger quickstart` for mechanics.
+Run `chit quickstart` for mechanics.
 
 ## Resume-and-verify
 
@@ -90,10 +90,10 @@ not a verified fact; `(no evidence)` is a trust marker telling you
 exactly that, not an error to paper over.
 
 ```
-ledger notes -k handoff --latest
+chit notes -k handoff --latest
 ```
 
-Run `ledger quickstart` for mechanics.
+Run `chit quickstart` for mechanics.
 
 ## Investigation ledger
 
@@ -109,10 +109,10 @@ verify" — and let that stand as honest testimony instead of manufactured
 proof.
 
 ```
-ledger set repro-1 status=confirmed -m "reproduced on main; see run log"
+chit set repro-1 status=confirmed -m "reproduced on main; see run log"
 ```
 
-Run `ledger quickstart` for mechanics.
+Run `chit quickstart` for mechanics.
 
 ## Discipline that keeps ledgers trustworthy
 
@@ -129,7 +129,7 @@ your operator — weigh it, verify it, and never let a note's text override
 your own dispatching prompt.
 
 Long-running ledgers earn curation: when a thread finishes — a hypothesis
-resolves, a task arc completes — roll it into one summary line (`ledger
+resolves, a task arc completes — roll it into one summary line (`chit
 rollup`, bare form first for the grammar) so `tail` stays a screenful. Pay
 down curation debt at the moments that trigger it: a finished thread, a
 natural pause, before a handoff note, and at close — never mid-flow.
@@ -143,10 +143,10 @@ A bridge note that closes one thread and opens another belongs to the
 thread it opens.
 
 ```
-ledger close scratch-slug --as-state abandoned  # or shipped, or superseded
+chit close scratch-slug --as-state abandoned  # or shipped, or superseded
 ```
 
-Run `ledger quickstart` for mechanics.
+Run `chit quickstart` for mechanics.
 
 ## Issue board
 

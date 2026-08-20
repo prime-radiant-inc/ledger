@@ -137,7 +137,7 @@ func runSince(c *Ctx, cursor string, limit int, ledgerFlag string) error {
 		return err
 	}
 	evs, next, err := deliverRange(c, led, cursor, limit,
-		"ledger status refolds current state; ledger tail -n 50 shows recent events")
+		"chit status refolds current state; chit tail -n 50 shows recent events")
 	if err != nil {
 		return err
 	}
@@ -234,7 +234,7 @@ func runWatch(c *Ctx, o watchOpts) error {
 		// "same bound applies to watch"). deliverRange re-reads the ref and
 		// the chain per poll, which is what makes this loop see new events.
 		evs, next, err := deliverRange(c, led, cur, 0,
-			"restart with `ledger watch` (no --since) to watch from now")
+			"restart with `chit watch` (no --since) to watch from now")
 		if err != nil {
 			return err
 		}

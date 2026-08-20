@@ -60,11 +60,11 @@ func TestQuickstartExamplesExecute(t *testing.T) {
 			var so, se bytes.Buffer
 			code := cmd.ExecuteArgs(append([]string{"--store", dir}, ex.argv...), &so, &se)
 			if code != ex.expectExit {
-				t.Fatalf("%s: `ledger %s` exit %d want %d\nstdout: %s\nstderr: %s",
+				t.Fatalf("%s: `chit %s` exit %d want %d\nstdout: %s\nstderr: %s",
 					file, strings.Join(ex.argv, " "), code, ex.expectExit, so.String(), se.String())
 			}
 			if ex.expectErr != "" && !strings.Contains(se.String(), ex.expectErr) {
-				t.Fatalf("%s: `ledger %s` expected error %q, got %s",
+				t.Fatalf("%s: `chit %s` expected error %q, got %s",
 					file, strings.Join(ex.argv, " "), ex.expectErr, se.String())
 			}
 		}
@@ -83,7 +83,7 @@ var curatedOutOfQuickstart = map[string]bool{
 // TestQuickstartMentionsEveryVerb guards against the doctrine silently
 // falling behind the verb set (the deferred-disclosure finding: `ready`
 // shipped with the issue board and quickstart never learned it). It derives
-// the live verb list from the cobra root itself — via `ledger --help`,
+// the live verb list from the cobra root itself — via `chit --help`,
 // the same surface an agent actually reads — rather than hand-maintaining
 // a second list that can drift the same way the doc did.
 func TestQuickstartMentionsEveryVerb(t *testing.T) {
@@ -96,11 +96,11 @@ func TestQuickstartMentionsEveryVerb(t *testing.T) {
 	}
 	var so, se bytes.Buffer
 	if code := cmd.ExecuteArgs([]string{"--store", dir, "--help"}, &so, &se); code != 0 {
-		t.Fatalf("ledger --help: exit %d\n%s", code, se.String())
+		t.Fatalf("chit --help: exit %d\n%s", code, se.String())
 	}
 	verbs := verbsFromHelp(so.String())
 	if len(verbs) == 0 {
-		t.Fatal("parsed zero verbs out of `ledger --help` output — parser or cobra output format changed")
+		t.Fatal("parsed zero verbs out of `chit --help` output — parser or cobra output format changed")
 	}
 	quickstart, err := os.ReadFile(filepath.Join("..", "..", "docs", "quickstart.md"))
 	if err != nil {

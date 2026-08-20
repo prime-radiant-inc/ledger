@@ -58,8 +58,8 @@ func (c *Ctx) attachFreshness(led *fold.Ledger, payload map[string]any) {
 	if n == 0 {
 		return // only sentinel commits ahead — nothing a reader is missing
 	}
-	payload["freshness"] = map[string]any{"unmerged_remote_events": n, "hint": "run `ledger sync`"}
-	fmt.Fprintf(c.Stderr, "[ledger] %d unmerged remote events — run 'ledger sync'\n", n)
+	payload["freshness"] = map[string]any{"unmerged_remote_events": n, "hint": "run `chit sync`"}
+	fmt.Fprintf(c.Stderr, "[ledger] %d unmerged remote events — run 'chit sync'\n", n)
 }
 
 // freshnessRemote picks the remote freshness checks against: routed through

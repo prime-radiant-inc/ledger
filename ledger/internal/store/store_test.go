@@ -147,7 +147,7 @@ func TestResolveSameDirCollision(t *testing.T) {
 }
 
 // TestResolveShadowedAncestorStore is the field failure the eval reproduced:
-// a misplaced `ledger init` left a bare .ledger.git above a project repo,
+// a misplaced `chit init` left a bare .ledger.git above a project repo,
 // every read from inside the repo resolved to the repo's own empty store,
 // and nothing ever named the other one. Resolution still picks the repo —
 // it now also reports the store it shadowed, either direction.

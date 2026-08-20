@@ -239,7 +239,7 @@ func TestPassiveCheckGating(t *testing.T) {
 	if hits.Load() != 1 {
 		t.Fatalf("stale state must trigger exactly one check: %d", hits.Load())
 	}
-	if !strings.Contains(se.String(), "v0.2.0") || !strings.Contains(se.String(), "ledger update") {
+	if !strings.Contains(se.String(), "v0.2.0") || !strings.Contains(se.String(), "chit update") {
 		t.Fatalf("notice must name the version and the fix: %q", se.String())
 	}
 
@@ -270,7 +270,7 @@ func TestPassiveCheckGating(t *testing.T) {
 		t.Fatalf("update verb must skip the passive check: %q, %d hits", se.String(), hits.Load())
 	}
 
-	// a brew-managed binary is nagged toward brew, not toward `ledger
+	// a brew-managed binary is nagged toward brew, not toward `chit
 	// update` (which would refuse it)
 	se.Reset()
 	selfupdate.SaveState(stateDir, selfupdate.State{CheckedAt: time.Now(), Latest: "v0.2.0"})
@@ -280,7 +280,7 @@ func TestPassiveCheckGating(t *testing.T) {
 	}
 	defer func() { updateTarget = restoreT }()
 	passiveUpdateCheck(&Ctx{TTY: true, Stderr: &se}, "show")
-	if !strings.Contains(se.String(), "brew upgrade ledger") || strings.Contains(se.String(), "ledger update") {
+	if !strings.Contains(se.String(), "brew upgrade ledger") || strings.Contains(se.String(), "chit update") {
 		t.Fatalf("brew-managed nag must point at brew upgrade: %q", se.String())
 	}
 }

@@ -58,7 +58,7 @@ func runPush(c *Ctx, remoteFlag string, args []string) error {
 		// other slug in the same invocation to one typo.
 		for _, s := range slugs {
 			if _, ok := c.Store.FullHead(s); !ok {
-				return out.Errf("unknown_ledger", c.shadowHint("ledger ls --all  (lists every ledger here)"),
+				return out.Errf("unknown_ledger", c.shadowHint("chit ls --all  (lists every ledger here)"),
 					4, "no ledger '%s' here", s)
 			}
 		}
@@ -129,7 +129,7 @@ func (c *Ctx) pushBatch(remote string, slugs []string) []SlugOutcome {
 			// The curated instruction is the whole answer — git's own
 			// rejection text is never echoed here, only this fixed detail
 			// (or the two-creator diagnosis below).
-			detail := "run `ledger sync`, then retry `ledger push`"
+			detail := "run `chit sync`, then retry `chit push`"
 			if fetchErr == nil {
 				trackRef := store.TrackingRef(remote, outcomes[i].Slug)
 				if _, _, trackResult, err := c.Store.EventsDAGAt(trackRef); err == nil {

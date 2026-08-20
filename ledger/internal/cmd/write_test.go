@@ -37,7 +37,7 @@ func TestSetRejections(t *testing.T) {
 		t.Fatal(so)
 	}
 	_, se, _ = run(t, dir, "set", "t1", "wat", "--as", "impl")
-	if !strings.Contains(se, "vocab_unknown") || !strings.Contains(se, "ledger vocab add demo status wat") {
+	if !strings.Contains(se, "vocab_unknown") || !strings.Contains(se, "chit vocab add demo status wat") {
 		t.Fatalf("hint must be the exact command: %s", se)
 	}
 	_, se, _ = run(t, dir, "set", "t1", "severity=high", "--as", "impl")
@@ -169,7 +169,7 @@ func TestClosedLedgerRules(t *testing.T) {
 // TestAmbientSoleClosedLedger: when the only ledger in the repo is closed
 // (no open ledgers at all), PickLedger must still resolve to it ambiently —
 // note succeeds on the closed ledger, set fails with "closed" (not
-// "no_open_ledger", which would misdirect the caller toward `ledger create`).
+// "no_open_ledger", which would misdirect the caller toward `chit create`).
 func TestAmbientSoleClosedLedger(t *testing.T) {
 	dir := setup(t)
 	run(t, dir, "close", "demo", "--as-state", "abandoned")

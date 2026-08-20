@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# bridge-live-trial.sh — drive the ledger-gh live acceptance trial.
+# bridge-live-trial.sh — drive the chit-gh live acceptance trial.
 #
-# WHEN TO USE: after any change to ledger-gh, to re-run the one live
+# WHEN TO USE: after any change to chit-gh, to re-run the one live
 # acceptance trial against a real GitHub repo and a real ledger store. The
 # fixture suite proves the laws; this proves the two CLIs really behave the
 # way the fixture models them (every live round of this design so far has
@@ -18,7 +18,7 @@
 # Usage:
 #   scripts/bridge-live-trial.sh setup          # build binaries, make a board
 #   scripts/bridge-live-trial.sh sync [args..]  # one bridge run
-#   scripts/bridge-live-trial.sh ledger <args>  # a board command
+#   scripts/bridge-live-trial.sh chit <args>    # a board command
 #   scripts/bridge-live-trial.sh gh <args>      # a GitHub command
 #   scripts/bridge-live-trial.sh audit          # the standing invariants
 #   scripts/bridge-live-trial.sh replica        # clone the board to replica b
@@ -38,8 +38,8 @@ if [ "$REPO" != "prime-radiant-inc/ledger-bridge-spike" ]; then
   exit 2
 fi
 
-LEDGER="$TRIAL/bin/ledger"
-BRIDGE="$TRIAL/bin/ledger-gh"
+LEDGER="$TRIAL/bin/chit"
+BRIDGE="$TRIAL/bin/chit-gh"
 A="$TRIAL/a"
 
 log() { printf '\n=== %s %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "$TRIAL/trial.log"; }
@@ -61,13 +61,13 @@ cmd_setup() {
 }
 
 cmd_sync() {
-  log "ledger-gh sync $*"
+  log "chit-gh sync $*"
   run "$BRIDGE" sync --repo "$REPO" --ledger "$SLUG" --store "$A" \
     --ledger-bin "$LEDGER" "$@"
 }
 
 cmd_ledger() {
-  log "ledger $*"
+  log "chit $*"
   run "$LEDGER" --store "$A" "$@"
 }
 
@@ -143,7 +143,7 @@ print("  ",bad or "none")'
 case "${1:-}" in
   setup)   shift; cmd_setup "$@" ;;
   sync)    shift; cmd_sync "$@" ;;
-  ledger)  shift; cmd_ledger "$@" ;;
+  chit)    shift; cmd_ledger "$@" ;;
   gh)      shift; cmd_gh "$@" ;;
   replica) shift; cmd_replica "$@" ;;
   audit)   shift; cmd_audit "$@" ;;

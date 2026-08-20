@@ -40,7 +40,7 @@ func runReady(c *Ctx, ledgerFlag string, whereRaw []string, limit int, at string
 	if !model.ReadyCapable(led.Meta) {
 		return out.Errf("bad_usage",
 			"declare the ready-capable shape at create time: --field status=<...,open,in-progress,...> "+
-				"--terminal status=<terminal-values> --guard status --multi-field labels (see `ledger create --help`)",
+				"--terminal status=<terminal-values> --guard status --multi-field labels (see `chit create --help`)",
 			4, "'%s' is not ready-capable — ready needs a declared status field with --terminal and --guard status", led.Slug)
 	}
 	clauses, err := parseWhere(whereRaw, led.Meta)

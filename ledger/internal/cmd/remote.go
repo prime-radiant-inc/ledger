@@ -76,7 +76,7 @@ func breadcrumbExists(repoDir string) bool {
 
 // installedRefspec reports whether any configured remote already has the
 // ledger fetch refspec installed for its own tracking namespace — the
-// signal that `ledger init` (or a `sync`/`push` repair) has run at least
+// signal that `chit init` (or a `sync`/`push` repair) has run at least
 // once in THIS clone. Refspec and config are repo-local and never clone
 // (spec: "every clone bootstraps itself"), so a fresh clone of a repo that
 // already uses ledger starts with this false even though its breadcrumb is
@@ -140,8 +140,8 @@ func resolveRemote(c *Ctx, flag string) (string, error) {
 
 // installRefspecBestEffort resolves a remote the same way resolveRemote
 // does, minus the --remote flag and the breadcrumb (neither exists yet at
-// `ledger init` time), and installs its refspec — so a freshly cloned repo
-// with a lone "origin" is bootstrap-ready without waiting for `ledger
+// `chit init` time), and installs its refspec — so a freshly cloned repo
+// with a lone "origin" is bootstrap-ready without waiting for `chit
 // sync`'s own repair. Unresolvable (zero or ambiguous remotes) is silently
 // skipped: init has no --remote flag to disambiguate with, and sync repairs
 // on every invocation regardless.
@@ -173,7 +173,7 @@ func bestEffortRemote(repo gitx.Repo) string {
 
 // repairRefspecs is the every-invocation repair the spec requires (round 5
 // verified the failure it prevents): install the correct refspec for the
-// named remote — which fixes a remote added after `ledger init` — REWRITE OR
+// named remote — which fixes a remote added after `chit init` — REWRITE OR
 // REMOVE any refspec targeting a different remote's refs/ledger-remote/
 // namespace — `git remote rename` leaves the old refspec behind, which
 // otherwise repopulates the dead namespace after every prune, a permanent

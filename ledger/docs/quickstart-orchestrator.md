@@ -1,6 +1,6 @@
-# ledger quickstart — orchestrator
+# chit quickstart — orchestrator
 
-You're dispatching and coordinating other agents. Read `ledger quickstart`
+You're dispatching and coordinating other agents. Read `chit quickstart`
 first — this section only adds the fleet-dispatch layer on top of it.
 
 ## Dictated grammar
@@ -23,7 +23,7 @@ prompt you write must dictate, explicitly, in the text the child reads:
 ## `watch --follow` is the fleet monitor
 
 One long-lived call watches the whole fleet instead of you polling each
-child's ledger in a loop: `ledger watch --follow --ledger <slug>` streams
+child's ledger in a loop: `chit watch --follow --ledger <slug>` streams
 one JSON line per matching event, forever, until you kill it. Each line
 carries its own `id` — treat it as that event's resume cursor if the
 monitor restarts. `--follow` implies no timeout; combining it with an
@@ -46,21 +46,21 @@ after.
 ## Plan-tool coexistence
 
 A plan or todo-list step can cite a ledger entry as durable authority
-instead of re-deriving state from scratch: "see `ledger status task-3`"
+instead of re-deriving state from scratch: "see `chit status task-3`"
 outlives the current context window the way an in-memory todo item
 doesn't. The plan tool still owns the step sequence; the ledger owns the
 verified state each step left behind.
 
 ## Walkthrough — a coordination scoreboard alongside the quickstart's own ledger
 
-`qs-demo` from `ledger quickstart` is still open here, so this is also a
+`qs-demo` from `chit quickstart` is still open here, so this is also a
 live demonstration of rule 2: with two ledgers open, `--ledger` stops
 being optional.
 
 ```
-ledger create qs-fleet --scope "fleet coordination scoreboard (quickstart demo)" --owner orchestrator -m "spawns workers, tracks status here"
-ledger set worker-1 status=open --as orchestrator --ledger qs-fleet -m "child dispatched"
-ledger status  # expect: exit 4 error ambiguous_ledger
-ledger status --ledger qs-fleet
-ledger watch --ledger qs-fleet --timeout 1  # expect: exit 2
+chit create qs-fleet --scope "fleet coordination scoreboard (quickstart demo)" --owner orchestrator -m "spawns workers, tracks status here"
+chit set worker-1 status=open --as orchestrator --ledger qs-fleet -m "child dispatched"
+chit status  # expect: exit 4 error ambiguous_ledger
+chit status --ledger qs-fleet
+chit watch --ledger qs-fleet --timeout 1  # expect: exit 2
 ```

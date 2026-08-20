@@ -63,7 +63,7 @@ func TestNoOpenLedgerError(t *testing.T) {
 	}
 }
 
-// TestPositionalSlugOnReadVerbSuggestsLedgerFlag: `ledger show <slug>` is the
+// TestPositionalSlugOnReadVerbSuggestsLedgerFlag: `chit show <slug>` is the
 // slug-positional habit from set/close transferring wrongly (two eval agents
 // made it independently). It must not read as an unknown *verb* — it's a
 // usage error whose fix is the --ledger flag, named in the hint.
@@ -86,7 +86,7 @@ func TestPositionalSlugOnReadVerbSuggestsLedgerFlag(t *testing.T) {
 	}
 	// ls has no --ledger of its own; its fix is the verb that does.
 	_, se, code := run(t, dir, "ls", "demo")
-	if code != 4 || !strings.Contains(se, "did you mean: ledger show --ledger demo?") {
+	if code != 4 || !strings.Contains(se, "did you mean: chit show --ledger demo?") {
 		t.Fatalf("ls <slug> hint must point at show: %d %q", code, se)
 	}
 	// and a genuinely unknown subcommand stays unknown_verb

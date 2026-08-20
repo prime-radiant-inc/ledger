@@ -32,7 +32,7 @@ type Ctx struct {
 func (c *Ctx) Load(slug string) (*fold.Ledger, error) {
 	evs, meta, d, err := c.Store.EventsDAG(slug)
 	if err != nil {
-		return nil, out.Errf("unknown_ledger", c.shadowHint("ledger ls --all  (lists every ledger here)"),
+		return nil, out.Errf("unknown_ledger", c.shadowHint("chit ls --all  (lists every ledger here)"),
 			4, "no ledger '%s' here", slug)
 	}
 	led := fold.Fold(slug, evs, meta)
@@ -94,7 +94,7 @@ func (c *Ctx) PickLedger(ledgerFlag string) (*fold.Ledger, error) {
 		if len(all) == 1 {
 			return all[0], nil
 		}
-		hint := "ledger create <slug> --scope <what-it-tracks>  starts one; ledger ls --all lists closed ones"
+		hint := "chit create <slug> --scope <what-it-tracks>  starts one; chit ls --all lists closed ones"
 		if len(all) > 1 {
 			hint += "; --ledger <slug> targets a closed one directly (notes and rollups are still allowed there)"
 		}

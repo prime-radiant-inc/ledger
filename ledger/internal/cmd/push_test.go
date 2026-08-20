@@ -56,7 +56,7 @@ func TestPushBatchIsOneSubprocess(t *testing.T) {
 	}
 }
 
-// TestPushDefaultPushesAllLocalSlugs: `ledger push` with no arguments
+// TestPushDefaultPushesAllLocalSlugs: `chit push` with no arguments
 // publishes every local slug.
 func TestPushDefaultPushesAllLocalSlugs(t *testing.T) {
 	remote, a, _ := twoReplicas(t)
@@ -140,7 +140,7 @@ func TestPushRejectedNonFastForwardIsPartialFailureNonForce(t *testing.T) {
 		t.Fatalf("a diverged push must be rejected, not silently dropped: %+v", got)
 	}
 	detail, _ := got["board"]["detail"].(string)
-	if detail != "run `ledger sync`, then retry `ledger push`" {
+	if detail != "run `chit sync`, then retry `chit push`" {
 		t.Fatalf("rejection detail must be the exact retry instruction: %q", detail)
 	}
 	if strings.Contains(se, "git pull") || strings.Contains(se, "hint:") {
@@ -173,7 +173,7 @@ func TestPushRejectedRootMismatchNamesBothCreators(t *testing.T) {
 		t.Fatalf("a root mismatch push must be rejected: %+v", got)
 	}
 	detail, _ := got["board"]["detail"].(string)
-	for _, want := range []string{"alice", "bob", "ledger export", "ledger import"} {
+	for _, want := range []string{"alice", "bob", "chit export", "chit import"} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("a root-mismatched rejection must name both creators and the export/import exit; missing %q in %q", want, detail)
 		}

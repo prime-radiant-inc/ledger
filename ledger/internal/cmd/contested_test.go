@@ -321,7 +321,7 @@ func TestContestedEntriesByteIdenticalAcrossMergeOrders(t *testing.T) {
 // attempt 1's update-ref, so attempt 2 is a genuine second run of the same
 // closure against a fresh read.
 //
-// The competing event is a real `ledger sync` bringing in a THIRD replica's
+// The competing event is a real `chit sync` bringing in a THIRD replica's
 // concurrent claim, and its timestamp is the whole design of this fixture.
 // A collapsing write to (task-1, status) would fail the CAS and abort the
 // append, so it cannot be the thing that changes the answer. A third

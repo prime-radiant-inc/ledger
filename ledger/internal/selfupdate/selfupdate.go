@@ -1,5 +1,5 @@
 // Package selfupdate fetches and installs released ledger binaries from
-// GitHub releases. It backs `ledger update` and the daily passive check;
+// GitHub releases. It backs `chit update` and the daily passive check;
 // nothing here touches a ledger store.
 package selfupdate
 

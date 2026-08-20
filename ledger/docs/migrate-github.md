@@ -2,7 +2,7 @@
 
 A one-time bulk seed: every open GitHub issue becomes a key on a
 ready-capable ledger board, each carrying a note that says where it came
-from. This is a documented loop, not a verb — `ledger import` reads
+from. This is a documented loop, not a verb — `chit import` reads
 whole-ledger JSONL and is the wrong tool for seeding a board.
 
 Migrating 11 issues by hand took ~33 typed commands and lost one error in a
@@ -10,11 +10,11 @@ Migrating 11 issues by hand took ~33 typed commands and lost one error in a
 
 ## Before you start
 
-- The board exists and is ready-capable — `ledger create issues --scope
+- The board exists and is ready-capable — `chit create issues --scope
   <ref> --field status=open,in-progress,closed,wontfix --terminal
   status=closed,wontfix --multi-field labels --multi-field blocked-by
   --guard status --guard blocked-by --stale-after <horizon>`.
-- `ledger init` has run **at the repo root** and `gh auth status` is clean.
+- `chit init` has run **at the repo root** and `gh auth status` is clean.
 - You have decided the board is canonical for this work, or that GitHub is.
   A migration does not answer that question; it just moves the text.
 
@@ -37,9 +37,9 @@ tab=$(printf '\t')
 jq -r '.[] | [.number, .title] | @tsv' issues.json |
 while IFS="$tab" read -r n title; do
   key=$(printf '%s' "$title" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' '-' | cut -c1-64 | sed 's/^-*//; s/-*$//')
-  ledger set "$key" status=open --expect none --idempotency-key "gh-$n" \
+  chit set "$key" status=open --expect none --idempotency-key "gh-$n" \
       -m "$title" --as migrator --ledger issues &&
-    ledger note --key "$key" -m "migrated from issues/$n" --idempotency-key "gh-$n" \
+    chit note --key "$key" -m "migrated from issues/$n" --idempotency-key "gh-$n" \
       --as migrator --ledger issues ||
     { echo "STOPPED at issue #$n ($key)" >&2; break; }
 done
@@ -48,7 +48,7 @@ done
 **Check the exit code of every command.** That is what `&&` and `|| break`
 are doing. A pipeline reports only its LAST command's status, so a `ledger`
 call piped into `jq` looks successful no matter how it exited — the
-migration this recipe comes from lost its `ledger init` error exactly that
+migration this recipe comes from lost its `chit init` error exactly that
 way and spent an hour on a store that was never initialized.
 
 **The `-m` on the seed IS the key's title**, carried by every listing
@@ -67,9 +67,9 @@ is its own record from here.
 ## 3. Check what landed, then publish
 
 ```
-ledger show --ledger issues
-ledger ready --ledger issues
-ledger push
+chit show --ledger issues
+chit ready --ledger issues
+chit push
 ```
 
 `show` lists a key per issue with its title; `ready` is the first read

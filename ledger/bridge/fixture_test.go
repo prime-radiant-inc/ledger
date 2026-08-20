@@ -39,7 +39,7 @@ func TestMain(m *testing.M) {
 	}
 	ledgerBin = filepath.Join(dir, "ledger")
 	ghBin = filepath.Join(dir, "gh")
-	bridgeBin = filepath.Join(dir, "ledger-gh")
+	bridgeBin = filepath.Join(dir, "chit-gh")
 	for _, b := range [][2]string{{ledgerBin, "."}, {ghBin, "./bridge/fakegh/cmd"}, {bridgeBin, "./bridge"}} {
 		cmd := exec.Command("go", "build", "-o", b[0], b[1])
 		cmd.Dir = ".."
@@ -138,7 +138,7 @@ func (f *fixture) ledgerOK(args ...string) map[string]any {
 		doc, err = f.ledger(args...)
 	}
 	if err != nil {
-		f.t.Fatalf("ledger %s: %v", strings.Join(args, " "), err)
+		f.t.Fatalf("chit %s: %v", strings.Join(args, " "), err)
 	}
 	return doc
 }
@@ -328,7 +328,7 @@ func (f *fixture) syncMode(login string, failAt, failAfter int) (*Report, error)
 	return f.syncer().Run()
 }
 
-// runBridgeBinary runs the real `ledger-gh` binary as a separate PROCESS
+// runBridgeBinary runs the real `chit-gh` binary as a separate PROCESS
 // with its own environment — what the concurrency regression needs, since
 // two goroutines sharing this test's memory would not be two operators.
 func (f *fixture) runBridgeBinary() (string, error) {

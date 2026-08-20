@@ -382,7 +382,7 @@ const doctrineStaleAfter = "300ms"
 // doctrine section (board creation is "The board" spec section, out of
 // this task's scope — the pattern section teaches idioms against an
 // already-declared board, exactly like the other seven patterns never
-// re-teach `ledger create` either).
+// re-teach `chit create` either).
 func doctrineBoard(t *testing.T) string {
 	t.Helper()
 	dir := initRepo(t)
@@ -467,7 +467,7 @@ func runDoctrinePipe(t *testing.T, c doctrineCmd, ledgerStdout string) {
 
 // ---- spec test 18: watch doctrine, driven independently of the doc text ----
 
-// watchResult is one background `ledger watch` subprocess's outcome.
+// watchResult is one background `chit watch` subprocess's outcome.
 type watchResult struct {
 	stdout, stderr string
 	code           int

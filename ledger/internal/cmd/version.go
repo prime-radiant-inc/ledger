@@ -19,12 +19,12 @@ func init() { register(newVersionCmd) }
 // newVersionCmd never resolves a store (see root.go's exemption list) — the
 // first thing a fresh install runs must work in an empty directory.
 func newVersionCmd(c *Ctx) *cobra.Command {
-	return &cobra.Command{Use: "version", Short: "print the ledger version",
+	return &cobra.Command{Use: "version", Short: "print the chit version",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			out.Emit(c.Stdout, c.TTY, map[string]any{
 				"version": Version, "os": runtime.GOOS, "arch": runtime.GOARCH,
-			}, []string{fmt.Sprintf("ledger %s (%s/%s)", Version, runtime.GOOS, runtime.GOARCH)})
+			}, []string{fmt.Sprintf("chit %s (%s/%s)", Version, runtime.GOOS, runtime.GOARCH)})
 			return nil
 		}}
 }

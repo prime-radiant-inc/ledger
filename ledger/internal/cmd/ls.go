@@ -36,7 +36,7 @@ func newLsCmd(c *Ctx) *cobra.Command {
 // lsBootstrapHint is what `ls` prints in place of an empty listing when the
 // committed breadcrumb (.ledger.toml) is present but no ledger refspec has
 // been installed in this clone (installedRefspec, remote.go) — a fresh
-// clone of a repo that uses ledger, before its own `ledger init && ledger
+// clone of a repo that uses ledger, before its own `chit init && chit
 // sync` has ever run here. Without this, the first `ls` in that clone reads
 // as "no ledgers exist" when the truth is "nothing has been synced yet".
 const lsBootstrapHint = "this repo uses ledger, but it hasn't been bootstrapped in this clone — run `" + bootstrapCmd + "`"
@@ -65,7 +65,7 @@ func runLs(c *Ctx, all bool) error {
 	}
 
 	if len(leds) == 0 {
-		return emitLsEmpty(c, "no ledgers in this repo — ledger create <slug> --scope <ref> starts one")
+		return emitLsEmpty(c, "no ledgers in this repo — chit create <slug> --scope <ref> starts one")
 	}
 
 	now := model.Now().UTC()
@@ -79,7 +79,7 @@ func runLs(c *Ctx, all bool) error {
 	sort.Slice(kept, func(i, j int) bool { return lastEventTime(kept[i]).After(lastEventTime(kept[j])) })
 
 	if len(kept) == 0 {
-		return emitLsEmpty(c, "no ledgers match — ledger ls --all also shows ledgers closed more than 30 days ago")
+		return emitLsEmpty(c, "no ledgers match — chit ls --all also shows ledgers closed more than 30 days ago")
 	}
 
 	rows := make([]map[string]any, 0, len(kept))
@@ -118,7 +118,7 @@ func emitLsEmpty(c *Ctx, defaultMsg string) error {
 
 // trackingOnlyLedgers folds every slug a remote's tracking ref carries that
 // this clone has no local refs/ledger/<slug> for yet — exactly the set
-// `ledger sync` would adopt. local is the already-known set of slugs with a
+// `chit sync` would adopt. local is the already-known set of slugs with a
 // local ref. A slug tracked by more than one remote is listed once.
 func trackingOnlyLedgers(c *Ctx, local map[string]bool) []*fold.Ledger {
 	var out []*fold.Ledger
@@ -166,7 +166,7 @@ func lsLine(led *fold.Ledger, lastTS string, events int, idle bool, now time.Tim
 		state = fmt.Sprintf("open, idle %dd", days)
 	}
 	if unsynced {
-		state += " (unsynced — run ledger sync)"
+		state += " (unsynced — run chit sync)"
 	}
 	return fmt.Sprintf("%-20s %-44s %-20s last %-10s (%d events)",
 		out.EscapeControls(led.Slug), out.EscapeControls(truncateRunes(led.Meta.Scope, 44)),

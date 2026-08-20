@@ -7,7 +7,7 @@ description: Use when working a shared ledger issue board — picking and claimi
 
 Doctrine for a shared ledger issue board: the picking loop, claims and
 evidence, cycle-breaking, and the sync habit that keeps a board honest
-across hosts. Every command shape here is spelled out in full in `ledger
+across hosts. Every command shape here is spelled out in full in `chit
 quickstart`; read that before your first real write. The `using-ledger`
 skill covers the ledger's other roles — execution spines, coordination
 scoreboards, checkpoints, resume-and-verify, investigation ledgers, and
@@ -16,7 +16,7 @@ the discipline that keeps any ledger trustworthy.
 ## Issue board
 
 For coordinating unblocked work on a shared board: create it with guarded
-`status`/`blocked-by` fields and a `labels` reservation (`ledger create
+`status`/`blocked-by` fields and a `labels` reservation (`chit create
 --help` has the declaration flags; this pattern is everything downstream
 of that). Pick `--stale-after` from the board's TEMPO: hours for an agent
 fleet running the claim-reclaim loop, a week or more for a human-paced
@@ -404,16 +404,16 @@ fires no event, so a timeout is how it gets noticed.
 cd <board dir> && ~/path-to/ledger watch --value open,in-progress,closed,wontfix --timeout 1 --ledger issues  # expect: exit 2
 ```
 
-Run `ledger quickstart` for general mechanics; `ledger create --help`
+Run `chit quickstart` for general mechanics; `chit create --help`
 for the board declaration flags.
 
 ## Sync
 
 Sync and push are cross-host doctrine, not board-only — the habit
 applies to every ledger you touch, coordination boards most of all.
-Start of a session: `ledger sync` fetches and merges remote history,
+Start of a session: `chit sync` fetches and merges remote history,
 never pushes. End of a session, or whenever a handoff needs to reach
-someone else: `ledger push`. Bare `push` publishes every local slug;
+someone else: `chit push`. Bare `push` publishes every local slug;
 naming slugs publishes only those — the privacy lever for a ledger
 that isn't ready to be seen, since everything pushed is readable by
 anyone with read access to the repo.
@@ -452,11 +452,11 @@ force-replaces the poisoned ref, and the slug stays wedged until they
 do.
 
 ```
-ledger sync
-ledger push
+chit sync
+chit push
 ```
 
-Run `ledger quickstart` for mechanics.
+Run `chit quickstart` for mechanics.
 
 ## A partition, healed — worked example
 

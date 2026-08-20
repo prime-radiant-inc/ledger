@@ -45,7 +45,7 @@ func newExportCmd(c *Ctx) *cobra.Command {
 func runExport(c *Ctx, slug, to string) error {
 	evs, meta, err := c.Store.Events(slug)
 	if err != nil {
-		return out.Errf("unknown_ledger", "ledger ls --all", 4, "no ledger '%s' here", slug)
+		return out.Errf("unknown_ledger", "chit ls --all", 4, "no ledger '%s' here", slug)
 	}
 
 	var buf strings.Builder
@@ -111,7 +111,7 @@ func runImport(c *Ctx, path, newSlug string) error {
 			"'%s' is not a valid slug", newSlug)
 	}
 	if _, err := c.Store.HeadID(newSlug); err == nil {
-		return out.Errf("slug_exists", "ledger ls --all — then pick a new slug, e.g. "+newSlug+"-2", 4,
+		return out.Errf("slug_exists", "chit ls --all — then pick a new slug, e.g. "+newSlug+"-2", 4,
 			"ledger '%s' already exists (slugs are never reused)", newSlug)
 	}
 
@@ -121,11 +121,11 @@ func runImport(c *Ctx, path, newSlug string) error {
 	}
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
 	if len(lines) < 2 || lines[0] == "" {
-		return out.Errf("bad_export", "re-export with `ledger export`", 4, "'%s' is not a ledger export", path)
+		return out.Errf("bad_export", "re-export with `chit export`", 4, "'%s' is not a ledger export", path)
 	}
 	var header exportHeader
 	if err := json.Unmarshal([]byte(lines[0]), &header); err != nil || header.LedgerExport != 1 {
-		return out.Errf("bad_export", "re-export with `ledger export`", 4, "'%s' is not a ledger export", path)
+		return out.Errf("bad_export", "re-export with `chit export`", 4, "'%s' is not a ledger export", path)
 	}
 
 	var evs []model.Event
@@ -136,10 +136,10 @@ func runImport(c *Ctx, path, newSlug string) error {
 		var raw map[string]any
 		var ev model.Event
 		if err := json.Unmarshal([]byte(line), &raw); err != nil {
-			return out.Errf("bad_export", "re-export with `ledger export`", 4, "malformed event on line %d", i+2)
+			return out.Errf("bad_export", "re-export with `chit export`", 4, "malformed event on line %d", i+2)
 		}
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
-			return out.Errf("bad_export", "re-export with `ledger export`", 4, "malformed event on line %d", i+2)
+			return out.Errf("bad_export", "re-export with `chit export`", 4, "malformed event on line %d", i+2)
 		}
 		ev.CommitterOverride = "imported"
 		if id, ok := raw["id"].(string); ok {
@@ -148,7 +148,7 @@ func runImport(c *Ctx, path, newSlug string) error {
 		evs = append(evs, ev)
 	}
 	if len(evs) == 0 {
-		return out.Errf("bad_export", "re-export with `ledger export`", 4, "'%s' has no events to import", path)
+		return out.Errf("bad_export", "re-export with `chit export`", 4, "'%s' has no events to import", path)
 	}
 
 	meta := header.Meta

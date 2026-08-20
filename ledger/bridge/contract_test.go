@@ -14,7 +14,7 @@ import (
 
 // The command's own contract: the exit codes an operator's lock/cron wrapper
 // is written against, the pinned slugification rule, and the two failure
-// scopes of `ledger sync`.
+// scopes of `chit sync`.
 
 // TestExitContract: 0 = report on stdout; 1 = error document on stderr;
 // 2 = usage.
@@ -142,7 +142,7 @@ func TestSlugificationIsPinned(t *testing.T) {
 	}
 }
 
-// TestSyncFailureScoping: `ledger sync` takes no slug selector, so a fleet
+// TestSyncFailureScoping: `chit sync` takes no slug selector, so a fleet
 // store holds slugs the bridge has nothing to do with. Abort iff OUR OWN
 // slug failed; warn on every other slug's failure. A blanket abort couples
 // the bridge's availability to every dead remote in the operator's store.

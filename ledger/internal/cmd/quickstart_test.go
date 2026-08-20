@@ -14,7 +14,7 @@ func TestQuickstartPrintsColdConsumerDoctrine(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("quickstart: exit %d\nstderr: %s", code, se)
 	}
-	if !strings.Contains(so, "ledger quickstart") || !strings.Contains(so, "## Doctrine") {
+	if !strings.Contains(so, "chit quickstart") || !strings.Contains(so, "## Doctrine") {
 		t.Fatalf("quickstart output missing cold-consumer markers: %q", so)
 	}
 }
@@ -54,7 +54,7 @@ func TestQuickstartNeedsNoStore(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("quickstart with no --store outside any repo: exit %d\nstderr: %s", code, se.String())
 	}
-	if !strings.Contains(so.String(), "ledger quickstart") {
+	if !strings.Contains(so.String(), "chit quickstart") {
 		t.Fatalf("quickstart output missing expected content: %q", so.String())
 	}
 }

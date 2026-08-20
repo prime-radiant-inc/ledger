@@ -32,7 +32,7 @@ func newInitCmd(c *Ctx) *cobra.Command {
 // clone bootstraps itself"), so the breadcrumb, the quickstart, and `ls`'s
 // own bootstrap hint (lsBootstrapHint, ls.go) all point at the same literal
 // command.
-const bootstrapCmd = "ledger init && ledger sync"
+const bootstrapCmd = "chit init && chit sync"
 
 // ledgerTomlFor builds the committed breadcrumb's content. remote is the
 // name init resolved as the default sync remote (bestEffortRemote,
@@ -49,15 +49,15 @@ func ledgerTomlFor(remote string) string {
 	}
 	return "# This repo uses `ledger` for durable agent working-state (git phantom refs).\n" +
 		"# Bootstrap in a fresh clone:  " + bootstrapCmd + "\n" +
-		"# Docs: run `ledger quickstart`\n" +
+		"# Docs: run `chit quickstart`\n" +
 		remoteLine
 }
 
 var claudeStanzaLines = []string{
 	"  ## Ledger",
 	"  This repo tracks agent working-state with `ledger` (durable, git-backed).",
-	"  Run `ledger ls` at the start of a session to see open work before starting new work.",
-	"  Record status and handoffs with `ledger set` / `ledger note`; never write secrets into a ledger entry.",
+	"  Run `chit ls` at the start of a session to see open work before starting new work.",
+	"  Record status and handoffs with `chit set` / `chit note`; never write secrets into a ledger entry.",
 }
 
 func stanzaText() string { return strings.Join(claudeStanzaLines, "\n") }
@@ -66,7 +66,7 @@ func stanzaText() string { return strings.Join(claudeStanzaLines, "\n") }
 // admin_doc), not just the TTY lines — the agent-primary non-TTY mode needs
 // the same doctrine pointers a human reads off the terminal.
 const (
-	bootstrapHint = "run `ledger quickstart` for agent doctrine"
+	bootstrapHint = "run `chit quickstart` for agent doctrine"
 	adminDocPath  = "ledger/docs/admin.md"
 	commitHint    = "commit this file so clones discover the ledger"
 )
@@ -88,7 +88,7 @@ const hooksSnippet = "Paste this into `.claude/settings.json` yourself (merge wi
 	"        \"hooks\": [\n" +
 	"          {\n" +
 	"            \"type\": \"command\",\n" +
-	"            \"command\": \"ledger ls\"\n" +
+	"            \"command\": \"chit ls\"\n" +
 	"          }\n" +
 	"        ]\n" +
 	"      }\n" +
@@ -172,7 +172,7 @@ func sameDir(a, b string) (bool, error) {
 	return ra == rb, nil
 }
 
-// initRepoCase handles `ledger init` inside an existing git repo: it sets
+// initRepoCase handles `chit init` inside an existing git repo: it sets
 // the reflog recovery net every time (cheap, idempotent), but writes the
 // breadcrumb only once — a second run must never clobber a committed or
 // hand-edited .ledger.toml.
@@ -184,7 +184,7 @@ func initRepoCase(target string) ([]string, map[string]any, error) {
 
 	// Best-effort refspec install: a freshly cloned repo already has its
 	// "origin" remote, so this makes it sync-ready immediately rather than
-	// waiting for the first `ledger sync` to repair it. Silently skipped
+	// waiting for the first `chit sync` to repair it. Silently skipped
 	// when the remote can't be resolved (zero or ambiguous remotes) — init
 	// has no --remote flag, and sync's own repair runs regardless.
 	refspecRepairs := installRefspecBestEffort(repo)
@@ -227,7 +227,7 @@ func initRepoCase(target string) ([]string, map[string]any, error) {
 	return lines, payload, nil
 }
 
-// initBareCase handles `ledger init` in a directory with no git repo: it
+// initBareCase handles `chit init` in a directory with no git repo: it
 // creates a self-describing bare store. Bare stores need no breadcrumb —
 // their existence on disk is the marker — and bare git's reflogs default
 // off, so the recovery-net config still needs setting explicitly.

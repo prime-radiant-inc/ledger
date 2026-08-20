@@ -20,7 +20,7 @@ type Board struct {
 }
 
 // openValue is the board value a seed and an inbound reopen write. There is
-// no flag for it: `ledger create` PINS a ready-capable board's non-terminal
+// no flag for it: `chit create` PINS a ready-capable board's non-terminal
 // status vocabulary to exactly {open, in-progress} (probed — a third
 // non-terminal value is refused at create), so reopen ⇒ `open`, always.
 const openValue = "open"
@@ -177,13 +177,13 @@ func (b Board) exec(args []string) (map[string]any, error) {
 			}
 		}
 		if be.Raw == "" {
-			be.Raw = fmt.Sprintf("ledger %s: %v", strings.Join(args, " "), err)
+			be.Raw = fmt.Sprintf("chit %s: %v", strings.Join(args, " "), err)
 		}
 		return nil, be
 	}
 	var doc map[string]any
 	if e := json.Unmarshal([]byte(so.String()), &doc); e != nil {
-		return nil, fmt.Errorf("ledger %s: undecodable output: %s", strings.Join(args, " "), so.String())
+		return nil, fmt.Errorf("chit %s: undecodable output: %s", strings.Join(args, " "), so.String())
 	}
 	return doc, nil
 }
@@ -210,7 +210,7 @@ func (b Board) CheckCapable() error {
 		return fmt.Errorf("the ledger binary %q predates tool rev 16: `set --rename` is missing. "+
 			"The bridge needs it for title mirroring, and rev 16's machine-readable `signals` in "+
 			"needs_override documents for Law 5 — without it every guarded intake write takes the "+
-			"refusal path. Upgrade ledger (ledger update), or point --ledger-bin at a rev-16 binary", b.Bin)
+			"refusal path. Upgrade ledger (chit update), or point --ledger-bin at a rev-16 binary", b.Bin)
 	}
 	return nil
 }
@@ -325,7 +325,7 @@ func (b Board) NotesOnKey(key string) ([]Note, error) {
 
 // Note is a board note as the backfill needs it.
 //
-// There is deliberately no ImportedFrom here: `ledger notes` does not
+// There is deliberately no ImportedFrom here: `chit notes` does not
 // surface the field (only `since`/`tail`'s event documents do), so the
 // bridge derives it from the whole-chain read it already holds — see
 // Syncer.importedFromOf. A consumer WITHOUT that read cannot, which is a
@@ -623,7 +623,7 @@ type chainIndex struct {
 // anything else. Two replicas that have both drifted mint duplicate GitHub
 // issues for each other's keys, because their link notes have not met yet.
 //
-// `ledger sync` takes no slug — it syncs every tracked slug in the store (a
+// `chit sync` takes no slug — it syncs every tracked slug in the store (a
 // slug-selective sync is a named tool-backlog item the bridge adopts when it
 // exists). So a partial_failure must be SCOPED: a fleet store holds slugs
 // the bridge has nothing to do with, and aborting because somebody else's

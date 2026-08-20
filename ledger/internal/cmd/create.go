@@ -128,7 +128,7 @@ func (c *Ctx) createSuperseding(slug, supersedes string, ev model.Event, metaJSO
 		}
 	}
 	return "", out.Errf("cas_exhausted",
-		"re-run the same `ledger create ... --supersedes` command", 1,
+		"re-run the same `chit create ... --supersedes` command", 1,
 		"the supersede transaction for '%s' could not land after retrying (concurrent writers?)", slug)
 }
 
@@ -163,7 +163,7 @@ func (c *Ctx) attemptSupersede(slug, supersedes string, ev model.Event, metaJSON
 	oldRef := "refs/ledger/" + supersedes
 	oldFull, _, code := c.Store.Repo.Git("", "rev-parse", oldRef)
 	if code != 0 {
-		return "", false, out.Errf("unknown_ledger", "ledger ls --all", 4, "no ledger '%s' here", supersedes)
+		return "", false, out.Errf("unknown_ledger", "chit ls --all", 4, "no ledger '%s' here", supersedes)
 	}
 	linkParent := oldFull
 	if pred.State == "open" {
@@ -214,10 +214,10 @@ func keys(m map[string][]string) string {
 func mapStoreErr(err error, slug string) error {
 	switch {
 	case errors.Is(err, store.ErrSlugExists):
-		return out.Errf("slug_exists", "ledger ls --all — then pick a new slug, e.g. "+slug+"-2", 4,
+		return out.Errf("slug_exists", "chit ls --all — then pick a new slug, e.g. "+slug+"-2", 4,
 			"ledger '%s' already exists (slugs are never reused)", slug)
 	case errors.Is(err, store.ErrUnknownLedger):
-		return out.Errf("unknown_ledger", "ledger ls --all", 4, "no ledger '%s' here", slug)
+		return out.Errf("unknown_ledger", "chit ls --all", 4, "no ledger '%s' here", slug)
 	}
 	return err
 }

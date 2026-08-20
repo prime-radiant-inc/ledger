@@ -12,7 +12,7 @@ import (
 )
 
 // shadowedLayout reproduces the eval's silent-shadowing layout: a bare store
-// one level above a project repo, created by a misplaced `ledger init` and
+// one level above a project repo, created by a misplaced `chit init` and
 // holding the only real ledger, while the repo has a store of its own that
 // is empty. Leaves the test standing inside the repo with ambient
 // resolution in force, and returns the repo dir and the bare store's path.

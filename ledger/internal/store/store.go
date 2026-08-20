@@ -120,7 +120,7 @@ func Resolve(storeFlag string) (Resolution, error) {
 // shadowedAbove continues the ancestor walk above the directory Resolve
 // stopped at, looking for a store of the other kind: a bare .ledger.git
 // above a chosen repo (wantBare), or a repo above a chosen bare store.
-// Field failure it exists for: a misplaced `ledger init` put a bare store in
+// Field failure it exists for: a misplaced `chit init` put a bare store in
 // a sandbox root, every read inside the project repo resolved to the repo's
 // own empty store, and nothing ever named the other one. Same-kind ancestors
 // are skipped — a repo inside a repo is the ordinary nested-checkout case,
