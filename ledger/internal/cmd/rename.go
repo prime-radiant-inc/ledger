@@ -164,7 +164,7 @@ func renamePrecondition(key, expect string, expectSet bool, meta model.Meta, aut
 		k := b.Keys[key]
 		if k == nil || k.Title == "" {
 			return out.Errf("unknown_key",
-				`seed it first: ledger set `+key+` status=open --expect none -m "<title>"`, 4,
+				`seed it first: chit set `+key+` status=open --expect none -m "<title>"`, 4,
 				"'%s' has no title to rename — a key's title starts at its first status write", key)
 		}
 		*priorOut = k.Title
@@ -202,7 +202,7 @@ func checkRenameCAS(latest *model.Event, key, expect string) error {
 // claim_lost naming the rename that beat this one, and the hint that sends
 // the caller to read the current title first.
 func renameClaimLost(latest *model.Event, key string) error {
-	return out.Errf("claim_lost", "read the current title first — `ledger status "+key+"` shows it", 4,
+	return out.Errf("claim_lost", "read the current title first — `chit status "+key+"` shows it", 4,
 		"event %s by %s already renamed '%s' to %q", latest.ID, latest.Author, key, latest.Rename)
 }
 

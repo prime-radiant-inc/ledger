@@ -162,15 +162,15 @@ func TestLsFreshCloneWithBreadcrumbPrintsBootstrapHint(t *testing.T) {
 		t.Fatalf("a never-synced clone has no ledgers to list: %v", l)
 	}
 	note, _ := doc["note"].(string)
-	if !strings.Contains(note, "ledger init && ledger sync") {
-		t.Fatalf("expected the bootstrap hint naming `ledger init && ledger sync`: %v", doc)
+	if !strings.Contains(note, "chit init && chit sync") {
+		t.Fatalf("expected the bootstrap hint naming `chit init && chit sync`: %v", doc)
 	}
 
 	c, buf := ttyCtx(clone)
 	if err := runLs(c, false); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(buf.String(), "ledger init && ledger sync") {
+	if !strings.Contains(buf.String(), "chit init && chit sync") {
 		t.Fatalf("expected the bootstrap hint on the TTY line: %q", buf.String())
 	}
 
@@ -188,7 +188,7 @@ func TestLsFreshCloneWithBreadcrumbPrintsBootstrapHint(t *testing.T) {
 }
 
 // TestLsMarksTrackingOnlySlugUnsynced: a slug whose tracking ref has been
-// fetched but has no local refs/ledger/<slug> yet (the state `ledger sync`
+// fetched but has no local refs/ledger/<slug> yet (the state `chit sync`
 // would adopt from) must still appear in `ls`, marked as unsynced — the
 // spec's "unsynced tracking-only slugs" bullet.
 func TestLsMarksTrackingOnlySlugUnsynced(t *testing.T) {
@@ -218,7 +218,7 @@ func TestLsMarksTrackingOnlySlugUnsynced(t *testing.T) {
 	if err := runLs(c, false); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(buf.String(), "(unsynced — run ledger sync)") {
+	if !strings.Contains(buf.String(), "(unsynced — run chit sync)") {
 		t.Fatalf("expected the literal unsynced marker on the TTY line: %q", buf.String())
 	}
 

@@ -59,7 +59,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          FILES=(dist/ledger-*.tar.gz dist/checksums.txt dist/install.sh)
+          FILES=(dist/chit-*.tar.gz dist/checksums.txt dist/install.sh)
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "${FILES[@]}" --clobber
           else
@@ -83,19 +83,19 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
-          bash scripts/make-formula.sh "$GITHUB_REF_NAME" dist/checksums.txt > "$RUNNER_TEMP/ledger.rb"
+          bash scripts/make-formula.sh "$GITHUB_REF_NAME" dist/checksums.txt > "$RUNNER_TEMP/chit.rb"
           cd "$RUNNER_TEMP"
           gh repo clone prime-radiant-inc/homebrew-tap tap
           cd tap
           gh auth setup-git
-          cp "$RUNNER_TEMP/ledger.rb" Formula/ledger.rb
+          cp "$RUNNER_TEMP/chit.rb" Formula/chit.rb
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/ledger.rb
+          git add Formula/chit.rb
           if git diff --cached --quiet; then
             echo "formula unchanged (re-run) — nothing to push"
           else
-            git commit -m "Update ledger to ${GITHUB_REF_NAME#v}"
+            git commit -m "Update chit to ${GITHUB_REF_NAME#v}"
             git push
           fi
 

@@ -119,7 +119,7 @@ func TestClaimLostMessageFormat(t *testing.T) {
 	if !strings.Contains(se3, want) {
 		t.Fatalf("exact message: got %q want to contain %q", se3, want)
 	}
-	if !strings.Contains(se3, "re-run ledger ready and pick again") {
+	if !strings.Contains(se3, "re-run chit ready and pick again") {
 		t.Fatalf("non-terminal attempted value must get the re-run-ready hint: %s", se3)
 	}
 }
@@ -211,7 +211,7 @@ func TestClaimLostGenericHintOnPlainBoard(t *testing.T) {
 	if !strings.Contains(se, "re-read 'status' and try again") {
 		t.Fatalf("plain board must get generic hint, not ready-capable advice: %s", se)
 	}
-	if strings.Contains(se, "re-run ledger ready") {
+	if strings.Contains(se, "re-run chit ready") {
 		t.Fatalf("plain board must never see ready-capable hints: %s", se)
 	}
 

@@ -32,7 +32,7 @@ func runVocabAdd(c *Ctx, slug, field, value, asFlag, mFlag string) error {
 		return err
 	}
 	if led.State != "open" {
-		return out.Errf("closed", "closed ledgers refuse new vocabulary — ledger create <new-slug> --scope <ref> for further work", 4,
+		return out.Errf("closed", "closed ledgers refuse new vocabulary — chit create <new-slug> --scope <ref> for further work", 4,
 			"'%s' is %s and refuses vocab changes", led.Slug, led.State)
 	}
 	if field == model.TitleFieldName {

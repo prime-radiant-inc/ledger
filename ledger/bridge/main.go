@@ -1,8 +1,8 @@
-// Command ledger-gh bridges a ledger issue board to a GitHub issue tracker.
+// Command chit-gh bridges a ledger issue board to a GitHub issue tracker.
 //
 // One verb, one-shot, idempotent, safe to re-run, safe to crash anywhere:
 //
-//	ledger-gh sync --repo <owner/repo> --ledger <slug> [--store <path>]
+//	chit-gh sync --repo <owner/repo> --ledger <slug> [--store <path>]
 //	              [--done <value>] [--not-planned <value>] [--list-limit <n>]
 //
 // Level 1 mirrors the board out to GitHub (keys become issues, terminal
@@ -14,7 +14,7 @@
 //
 // The board is canonical; GitHub is the intake and display window.
 //
-// Both sides are reached through CLIs only: `gh` for GitHub, `ledger` for
+// Both sides are reached through CLIs only: `gh` for GitHub, `chit` for
 // the board. The bridge has NO identity of its own on GitHub — several
 // logins may operate it, each also participating as a human, and nothing in
 // the code path compares logins.
@@ -48,7 +48,7 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func run(argv []string, stdout, stderr *os.File) int {
 	if len(argv) < 1 || argv[0] != "sync" {
-		fmt.Fprintln(stderr, "usage: ledger-gh sync --repo <owner/repo> --ledger <slug> [--store <path>] "+
+		fmt.Fprintln(stderr, "usage: chit-gh sync --repo <owner/repo> --ledger <slug> [--store <path>] "+
 			"[--done <value>] [--not-planned <value>] [--list-limit <n>]")
 		return exitUsage
 	}
@@ -56,8 +56,8 @@ func run(argv []string, stdout, stderr *os.File) int {
 	fs.SetOutput(stderr)
 	repo := fs.String("repo", "", "GitHub repository, owner/repo (required)")
 	slug := fs.String("ledger", "", "board slug (required)")
-	store := fs.String("store", "", "ledger store path")
-	ledgerBin := fs.String("ledger-bin", "ledger", "path to the ledger binary")
+	store := fs.String("store", "", "chit store path")
+	ledgerBin := fs.String("chit-bin", "chit", "path to the chit binary")
 	ghBin := fs.String("gh-bin", "gh", "path to the gh binary")
 	// The board's two MIRRORED TERMINALS, configured rather than assumed: a
 	// legal ready-capable board can call these done/dropped. Startup refuses
@@ -69,7 +69,7 @@ func run(argv []string, stdout, stderr *os.File) int {
 		return exitUsage
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "unexpected argument %q — ledger-gh sync takes flags only\n", fs.Arg(0))
+		fmt.Fprintf(stderr, "unexpected argument %q — chit-gh sync takes flags only\n", fs.Arg(0))
 		return exitUsage
 	}
 	// Flag shape runs BEFORE anything else, ahead of every check that reads
@@ -84,7 +84,7 @@ func run(argv []string, stdout, stderr *os.File) int {
 	}
 
 	board := Board{Bin: *ledgerBin, Slug: *slug, Store: *store}
-	// The pre-sync capability probe: an old `ledger` is refused BY NAME
+	// The pre-sync capability probe: an old `chit` is refused BY NAME
 	// rather than silently taking Law 3's refusal path on every guarded
 	// intake write.
 	if err := board.CheckCapable(); err != nil {

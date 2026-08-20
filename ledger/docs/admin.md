@@ -1,9 +1,9 @@
-# Ledger admin runbook
+# chit admin runbook
 
-This is the material `ledger init` points at but doesn't print in full: the
+This is the material `chit init` points at but doesn't print in full: the
 hazards that only matter to whoever administers a shared remote, not to an
 agent doing day-to-day reads and writes. Agent-facing doctrine lives in
-`ledger quickstart`; this file is for humans setting up or recovering a
+`chit quickstart`; this file is for humans setting up or recovering a
 shared store. Bulk-seeding a board from an existing GitHub backlog is its
 own recipe: `ledger/docs/migrate-github.md`.
 
@@ -19,7 +19,7 @@ branches. Two operations can wipe them on the remote:
   force-pushes everything) or a rebase tool that doesn't know these refs
   are append-only history, never branches to be rewritten.
 
-Neither is ledger-specific; they're generic git hazards that happen to be
+Neither is chit-specific; they're generic git hazards that happen to be
 sharper here because these refs aren't visible in `git branch` and nobody's
 watching them the way they watch `main`.
 

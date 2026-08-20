@@ -10,11 +10,11 @@ import (
 )
 
 // twoReplicas builds the trial's own topology in miniature: a bare remote
-// and two clones, both `ledger init`ed. Everything below drives the real
+// and two clones, both `chit init`ed. Everything below drives the real
 // verbs against real git — no fakes, since the whole point is whether git
 // does what the design says it does. push.go doesn't exist yet (Task 6), so
 // tests that need to publish a local ledger to the bare remote use raw git
-// (pushLedgerRef) rather than a `ledger push` that isn't built yet.
+// (pushLedgerRef) rather than a `chit push` that isn't built yet.
 func twoReplicas(t *testing.T) (remote, a, b string) {
 	t.Helper()
 	root := t.TempDir()
@@ -52,13 +52,13 @@ func mustRun(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	so, se, code := run(t, dir, args...)
 	if code != 0 {
-		t.Fatalf("ledger %s in %s: exit %d\n%s\n%s", strings.Join(args, " "), dir, code, so, se)
+		t.Fatalf("chit %s in %s: exit %d\n%s\n%s", strings.Join(args, " "), dir, code, so, se)
 	}
 	return so
 }
 
 // pushLedgerRef publishes one slug's ref to the bare remote with plain git —
-// standing in for `ledger push` (Task 6, not yet built) so these tests can
+// standing in for `chit push` (Task 6, not yet built) so these tests can
 // exercise sync's read side against real published state.
 func pushLedgerRef(t *testing.T, dir, slug string) {
 	t.Helper()
@@ -98,7 +98,7 @@ func seedBoardAs(t *testing.T, dir, slug, as string) {
 }
 
 // rawFetchTracking populates dir's tracking refs directly via git fetch,
-// bypassing `ledger sync`'s merge step — the freshness tests' "fetched but
+// bypassing `chit sync`'s merge step — the freshness tests' "fetched but
 // not yet merged" fixture: the tracking ref moves while local stays put,
 // exactly the state a read-time warning has to catch.
 func rawFetchTracking(t *testing.T, dir, remote string) {
@@ -245,7 +245,7 @@ func TestSyncRefusesDifferentRoots(t *testing.T) {
 		t.Fatalf("different roots must be refused, not merged: %+v", got)
 	}
 	detail, _ := got["board"]["detail"].(string)
-	for _, want := range []string{"alice", "bob", "ledger export", "ledger import"} {
+	for _, want := range []string{"alice", "bob", "chit export", "chit import"} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("refusal must name both creators and the export/import exit; missing %q in %q", want, detail)
 		}
@@ -286,8 +286,8 @@ func TestSyncRefusesGraftedMultiRootChain(t *testing.T) {
 	git(t, a, "fetch", "-q", foreign, "refs/ledger/graft:refs/graft-import")
 
 	// Splice a merge commit with both roots as parents directly onto
-	// refs/ledger/graft — a hand-crafted graft, never anything `ledger sync`
-	// or `ledger create` could produce on its own.
+	// refs/ledger/graft — a hand-crafted graft, never anything `chit sync`
+	// or `chit create` could produce on its own.
 	tree := git(t, a, "rev-parse", "refs/ledger/graft^{tree}")
 	grafted := git(t, a, "commit-tree", tree, "-p", root1, "-p", root2, "-m", "graft")
 	git(t, a, "update-ref", "refs/ledger/graft", grafted)
@@ -307,7 +307,7 @@ func TestSyncRefusesGraftedMultiRootChain(t *testing.T) {
 			t.Fatalf("refusal must name both roots, their creators, and the tracking ref; missing %q in %q", want, detail)
 		}
 	}
-	if strings.Contains(detail, "ledger export") || strings.Contains(detail, "ledger import") {
+	if strings.Contains(detail, "chit export") || strings.Contains(detail, "chit import") {
 		t.Fatalf("multi-root refusal's hint is remote-side repair, NOT export/import: %q", detail)
 	}
 	if _, _, code := run(t, b, "show", "--ledger", "graft"); code == 0 {
@@ -461,7 +461,7 @@ func TestSyncRaceFastForwardRetriesInsteadOfFailing(t *testing.T) {
 			t.Fatalf("round %d: a advance: %s", i, se)
 		}
 		pushLedgerRef(t, a, "board")
-		// Pre-fetch the tracking ref via raw git (not `ledger sync`, which
+		// Pre-fetch the tracking ref via raw git (not `chit sync`, which
 		// would also move b's local ref before the race starts). This keeps
 		// each raced invocation's OWN internal fetch a no-op — nothing new
 		// to bring in — so the two processes contend on the LOCAL ref's CAS
@@ -506,7 +506,7 @@ func TestSyncRaceRetryReclassifiesInsteadOfDoublingTheMerge(t *testing.T) {
 			t.Fatalf("round %d: a advance: %s", i, se)
 		}
 		pushLedgerRef(t, a, "board")
-		// Fetch b's tracking ref directly — NOT via `ledger sync`, which
+		// Fetch b's tracking ref directly — NOT via `chit sync`, which
 		// would also fast-forward b's own local ref and leave nothing
 		// diverged for this round to race over.
 		git(t, b, "fetch", "-q", "--prune", "origin", "+refs/ledger/*:refs/ledger-remote/origin/*")
@@ -622,10 +622,10 @@ func TestRefspecRepairSurvivesRemoteRename(t *testing.T) {
 	}
 }
 
-// TestInitInstallsRefspecForSoleRemote: `ledger init` in a freshly cloned
+// TestInitInstallsRefspecForSoleRemote: `chit init` in a freshly cloned
 // repo (which already has "origin") installs the ledger refspec immediately
 // — a bare `git fetch` right after init is sync-ready without waiting for
-// the first `ledger sync` to repair it.
+// the first `chit sync` to repair it.
 func TestInitInstallsRefspecForSoleRemote(t *testing.T) {
 	root := t.TempDir()
 	remote := root + "/remote.git"
@@ -713,7 +713,7 @@ func TestFreshnessWarnsFetchedButUnmerged(t *testing.T) {
 		if fresh["unmerged_remote_events"] != float64(1) {
 			t.Fatalf("%v: expected 1 unmerged remote event: %v", args, fresh)
 		}
-		if fresh["hint"] != "run `ledger sync`" {
+		if fresh["hint"] != "run `chit sync`" {
 			t.Fatalf("%v: unexpected hint: %v", args, fresh)
 		}
 	}
@@ -726,7 +726,7 @@ func TestFreshnessWarnsFetchedButUnmergedTTY(t *testing.T) {
 	_, b := freshnessFixture(t)
 	rawFetchTracking(t, b, "origin")
 
-	const want = "[ledger] 1 unmerged remote events — run 'ledger sync'"
+	const want = "[chit] 1 unmerged remote events — run 'chit sync'"
 
 	c, buf := ttyCtx(b)
 	if err := runReady(c, "board", nil, 50, ""); err != nil {
@@ -753,7 +753,7 @@ func TestFreshnessWarnsFetchedButUnmergedTTY(t *testing.T) {
 	}
 }
 
-// TestFreshnessSilentWhenSynced: once a replica actually runs `ledger sync`
+// TestFreshnessSilentWhenSynced: once a replica actually runs `chit sync`
 // (merging the fetched events, not just fetching them), the tracking ref is
 // an ancestor of local again and every read renders clean — no freshness
 // key, no stderr line.
@@ -782,7 +782,7 @@ func TestFreshnessSilentWhenSynced(t *testing.T) {
 	if err := runReady(c, "board", nil, 50, ""); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(buf.String(), "[ledger]") {
+	if strings.Contains(buf.String(), "[chit]") {
 		t.Fatalf("ready TTY: a synced replica must print no freshness line: %q", buf.String())
 	}
 }
@@ -885,7 +885,7 @@ func TestFreshnessProjectionByteUnchanged(t *testing.T) {
 
 // TestFreshnessRootMismatchGuidance: two independently-created same-slug
 // boards (TestSyncRefusesDifferentRoots' fixture, reused for the read
-// side) — `ledger sync` fetches (populating the tracking ref) before it
+// side) — `chit sync` fetches (populating the tracking ref) before it
 // evaluates the same-root rule and refuses, so the tracking ref sits there
 // after the refusal, holding a chain that shares no root with local. A read
 // warns with the same export/import guidance sync's own refusal carries,
@@ -918,7 +918,7 @@ func TestFreshnessRootMismatchGuidance(t *testing.T) {
 			t.Fatalf("%v: a root mismatch is not an unmerged-events count: %v", args, fresh)
 		}
 		hint, _ := fresh["hint"].(string)
-		for _, want := range []string{"alice", "bob", "ledger export", "ledger import"} {
+		for _, want := range []string{"alice", "bob", "chit export", "chit import"} {
 			if !strings.Contains(hint, want) {
 				t.Fatalf("%v: guidance must name both creators and the export/import exit; missing %q in %q",
 					args, want, hint)

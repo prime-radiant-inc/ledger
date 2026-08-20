@@ -103,7 +103,7 @@ func TestTitleIsReservedAtImport(t *testing.T) {
 	}
 }
 
-// ---- the write path: `ledger set <key> --rename "<new title>"` ----
+// ---- the write path: `chit set <key> --rename "<new title>"` ----
 
 // seedKey seeds one titled key on a ready-capable board and returns the
 // seed event's id.

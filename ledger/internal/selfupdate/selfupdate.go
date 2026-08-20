@@ -1,5 +1,5 @@
-// Package selfupdate fetches and installs released ledger binaries from
-// GitHub releases. It backs `ledger update` and the daily passive check;
+// Package selfupdate fetches and installs released chit binaries from
+// GitHub releases. It backs `chit update` and the daily passive check;
 // nothing here touches a ledger store.
 package selfupdate
 
@@ -54,15 +54,15 @@ func CompareVersions(a, b string) int {
 // .tar.gz, Windows included (tar has been built into Windows since 10) — one
 // archive format keeps this package and install.sh to a single code path.
 func AssetName(goos, goarch string) string {
-	return fmt.Sprintf("ledger-%s-%s.tar.gz", goos, goarch)
+	return fmt.Sprintf("chit-%s-%s.tar.gz", goos, goarch)
 }
 
 // BinaryName is the executable inside a release tarball.
 func BinaryName(goos string) string {
 	if goos == "windows" {
-		return "ledger.exe"
+		return "chit.exe"
 	}
-	return "ledger"
+	return "chit"
 }
 
 // Latest returns the newest release tag (e.g. "v0.2.0").
@@ -134,7 +134,7 @@ func get(client *http.Client, url string, limit int64) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, limit))
 }
 
-// extractBinary pulls the single ledger executable out of a release tarball
+// extractBinary pulls the single chit executable out of a release tarball
 // into destDir under a temporary name. Entries with path separators are
 // rejected (tar-slip guard); our tarballs hold exactly one flat file.
 func extractBinary(tarball []byte, destDir string) (string, error) {
@@ -146,7 +146,7 @@ func extractBinary(tarball []byte, destDir string) (string, error) {
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
-			return "", fmt.Errorf("no ledger binary found in tarball")
+			return "", fmt.Errorf("no chit binary found in tarball")
 		}
 		if err != nil {
 			return "", err
@@ -155,10 +155,10 @@ func extractBinary(tarball []byte, destDir string) (string, error) {
 		if hdr.Typeflag != tar.TypeReg || name != filepath.Base(name) || strings.HasPrefix(name, ".") {
 			continue
 		}
-		if name != "ledger" && name != "ledger.exe" {
+		if name != "chit" && name != "chit.exe" {
 			continue
 		}
-		f, err := os.CreateTemp(destDir, ".ledger-update-*")
+		f, err := os.CreateTemp(destDir, ".chit-update-*")
 		if err != nil {
 			return "", err
 		}

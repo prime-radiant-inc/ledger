@@ -83,12 +83,12 @@ func runRollup(c *Ctx, ids []string, msg, as, ledgerFlag, idemKey string) error 
 		}
 		seen[id] = true
 		if _, ok := byID[id]; !ok {
-			return out.Errf("unknown_event", "ledger tail --raw -n 30  lists recent events with their ids", 4,
+			return out.Errf("unknown_event", "chit tail --raw -n 30  lists recent events with their ids", 4,
 				"'%s' is not an event on '%s'", id, led.Slug)
 		}
 		if owner, taken := led.Parent[id]; taken {
 			return out.Errf("child_taken",
-				"records have one parent — include that rollup instead: ledger rollup "+owner+" ... -m \"...\"", 4,
+				"records have one parent — include that rollup instead: chit rollup "+owner+" ... -m \"...\"", 4,
 				"'%s' is already inside rollup %s", id, owner)
 		}
 		children = append(children, id)
@@ -112,14 +112,14 @@ func runRollup(c *Ctx, ids []string, msg, as, ledgerFlag, idemKey string) error 
 }
 
 // rollupGuidance is the submit grammar plus curation discipline printed on a
-// bare `ledger rollup`. It's TTY prose but also carried verbatim in the JSON
+// bare `chit rollup`. It's TTY prose but also carried verbatim in the JSON
 // payload's "guidance" field (F1): non-TTY is the default output shape, and
 // an agent driving that shape never sees the TTY lines, so the grammar and
 // the second-order-testimony rules have to ride the payload too.
 var rollupGuidance = []string{
 	"Roll a FINISHED thread (a resolved hypothesis, a done task arc, a settled",
 	"decision trail) into one line:",
-	`  ledger rollup <id> <id> ... -m "one line" --as <role>`,
+	`  chit rollup <id> <id> ... -m "one line" --as <role>`,
 	"The line is a signpost for a cold reader: say what happened and how it",
 	"ended, and carry concrete anchors (key names, evidence kinds, counts) into",
 	"it, keeping each anchor next to the claim it actually backs. Summarize —",

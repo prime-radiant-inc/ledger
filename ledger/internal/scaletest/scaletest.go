@@ -86,7 +86,7 @@ func Seed(t testing.TB, repo gitx.Repo, slug string, evs []model.Event, firstExt
 
 // SeedMerged seeds the shape a true divergence leaves behind: base as one
 // linear chain, then branchA and branchB both parented on base's tip, joined
-// by ONE sync sentinel — exactly what `ledger sync` mints, and the only
+// by ONE sync sentinel — exactly what `chit sync` mints, and the only
 // shape a contest can exist in. Both branches writing the same keys is what
 // makes the merged board carry contests to measure against.
 func SeedMerged(t testing.TB, repo gitx.Repo, slug string, base, branchA, branchB []model.Event, firstExtra map[string]string) {

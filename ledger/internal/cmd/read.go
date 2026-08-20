@@ -582,7 +582,7 @@ func findByID(evs []model.Event, id string) (ev model.Event, matches int) {
 // ambiguous prefix — neither can hand back a specific event.
 func idReadErr(slug, id string, matches int) error {
 	if matches == 0 {
-		return out.Errf("bad_value", "check the id — a ticket's contest ids, or any id off `ledger tail --raw`, are exact", 4,
+		return out.Errf("bad_value", "check the id — a ticket's contest ids, or any id off `chit tail --raw`, are exact", 4,
 			"'%s' does not match any event on '%s'", id, slug)
 	}
 	return out.Errf("bad_value", fmt.Sprintf("give more hex characters — the prefix matches %d events", matches), 4,
@@ -697,7 +697,7 @@ func addRedirect(c *Ctx, led *fold.Ledger, payload map[string]any) []string {
 // failing (unknown_ledger) is exactly "not present locally".
 func redirectLine(c *Ctx, led *fold.Ledger) string {
 	if _, err := c.Load(led.SupersededBy); err != nil {
-		return "successor '" + led.SupersededBy + "' not present locally — run ledger sync"
+		return "successor '" + led.SupersededBy + "' not present locally — run chit sync"
 	}
 	return "superseded by '" + led.SupersededBy + "' — read/write there"
 }
@@ -849,7 +849,7 @@ func runTailIn(c *Ctx, led *fold.Ledger, inID string) error {
 	}
 	r, ok := byID[inID]
 	if !ok || r.Type != "rollup" {
-		return out.Errf("unknown_event", "ledger tail shows the current roots; a rollup line's id works with --in <id>", 4,
+		return out.Errf("unknown_event", "chit tail shows the current roots; a rollup line's id works with --in <id>", 4,
 			"'%s' is not a rollup on '%s'", inID, led.Slug)
 	}
 	var evs []model.Event

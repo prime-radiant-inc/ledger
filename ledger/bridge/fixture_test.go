@@ -14,7 +14,7 @@ import (
 )
 
 // The bridge's tests run against a FIXTURE transport for GitHub and the REAL
-// ledger binary for the board. Faking the board would mean asserting against
+// chit binary for the board. Faking the board would mean asserting against
 // a mock of the very machinery the bridge's correctness depends on — CAS,
 // standing signals, idempotency-key dedupe, the cursor contract — so the
 // board here is a real store, real git, real subprocesses. Only GitHub is
@@ -37,9 +37,9 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	ledgerBin = filepath.Join(dir, "ledger")
+	ledgerBin = filepath.Join(dir, "chit")
 	ghBin = filepath.Join(dir, "gh")
-	bridgeBin = filepath.Join(dir, "ledger-gh")
+	bridgeBin = filepath.Join(dir, "chit-gh")
 	for _, b := range [][2]string{{ledgerBin, "."}, {ghBin, "./bridge/fakegh/cmd"}, {bridgeBin, "./bridge"}} {
 		cmd := exec.Command("go", "build", "-o", b[0], b[1])
 		cmd.Dir = ".."
@@ -138,7 +138,7 @@ func (f *fixture) ledgerOK(args ...string) map[string]any {
 		doc, err = f.ledger(args...)
 	}
 	if err != nil {
-		f.t.Fatalf("ledger %s: %v", strings.Join(args, " "), err)
+		f.t.Fatalf("chit %s: %v", strings.Join(args, " "), err)
 	}
 	return doc
 }
@@ -328,12 +328,12 @@ func (f *fixture) syncMode(login string, failAt, failAfter int) (*Report, error)
 	return f.syncer().Run()
 }
 
-// runBridgeBinary runs the real `ledger-gh` binary as a separate PROCESS
+// runBridgeBinary runs the real `chit-gh` binary as a separate PROCESS
 // with its own environment — what the concurrency regression needs, since
 // two goroutines sharing this test's memory would not be two operators.
 func (f *fixture) runBridgeBinary() (string, error) {
 	cmd := exec.Command(bridgeBin, "sync", "--repo", f.repo, "--ledger", f.slug,
-		"--store", f.dir, "--ledger-bin", ledgerBin, "--gh-bin", ghBin,
+		"--store", f.dir, "--chit-bin", ledgerBin, "--gh-bin", ghBin,
 		"--done", f.done, "--not-planned", f.notPlanned, "--list-limit", fmt.Sprint(f.listLimit))
 	cmd.Env = append(os.Environ(),
 		fakegh.EnvState+"="+f.ghState, fakegh.EnvLogin+"=operator",

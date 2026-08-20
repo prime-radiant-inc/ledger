@@ -37,7 +37,7 @@ func newSyncCmd(c *Ctx) *cobra.Command {
 			"(refs/ledger-remote/<remote>/<slug>), then per slug: tracking already contained\n" +
 			"in local is a no-op; local behind tracking fast-forwards; a true divergence gets\n" +
 			"exactly one sentinel merge commit; a slug with no local ref is adopted at the\n" +
-			"tracking head. Sync never pushes — `ledger push` is a separate, deliberate act.",
+			"tracking head. Sync never pushes — `chit push` is a separate, deliberate act.",
 		Args: noPositionals("sync"),
 		RunE: func(_ *cobra.Command, _ []string) error { return runSync(c, remote, asFlag) }}
 	cmd.Flags().StringVar(&remote, "remote", "", "git remote name (default: .ledger.toml's remote, else origin)")
@@ -61,7 +61,7 @@ func runSync(c *Ctx, remoteFlag, asFlag string) error {
 
 	repairs := repairRefspecs(c.Store.Repo, remote)
 	for _, r := range repairs {
-		fmt.Fprintln(c.Stderr, "[ledger] "+r)
+		fmt.Fprintln(c.Stderr, "[chit] "+r)
 	}
 	if err := fetchTracking(c.Store.Repo, remote); err != nil {
 		return err
@@ -157,7 +157,7 @@ func (c *Ctx) syncOne(remote, slug, author string) SlugOutcome {
 		}
 		local = cur // a writer landed an event under us: re-classify and retry
 	}
-	return SlugOutcome{Slug: slug, Result: "failed", Detail: "ref kept moving — re-run ledger sync"}
+	return SlugOutcome{Slug: slug, Result: "failed", Detail: "ref kept moving — re-run chit sync"}
 }
 
 // rootMismatch enforces the same-root rule: sync merges only chains sharing
@@ -204,8 +204,8 @@ func rootMismatchDetail(c *Ctx, slug string, localRoots, trackRoots []string) st
 	lby, lat, _ := creatorOf(c.Store, localRoots[0])
 	rby, rat, _ := creatorOf(c.Store, trackRoots[0])
 	return fmt.Sprintf("local chain created by %s at %s; remote chain created by %s at %s — "+
-		"export the local chain and re-import it under a new slug (ledger export %s --to %s.jsonl; "+
-		"ledger import %s.jsonl --slug %s-local), then sync adopts the remote chain",
+		"export the local chain and re-import it under a new slug (chit export %s --to %s.jsonl; "+
+		"chit import %s.jsonl --slug %s-local), then sync adopts the remote chain",
 		lby, lat, rby, rat, slug, slug, slug, slug)
 }
 

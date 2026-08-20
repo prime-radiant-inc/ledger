@@ -240,7 +240,7 @@ func TestCapabilityProbeRefusesAPreRev16Binary(t *testing.T) {
 	if err == nil {
 		t.Fatal("a pre-rev-16 binary must be refused by name")
 	}
-	for _, want := range []string{"rev 16", "--rename", "signals", "ledger update"} {
+	for _, want := range []string{"rev 16", "--rename", "signals", "chit update"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("the refusal must name %q: %s", want, err)
 		}
@@ -251,7 +251,7 @@ func TestCapabilityProbeRefusesAPreRev16Binary(t *testing.T) {
 	}
 	// And a binary that cannot run at all is a different, named failure.
 	if err := (Board{Bin: filepath.Join(dir, "nope"), Slug: "issues"}).CheckCapable(); err == nil ||
-		!strings.Contains(err.Error(), "cannot run the ledger binary") {
+		!strings.Contains(err.Error(), "cannot run the chit binary") {
 		t.Fatalf("a missing binary must be named: %v", err)
 	}
 }

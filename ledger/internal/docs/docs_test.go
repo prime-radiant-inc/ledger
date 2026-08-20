@@ -60,11 +60,11 @@ func TestQuickstartExamplesExecute(t *testing.T) {
 			var so, se bytes.Buffer
 			code := cmd.ExecuteArgs(append([]string{"--store", dir}, ex.argv...), &so, &se)
 			if code != ex.expectExit {
-				t.Fatalf("%s: `ledger %s` exit %d want %d\nstdout: %s\nstderr: %s",
+				t.Fatalf("%s: `chit %s` exit %d want %d\nstdout: %s\nstderr: %s",
 					file, strings.Join(ex.argv, " "), code, ex.expectExit, so.String(), se.String())
 			}
 			if ex.expectErr != "" && !strings.Contains(se.String(), ex.expectErr) {
-				t.Fatalf("%s: `ledger %s` expected error %q, got %s",
+				t.Fatalf("%s: `chit %s` expected error %q, got %s",
 					file, strings.Join(ex.argv, " "), ex.expectErr, se.String())
 			}
 		}
@@ -74,7 +74,7 @@ func TestQuickstartExamplesExecute(t *testing.T) {
 // curatedOutOfQuickstart are verbs deliberately absent from the quickstart's
 // doctrine: render/version/update/quickstart act on the binary or a file
 // path rather than board/coordination doctrine, and completion/help are
-// cobra machinery, not ledger verbs.
+// cobra machinery, not chit verbs.
 var curatedOutOfQuickstart = map[string]bool{
 	"render": true, "version": true, "update": true, "quickstart": true,
 	"completion": true, "help": true,
@@ -83,7 +83,7 @@ var curatedOutOfQuickstart = map[string]bool{
 // TestQuickstartMentionsEveryVerb guards against the doctrine silently
 // falling behind the verb set (the deferred-disclosure finding: `ready`
 // shipped with the issue board and quickstart never learned it). It derives
-// the live verb list from the cobra root itself — via `ledger --help`,
+// the live verb list from the cobra root itself — via `chit --help`,
 // the same surface an agent actually reads — rather than hand-maintaining
 // a second list that can drift the same way the doc did.
 func TestQuickstartMentionsEveryVerb(t *testing.T) {
@@ -96,11 +96,11 @@ func TestQuickstartMentionsEveryVerb(t *testing.T) {
 	}
 	var so, se bytes.Buffer
 	if code := cmd.ExecuteArgs([]string{"--store", dir, "--help"}, &so, &se); code != 0 {
-		t.Fatalf("ledger --help: exit %d\n%s", code, se.String())
+		t.Fatalf("chit --help: exit %d\n%s", code, se.String())
 	}
 	verbs := verbsFromHelp(so.String())
 	if len(verbs) == 0 {
-		t.Fatal("parsed zero verbs out of `ledger --help` output — parser or cobra output format changed")
+		t.Fatal("parsed zero verbs out of `chit --help` output — parser or cobra output format changed")
 	}
 	quickstart, err := os.ReadFile(filepath.Join("..", "..", "docs", "quickstart.md"))
 	if err != nil {
@@ -176,14 +176,14 @@ func migrationLoop(t *testing.T) string {
 }
 
 // ledgerBinDir builds the CLI once per test binary and returns the
-// directory holding it — the recipe calls a bare `ledger`, so it has to be
+// directory holding it — the recipe calls a bare `chit`, so it has to be
 // on PATH as a real executable, not an in-process ExecuteArgs call.
 var ledgerBinDir = sync.OnceValues(func() (string, error) {
-	dir, err := os.MkdirTemp("", "ledger-bin")
+	dir, err := os.MkdirTemp("", "chit-bin")
 	if err != nil {
 		return "", err
 	}
-	build := exec.Command("go", "build", "-o", filepath.Join(dir, "ledger"), ".")
+	build := exec.Command("go", "build", "-o", filepath.Join(dir, "chit"), ".")
 	build.Dir = filepath.Join("..", "..")
 	if out, err := build.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("go build: %v\n%s", err, out)
@@ -365,7 +365,7 @@ func TestMigrateGitHubRecipeBreaksOnFailureThenResumes(t *testing.T) {
 }
 
 // example is one executable line pulled from a fenced ```-block: the
-// verb+args to run (with the leading "ledger" token stripped) and the
+// verb+args to run (with the leading "chit" token stripped) and the
 // expectations parsed from a trailing "# expect: ..." annotation. Default
 // expectation is a clean exit.
 type example struct {
@@ -375,7 +375,7 @@ type example struct {
 }
 
 // extractExamples scans md for fenced ``` blocks and pulls out every line
-// that starts with "ledger " (prose and inline `single-backtick` snippets
+// that starts with "chit " (prose and inline `single-backtick` snippets
 // outside a fence are never executed — only lines presented as a runnable
 // transcript are). Each line is shell-split (quote-balanced only; doc
 // examples are written quote-simple on purpose) and may end with a trailing
@@ -389,7 +389,7 @@ func extractExamples(md string) ([]example, error) {
 			inFence = !inFence
 			continue
 		}
-		if !inFence || !strings.HasPrefix(trimmed, "ledger ") {
+		if !inFence || !strings.HasPrefix(trimmed, "chit ") {
 			continue
 		}
 		cmdPart := trimmed
@@ -424,7 +424,7 @@ func extractExamples(md string) ([]example, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%q: %w", line, err)
 		}
-		ex.argv = argv[1:] // drop the leading "ledger" token
+		ex.argv = argv[1:] // drop the leading "chit" token
 		exs = append(exs, ex)
 	}
 	return exs, nil

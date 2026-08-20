@@ -153,7 +153,7 @@ func TestInitWithoutHooksSkipsSnippet(t *testing.T) {
 //
 // Behavior before this test: a bad_value refusal (exit 4) naming the root and
 // creating nothing, which is how the 2026-08-18 migration ended up with no
-// breadcrumb anywhere (its `ledger init` ran from ledger/ and its error was
+// breadcrumb anywhere (its `chit init` ran from ledger/ and its error was
 // swallowed by a jq pipe). The refusal's own invariant survives: no shadow
 // .ledger.git may ever appear in the subdirectory.
 func TestInitFromSubdirectoryResolvesToRepoRoot(t *testing.T) {
@@ -262,7 +262,7 @@ func TestInitRepoJSONHasDoctrineFields(t *testing.T) {
 			t.Fatalf("missing/empty %q in JSON payload: %v", field, doc)
 		}
 	}
-	if !strings.Contains(doc["stanza"].(string), "Ledger") {
+	if !strings.Contains(doc["stanza"].(string), "## chit") {
 		t.Fatalf("stanza should carry the actual CLAUDE.md/AGENTS.md text: %v", doc["stanza"])
 	}
 	if !strings.Contains(doc["commit_hint"].(string), "commit") {

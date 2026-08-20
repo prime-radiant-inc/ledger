@@ -56,7 +56,7 @@ func TestRollupBareShowsRootsAndGrammar(t *testing.T) {
 		}
 		guidance = append(guidance, s)
 	}
-	if !strings.Contains(strings.Join(guidance, "\n"), `ledger rollup <id> <id> ... -m`) {
+	if !strings.Contains(strings.Join(guidance, "\n"), `chit rollup <id> <id> ... -m`) {
 		t.Fatalf("guidance must carry the literal submit grammar: %v", guidance)
 	}
 }
@@ -205,7 +205,7 @@ func TestTailRootsAndDrill(t *testing.T) {
 		t.Fatalf("--in non-rollup: %d %s", code, se)
 	}
 	// F11: the hint must name --in and must not carry the old double space
-	if !strings.Contains(se, "ledger tail shows the current roots; a rollup line's id works with --in") {
+	if !strings.Contains(se, "chit tail shows the current roots; a rollup line's id works with --in") {
 		t.Fatalf("--in non-rollup hint wrong: %s", se)
 	}
 	if strings.Contains(se, "tail  shows") {

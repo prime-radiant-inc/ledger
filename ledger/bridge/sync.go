@@ -38,7 +38,7 @@ const (
 	// are claim and touch-base messages, and those never reach GitHub.
 	reopenText = "reopened to match the board: this key is active there again."
 	// claimValue is the one non-terminal transition with no GitHub
-	// representation at all. `ledger create` pins the non-terminal vocabulary
+	// representation at all. `chit create` pins the non-terminal vocabulary
 	// to {open, in-progress}, so this is the whole of it.
 	claimValue = "in-progress"
 )
@@ -112,13 +112,13 @@ type ghStateBits struct {
 
 // Run is one sync, in Law 1's order:
 //
-//	1  ledger sync             (always first; a stale replica mints duplicates)
+//	1  chit sync               (always first; a stale replica mints duplicates)
 //	1a post-sync preflight     (vocabulary, repo binding, link map, listing)
 //	2  read the outbound drain (before any write — echo safety)
 //	3  intake GitHub -> board  (per-aspect suppression, divergences noted)
 //	4  mirror board -> GitHub
 //	5  persist state if ANY of the four disjuncts holds
-//	6  ledger push <slug>      (always, selective, last)
+//	6  chit push <slug>        (always, selective, last)
 func (s *Syncer) Run() (*Report, error) {
 	// Actions is never nil: a converged run must marshal it as [], not JSON
 	// null, exactly as the parent tool's own empty lists do. A consumer that
@@ -127,15 +127,15 @@ func (s *Syncer) Run() (*Report, error) {
 
 	// (1) sync first. A failure on THIS board's slug aborts: acting on a
 	// replica that could not merge the others is how duplicate issues get
-	// minted. A failure on somebody else's slug is a warning — `ledger sync`
+	// minted. A failure on somebody else's slug is a warning — `chit sync`
 	// takes no slug selector, so a blanket abort would couple the bridge's
 	// availability to every remote in the operator's store.
 	mine, others := s.Board.Sync()
 	if mine != nil {
-		return nil, fmt.Errorf("ledger sync failed for '%s', refusing to run: %w", s.Board.Slug, mine)
+		return nil, fmt.Errorf("chit sync failed for '%s', refusing to run: %w", s.Board.Slug, mine)
 	}
 	for _, o := range others {
-		s.report.warn("ledger sync: slug '%s' %s (%s) — not this bridge's board, continuing", o.Slug, o.Result, o.Detail)
+		s.report.warn("chit sync: slug '%s' %s (%s) — not this bridge's board, continuing", o.Slug, o.Result, o.Detail)
 	}
 
 	// (1a) post-sync preflight. Every one of these reads board or GitHub
@@ -201,7 +201,7 @@ func (s *Syncer) Run() (*Report, error) {
 	// (6) push, always, selectively, last: link notes and bridge state that
 	// never leave this replica make the sync-first law protect nothing.
 	if err := s.Board.Push(); err != nil {
-		s.report.warn("ledger push %s failed (%v) — retrying next run", s.Board.Slug, err)
+		s.report.warn("chit push %s failed (%v) — retrying next run", s.Board.Slug, err)
 	}
 	return s.report, nil
 }
@@ -287,7 +287,7 @@ func (s *Syncer) preflight() ([]ghIssue, error) {
 	return issues, nil
 }
 
-// pinnedNonTerminal is the non-terminal status vocabulary `ledger create`
+// pinnedNonTerminal is the non-terminal status vocabulary `chit create`
 // pins on every ready-capable board — verified: a third non-terminal value
 // is refused at create, and so is removing either of these two. It is the
 // whole TERMINALITY ORACLE: declared-and-outside-this-set is terminal, and
@@ -497,7 +497,7 @@ func (s *Syncer) reportLinkConflicts() {
 		explain := fmt.Sprintf("board key '%s' has more than one github-link note: it is linked to #%d, "+
 			"and the chain also names %s. The established link stands; the bridge never repoints a key. "+
 			"To clear this, close the duplicate issue on GitHub and write its retraction note: "+
-			"ledger note -k %s --key %s -m '%s<n>' --as %s",
+			"chit note -k %s --key %s -m '%s<n>' --as %s",
 			key, s.byKey[key], issueList(others), kindLink, key, linkRetractPrefix, bridgeAuthor)
 		s.report.warn("%s", explain)
 		// Recorded against the ESTABLISHED issue, so the record is stable
@@ -525,7 +525,7 @@ func (s *Syncer) reportBrokenLinks() {
 		explain := fmt.Sprintf("board key '%s' is linked to #%d, which this repo's issue listing does not "+
 			"contain — the issue was deleted or transferred. The bridge will neither mirror to it nor "+
 			"create a replacement. To re-home the key, open a new issue and write the retraction and the "+
-			"new link: ledger note -k %s --key %s -m '%s%d' --as %s",
+			"new link: chit note -k %s --key %s -m '%s%d' --as %s",
 			key, n, kindLink, key, linkRetractPrefix, n, bridgeAuthor)
 		s.report.warn("%s", explain)
 		s.refuse(Record{Issue: n, Class: classLink, Observed: "missing"}, key, explain)
@@ -1588,7 +1588,7 @@ func (s *Syncer) loadChainIndex() error {
 }
 
 // importedFromOf recovers an event's pre-import id from the whole-chain
-// read. `ledger notes` does not carry the field, so the backfill — which
+// read. `chit notes` does not carry the field, so the backfill — which
 // posts through the same marker-dedupe path the drain does — would otherwise
 // use a one-element domain and re-post after an export/import.
 func (s *Syncer) importedFromOf(id string) string {

@@ -132,7 +132,7 @@ type AttentionEntry struct {
 // values here, not absent fields, matching the spec's own pinned example
 // and HeldEntry.Stale's precedent for never dropping a false/empty value
 // via omitempty). Expect is that member's blocked-by field's latest event
-// id, the CAS ticket that makes the suggested `ledger set <key>
+// id, the CAS ticket that makes the suggested `chit set <key>
 // blocked-by=<keep> --expect <expect>` a single paste-ready guarded write.
 // Human is set when Key itself carries the human label, so doctrine can
 // tell the caller to add --override too.

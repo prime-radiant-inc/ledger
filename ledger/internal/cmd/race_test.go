@@ -35,18 +35,18 @@ func TestMain(m *testing.M) { os.Exit(raceTestMain(m)) }
 // raceTestMain does the build in its own function so the temp dir's cleanup
 // (a defer) actually runs — os.Exit itself skips deferred calls.
 func raceTestMain(m *testing.M) int {
-	tmp, err := os.MkdirTemp("", "ledger-race-bin-*")
+	tmp, err := os.MkdirTemp("", "chit-race-bin-*")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "race_test: mkdir temp:", err)
 		return 1
 	}
 	defer os.RemoveAll(tmp)
-	binPath = filepath.Join(tmp, "ledger")
+	binPath = filepath.Join(tmp, "chit")
 	// internal/cmd -> ../.. is the module root (ledger/go.mod).
 	build := exec.Command("go", "build", "-o", binPath, ".")
 	build.Dir = filepath.Join("..", "..")
 	if out, err := build.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "race_test: go build ledger binary: %v\n%s\n", err, out)
+		fmt.Fprintf(os.Stderr, "race_test: go build chit binary: %v\n%s\n", err, out)
 		return 1
 	}
 	return m.Run()

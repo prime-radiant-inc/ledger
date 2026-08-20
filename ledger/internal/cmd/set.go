@@ -46,7 +46,7 @@ func newSetCmd(c *Ctx) *cobra.Command {
 			}
 			if len(args) < 2 {
 				return out.Errf("bad_usage",
-					`ledger set <key> <field>=<value>... — or ledger set <key> --rename "<new title>" to retitle`, 4,
+					`chit set <key> <field>=<value>... — or chit set <key> --rename "<new title>" to retitle`, 4,
 					"set needs at least one field=value assignment")
 			}
 			return runSet(c, args[0], args[1:], o, expect, expectSet, override)
@@ -68,7 +68,7 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts, expect string
 		return err
 	}
 	if led.State != "open" {
-		hint := "closed ledgers accept only notes and rollups; for new work: ledger create <new-slug> --scope <ref>"
+		hint := "closed ledgers accept only notes and rollups; for new work: chit create <new-slug> --scope <ref>"
 		if led.SupersededBy != "" {
 			hint = "this ledger is superseded by '" + led.SupersededBy + "' — write there"
 		}
@@ -104,7 +104,7 @@ func runSet(c *Ctx, key string, assignments []string, o writeOpts, expect string
 			}
 		}
 		if vocab != nil && !model.Contains(vocab, v) {
-			hint := fmt.Sprintf("ledger vocab add %s %s %s -m \"why this value is needed\"  — then re-run this set", led.Slug, f, v)
+			hint := fmt.Sprintf("chit vocab add %s %s %s -m \"why this value is needed\"  — then re-run this set", led.Slug, f, v)
 			if f == "status" && ready {
 				// A ready-capable board's status vocab is part of its
 				// immutable declaration (vocab.go's runVocabAdd rejects
@@ -419,7 +419,7 @@ func claimLostHint(ready bool, field, attemptedValue string, none bool, meta mod
 		if board.Build(meta, nil).IsTerminal(attemptedValue) {
 			return "you were reclaimed while working — leave a handoff note; never re-close blind"
 		}
-		return "re-run ledger ready and pick again"
+		return "re-run chit ready and pick again"
 	case "blocked-by":
 		if none {
 			return "this key already has edges — read it; if yours is a different issue, re-seed under a new key"

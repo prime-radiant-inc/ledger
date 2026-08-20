@@ -33,9 +33,9 @@ func ExecuteArgs(args []string, stdout, stderr io.Writer) int {
 	if f, ok := stdout.(*os.File); ok {
 		ctx.TTY = out.IsTTY(f)
 	}
-	root := &cobra.Command{Use: "ledger", Short: "Durable working-state for coding agents, stored in git phantom refs",
+	root := &cobra.Command{Use: "chit", Short: "Durable working-state for coding agents, stored in git phantom refs",
 		SilenceUsage: true, SilenceErrors: true,
-		Long: "Durable working-state for coding agents.\nStart with `ledger create <slug> --scope <what-it-tracks>`.\nEvery write prints its event id — that id is a cursor for since/watch.\nRun `ledger quickstart` for agent doctrine."}
+		Long: "Durable working-state for coding agents.\nStart with `chit create <slug> --scope <what-it-tracks>`.\nEvery write prints its event id — that id is a cursor for since/watch.\nRun `chit quickstart` for agent doctrine."}
 	var storeFlag string
 	root.PersistentFlags().StringVar(&storeFlag, "store", "", "store location (default: nearest .ledger.git or git repo)")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
@@ -55,7 +55,7 @@ func ExecuteArgs(args []string, stdout, stderr io.Writer) int {
 		}
 		res, err := store.Resolve(storeFlag)
 		if err != nil {
-			return out.Errf("unknown_ledger", "run inside a git repo, or `ledger init` in a plain directory", 4, "%s", err)
+			return out.Errf("unknown_ledger", "run inside a git repo, or `chit init` in a plain directory", 4, "%s", err)
 		}
 		if res.Note != "" && ctx.TTY {
 			io.WriteString(stderr, res.Note+"\n")
@@ -92,11 +92,11 @@ func ExecuteArgs(args []string, stdout, stderr io.Writer) int {
 	}
 	msg := err.Error()
 	if strings.Contains(msg, "unknown command") {
-		out.WriteError(stderr, ctx.TTY, out.Errf("unknown_verb", "run `ledger --help` for the verb list", 4, "%s", msg))
+		out.WriteError(stderr, ctx.TTY, out.Errf("unknown_verb", "run `chit --help` for the verb list", 4, "%s", msg))
 		return 4
 	}
 	if isCobraUsageErr(msg) {
-		out.WriteError(stderr, ctx.TTY, out.Errf("bad_usage", "ledger <verb> --help shows usage", 4, "%s", msg))
+		out.WriteError(stderr, ctx.TTY, out.Errf("bad_usage", "chit <verb> --help shows usage", 4, "%s", msg))
 		return 4
 	}
 	out.WriteError(stderr, ctx.TTY, out.Errf("git_failed", "", 1, "%s", msg))
@@ -105,7 +105,7 @@ func ExecuteArgs(args []string, stdout, stderr io.Writer) int {
 
 // noPositionals rejects an unexpected positional on a verb that addresses
 // its ledger by flag. Cobra's own NoArgs says `unknown command "csvstat" for
-// "ledger show"`, which the mapping above reads as an unknown *verb* and
+// "chit show"`, which the mapping above reads as an unknown *verb* and
 // hints at the verb list — but the caller typed a slug, carrying the
 // positional habit over from set/close (two eval agents did this
 // independently). The fix is the --ledger flag, so the hint is that command,
@@ -117,8 +117,8 @@ func noPositionals(suggest string) cobra.PositionalArgs {
 			return nil
 		}
 		return out.Errf("bad_usage",
-			fmt.Sprintf("did you mean: ledger %s --ledger %s?", suggest, args[0]), 4,
-			"ledger %s takes no positional arguments (got %q)", cmd.Name(), args[0])
+			fmt.Sprintf("did you mean: chit %s --ledger %s?", suggest, args[0]), 4,
+			"chit %s takes no positional arguments (got %q)", cmd.Name(), args[0])
 	}
 }
 

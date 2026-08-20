@@ -32,7 +32,7 @@ func runClose(c *Ctx, slug, asState, supersededBy, asFlag, mFlag string) error {
 	case "shipped", "abandoned", "superseded":
 	default:
 		return out.Errf("bad_value",
-			fmt.Sprintf("valid --as-state values: shipped, abandoned, superseded — e.g. ledger close %s --as-state abandoned", slug),
+			fmt.Sprintf("valid --as-state values: shipped, abandoned, superseded — e.g. chit close %s --as-state abandoned", slug),
 			4, "'%s' is not a valid close state", asState)
 	}
 	if asState == "superseded" && supersededBy == "" {

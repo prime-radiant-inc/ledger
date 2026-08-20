@@ -385,7 +385,7 @@ func TestSinceResetHintDropsRedrainClause(t *testing.T) {
 	if strings.Contains(se, "re-drains from the start") {
 		t.Fatalf("hint must drop the re-drains clause: %s", se)
 	}
-	if !strings.Contains(se, "ledger tail -n 50 shows recent events") {
+	if !strings.Contains(se, "chit tail -n 50 shows recent events") {
 		t.Fatalf("hint must point at tail -n 50: %s", se)
 	}
 }

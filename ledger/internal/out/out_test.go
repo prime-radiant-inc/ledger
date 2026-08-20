@@ -47,7 +47,7 @@ func TestEmitTTYLines(t *testing.T) {
 
 func TestWriteError(t *testing.T) {
 	var b bytes.Buffer
-	e := Errf("vocab_unknown", "ledger vocab add demo status x -m \"why\"", 4, "%q is bad", "x")
+	e := Errf("vocab_unknown", "chit vocab add demo status x -m \"why\"", 4, "%q is bad", "x")
 	WriteError(&b, false, e)
 	var doc map[string]string
 	json.Unmarshal(b.Bytes(), &doc)

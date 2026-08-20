@@ -471,7 +471,7 @@ func TestDeterminismFreshnessExcludedFromProjection(t *testing.T) {
 	replicaA, replicaB, _ := determinismReplicas(t)
 
 	// Stage a remote that's one real event ahead of replica A's own chain,
-	// fetch it into A's tracking ref (raw git — never `ledger sync`, which
+	// fetch it into A's tracking ref (raw git — never `chit sync`, which
 	// would merge it and erase the very state under test), and leave A's
 	// local ref untouched.
 	bareRemote := filepath.Join(t.TempDir(), "remote.git")

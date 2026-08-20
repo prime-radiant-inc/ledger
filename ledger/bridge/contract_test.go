@@ -14,7 +14,7 @@ import (
 
 // The command's own contract: the exit codes an operator's lock/cron wrapper
 // is written against, the pinned slugification rule, and the two failure
-// scopes of `ledger sync`.
+// scopes of `chit sync`.
 
 // TestExitContract: 0 = report on stdout; 1 = error document on stderr;
 // 2 = usage.
@@ -39,7 +39,7 @@ func TestExitContract(t *testing.T) {
 		return code, so.String(), se.String()
 	}
 	ok := []string{"sync", "--repo", f.repo, "--ledger", f.slug, "--store", f.dir,
-		"--ledger-bin", ledgerBin, "--gh-bin", ghBin, "--done", f.done, "--not-planned", f.notPlanned}
+		"--chit-bin", ledgerBin, "--gh-bin", ghBin, "--done", f.done, "--not-planned", f.notPlanned}
 
 	// 2 — usage.
 	for _, args := range [][]string{
@@ -86,7 +86,7 @@ func TestExitContract(t *testing.T) {
 	// 1 — error document on STDERR. A second repo is the refusal at hand.
 	code, stdout, stderr = run(append(append([]string{}, ok[:1]...),
 		"--repo", "prime-radiant-inc/elsewhere", "--ledger", f.slug, "--store", f.dir,
-		"--ledger-bin", ledgerBin, "--gh-bin", ghBin, "--done", f.done, "--not-planned", f.notPlanned)...)
+		"--chit-bin", ledgerBin, "--gh-bin", ghBin, "--done", f.done, "--not-planned", f.notPlanned)...)
 	if code != exitError {
 		t.Fatalf("want exit 1, got %d", code)
 	}
@@ -142,12 +142,12 @@ func TestSlugificationIsPinned(t *testing.T) {
 	}
 }
 
-// TestSyncFailureScoping: `ledger sync` takes no slug selector, so a fleet
+// TestSyncFailureScoping: `chit sync` takes no slug selector, so a fleet
 // store holds slugs the bridge has nothing to do with. Abort iff OUR OWN
 // slug failed; warn on every other slug's failure. A blanket abort couples
 // the bridge's availability to every dead remote in the operator's store.
 //
-// Driven against a stand-in `ledger` so both branches are reachable
+// Driven against a stand-in `chit` so both branches are reachable
 // deterministically — and so the exit-3 document is read off STDOUT, which is
 // where sync and push write it.
 func TestSyncFailureScoping(t *testing.T) {
