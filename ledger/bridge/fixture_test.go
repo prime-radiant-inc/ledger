@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -449,7 +450,7 @@ func (f *fixture) keyList() []string {
 	for k := range keys {
 		out = append(out, k)
 	}
-	sortStrings(out)
+	sort.Strings(out)
 	return out
 }
 
@@ -493,14 +494,6 @@ func (f *fixture) fabricatedOverrides() []string {
 		out = append(out, fmt.Sprintf("%s by %s: %s", id, author, ov))
 	}
 	return out
-}
-
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
 }
 
 func mustJSON(t *testing.T, v any) string {

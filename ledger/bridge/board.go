@@ -107,12 +107,15 @@ func (e *BoardErr) autoOverridable() bool {
 	return true
 }
 
-func (b Board) args(extra []string) []string {
-	args := []string{}
-	if b.Store != "" {
-		args = append(args, "--store", b.Store)
+func (b Board) storeArgs() []string {
+	if b.Store == "" {
+		return []string{}
 	}
-	args = append(args, extra...)
+	return []string{"--store", b.Store}
+}
+
+func (b Board) args(extra []string) []string {
+	args := append(b.storeArgs(), extra...)
 	// Read and data verbs address their ledger by flag; the bridge always
 	// names it rather than relying on ambient resolution, since a bridge run
 	// in a repo with two open ledgers must never guess.
@@ -129,11 +132,7 @@ func (b Board) run(extra ...string) (map[string]any, error) {
 // runBare invokes a verb that takes no --ledger flag (sync, push: they
 // address slugs positionally or not at all).
 func (b Board) runBare(extra ...string) (map[string]any, error) {
-	args := []string{}
-	if b.Store != "" {
-		args = append(args, "--store", b.Store)
-	}
-	return b.exec(append(args, extra...))
+	return b.exec(append(b.storeArgs(), extra...))
 }
 
 func (b Board) exec(args []string) (map[string]any, error) {

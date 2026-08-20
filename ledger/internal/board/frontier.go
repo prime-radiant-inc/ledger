@@ -497,16 +497,17 @@ func cycleSurvivesFilter(b *Board, entry AttentionEntry, filter func(*Key) bool)
 // which is listed without ever holding the fleet (see movesFrontier); else
 // all-handled.
 func frontierVerdict(ready []ReadyEntry, attention []AttentionEntry, workAvailable bool) string {
-	blocking := 0
+	blocking := false
 	for _, a := range attention {
 		if movesFrontier(a) {
-			blocking++
+			blocking = true
+			break
 		}
 	}
 	switch {
 	case len(ready) > 0 || workAvailable:
 		return "work-available"
-	case blocking > 0:
+	case blocking:
 		return "attention-needed"
 	default:
 		// VERIFIED, not a fallback: ready empty and attention empty together

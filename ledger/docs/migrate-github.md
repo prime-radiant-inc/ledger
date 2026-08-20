@@ -53,10 +53,10 @@ way and spent an hour on a store that was never initialized.
 
 **The `-m` on the seed IS the key's title**, carried by every listing
 forever. Write a title ("fix the retry storm bug"), never a status update
-("migrating issue 7"). `set <key> --rename "<new title>"` corrects a wrong
-one, but a rename is a CORRECTION with attribution, not a workflow step —
-it costs a permanent, attributed event. Get it right in the loop, where it
-is one `jq` expression, rather than one rename per issue afterwards.
+("migrating issue 7") — get it right in the loop, where it is one `jq`
+expression, rather than one attributed `--rename` correction per issue
+afterwards. The full Titles doctrine lives in
+`skills/ledger-issues/SKILL.md`.
 
 **Re-running is a resume, not a re-sync.** `--idempotency-key "gh-$n"`
 makes an already-migrated issue a no-op (`deduped: true`), so after a

@@ -290,23 +290,18 @@ func flagOf(args []string, name string) string {
 	return ""
 }
 
+func hasFlag(args []string, name string) bool {
+	for _, a := range args {
+		if a == name {
+			return true
+		}
+	}
+	return false
+}
+
 func dispatch(st *State, args []string, login string, stdout, stderr io.Writer) int {
-	flagVal := func(name string) string {
-		for i, a := range args {
-			if a == name && i+1 < len(args) {
-				return args[i+1]
-			}
-		}
-		return ""
-	}
-	has := func(name string) bool {
-		for _, a := range args {
-			if a == name {
-				return true
-			}
-		}
-		return false
-	}
+	flagVal := func(name string) string { return flagOf(args, name) }
+	has := func(name string) bool { return hasFlag(args, name) }
 	if len(args) < 2 {
 		fmt.Fprintf(stderr, "fakegh: not enough arguments: %s\n", strings.Join(args, " "))
 		return 1
@@ -468,12 +463,7 @@ func apiCall(st *State, args []string, login string, flagVal func(string) string
 	n := parts[len(parts)-1]
 	events := st.Timelines[n]
 	const page = 30
-	paginate := false
-	for _, a := range args {
-		if a == "--paginate" {
-			paginate = true
-		}
-	}
+	paginate := hasFlag(args, "--paginate")
 	if !paginate && len(events) > page {
 		events = events[:page]
 	}

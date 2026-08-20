@@ -351,17 +351,29 @@ func setPrecondition(key string, fields map[string]string, target, expect string
 			// a fake clock could dissolve this signal and skip needs_override
 			// unrecorded), so this is always model.Now()'s live wall time.
 			signals := b.Signals(b.Keys[key], touchesStatus, author, model.Now())
-			if len(signals) > 0 {
-				if !override {
-					return out.Errf("needs_override", `--override -m "<why>"`, 4,
-						"'%s' has standing signal(s) that guard this write: %s", key, formatSignals(signals)).
-						WithSignals(signalNameList(signals))
-				}
-				*overrideOut = signalNames(signals)
+			if err := applyOverrideGate(key, signals, override, overrideOut); err != nil {
+				return err
 			}
 		}
 		return nil
 	}
+}
+
+// applyOverrideGate is rule 5's shared tail, one definition for every write
+// verb the signals gate: no standing signal makes --override a legal no-op,
+// a standing signal without it refuses, and an override records what it
+// overrode.
+func applyOverrideGate(key string, signals []board.Signal, override bool, overrideOut *string) error {
+	if len(signals) == 0 {
+		return nil
+	}
+	if !override {
+		return out.Errf("needs_override", `--override -m "<why>"`, 4,
+			"'%s' has standing signal(s) that guard this write: %s", key, formatSignals(signals)).
+			WithSignals(signalNameList(signals))
+	}
+	*overrideOut = signalNames(signals)
+	return nil
 }
 
 // checkCAS is spec rules 3-4, field-scoped: latest is the latest event that

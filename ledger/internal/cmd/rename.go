@@ -174,16 +174,7 @@ func renamePrecondition(key, expect string, expectSet bool, meta model.Meta, aut
 		// unguarded labels token any writer or sync merge can clear, so
 		// refusing here would be a mid-CAS-loop TOCTOU.
 		signals := b.Signals(k, false, author, model.Now())
-		if len(signals) == 0 {
-			return nil
-		}
-		if !override {
-			return out.Errf("needs_override", `--override -m "<why>"`, 4,
-				"'%s' has standing signal(s) that guard this write: %s", key, formatSignals(signals)).
-				WithSignals(signalNameList(signals))
-		}
-		*overrideOut = signalNames(signals)
-		return nil
+		return applyOverrideGate(key, signals, override, overrideOut)
 	}
 }
 

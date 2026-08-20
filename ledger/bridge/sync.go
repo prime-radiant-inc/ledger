@@ -329,9 +329,11 @@ func (s *Syncer) checkVocabulary() (map[string]*KeyState, error) {
 		"the only other fix is export/import to a re-declared board. Declared on '%s': %s",
 		s.Board.Slug, strings.Join(declared, ", "))
 
+	flagValues := []struct{ flag, value string }{{"--done", s.Done}, {"--not-planned", s.NotPlanned}}
+
 	// (1) a board lacking a flag's value.
 	var missing []string
-	for _, fv := range []struct{ flag, value string }{{"--done", s.Done}, {"--not-planned", s.NotPlanned}} {
+	for _, fv := range flagValues {
 		if !isDeclared[fv.value] {
 			missing = append(missing, fmt.Sprintf("%s %s", fv.flag, fv.value))
 		}
@@ -347,7 +349,7 @@ func (s *Syncer) checkVocabulary() (map[string]*KeyState, error) {
 	// (in-progress IS declared) and then CLOSES GitHub issues on a
 	// non-terminal board state.
 	var wrong []string
-	for _, fv := range []struct{ flag, value string }{{"--done", s.Done}, {"--not-planned", s.NotPlanned}} {
+	for _, fv := range flagValues {
 		if !isTerminalValue(fv.value) {
 			wrong = append(wrong, fmt.Sprintf("%s %s is non-terminal", fv.flag, fv.value))
 		}
@@ -607,15 +609,9 @@ func (s *Syncer) resolveKey(is ghIssue) (string, bool, error) {
 		if !s.byIssueFree(is.Number, key) {
 			return "", false, nil
 		}
-		id, deduped, err := s.Board.LinkNote(key, is.Number)
-		if err != nil {
+		if err := s.link(key, is.Number, "recovered a seed this bridge wrote but never linked"); err != nil {
 			return "", false, err
 		}
-		if !deduped {
-			s.report.board("link %s <-> #%d (recovered a seed this bridge wrote but never linked)", key, is.Number)
-		}
-		_ = id
-		s.byKey[key], s.byIssue[is.Number] = is.Number, key
 		return key, true, nil
 	}
 	hint := ledgerKeyFromBody(is.Body)
@@ -637,14 +633,9 @@ func (s *Syncer) resolveKey(is ghIssue) (string, bool, error) {
 		// no linked issue, so this is an issue the bridge created and then
 		// crashed before linking. Recovered from the bulk list already in
 		// hand — no search call.
-		_, deduped, err := s.Board.LinkNote(hint, is.Number)
-		if err != nil {
+		if err := s.link(hint, is.Number, "adopted an issue this bridge created but never linked"); err != nil {
 			return "", false, err
 		}
-		if !deduped {
-			s.report.board("link %s <-> #%d (adopted an issue this bridge created but never linked)", hint, is.Number)
-		}
-		s.byKey[hint], s.byIssue[is.Number] = is.Number, hint
 		return hint, true, nil
 	case hint != "" && s.keys[hint] != nil:
 		s.report.warn("issue #%d claims existing key '%s' but carries no bridge stamp and the board has no "+
@@ -684,6 +675,27 @@ func (s *Syncer) resolveKey(is ghIssue) (string, bool, error) {
 
 // byIssueFree guards the recovered-seed path against binding an issue that
 // some OTHER key has already established a link to.
+// link writes the github-link note for key <-> #n, reports it as a board
+// write only when the chain actually grew (a deduped note is not a write —
+// Law 2's contract, owned here so no call site can forget it), and
+// registers the pair in this run's identity maps. detail is the report
+// line's parenthetical; empty means none.
+func (s *Syncer) link(key string, n int, detail string) error {
+	_, deduped, err := s.Board.LinkNote(key, n)
+	if err != nil {
+		return err
+	}
+	if !deduped {
+		if detail != "" {
+			s.report.board("link %s <-> #%d (%s)", key, n, detail)
+		} else {
+			s.report.board("link %s <-> #%d", key, n)
+		}
+	}
+	s.byKey[key], s.byIssue[n] = n, key
+	return nil
+}
+
 func (s *Syncer) byIssueFree(n int, key string) bool {
 	if have, ok := s.byIssue[n]; ok && have != key {
 		s.report.warn("issue #%d was seeded as key '%s' but is established to '%s' — leaving the established "+
@@ -749,20 +761,31 @@ func (s *Syncer) seedFromIssue(is ghIssue) (string, bool, error) {
 		}
 	}
 
-	_, deduped, err := s.Board.LinkNote(key, is.Number)
-	if err != nil {
+	if err := s.link(key, is.Number, ""); err != nil {
 		return "", false, err
 	}
-	if !deduped {
-		s.report.board("link %s <-> #%d", key, is.Number)
-	}
-	s.byKey[key], s.byIssue[is.Number] = is.Number, key
 
 	if err := s.GH.EditBody(is.Number, s.issueBody(key, is.Body)); err != nil {
 		return "", false, err
 	}
 	s.report.gh("#%d body carries ledger-key: %s", is.Number, key)
 	return key, true, nil
+}
+
+// attributedActor is Law 4's shared tail, one definition for both intake
+// aspects: the newest matching timeline actor, or the issue author with a
+// warning when no event matches. A transport failure propagates — it is
+// never the fallback.
+func (s *Syncer) attributedActor(is ghIssue, event string) (string, error) {
+	actor, ok, err := s.GH.LastActor(is.Number, event)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		actor = is.Author.Login
+		s.report.warn("issue #%d: no '%s' timeline event found — attributing to the issue author @%s", is.Number, event, actor)
+	}
+	return actor, nil
 }
 
 // intakeTitle is a GitHub title edit becoming a rename event on the board,
@@ -792,13 +815,9 @@ func (s *Syncer) intakeTitle(is ghIssue, ks *KeyState) error {
 		}
 		return nil
 	}
-	actor, ok, err := s.GH.LastActor(is.Number, "renamed")
+	actor, err := s.attributedActor(is, "renamed")
 	if err != nil {
 		return err
-	}
-	if !ok {
-		actor = is.Author.Login
-		s.report.warn("issue #%d: no 'renamed' timeline event found — attributing the retitle to the issue author @%s", is.Number, actor)
 	}
 	as := ghAuthorPrefix + actor
 	if _, err := s.Board.Rename(ks.Key, is.Title, as, ks.RenameID); err != nil {
@@ -860,13 +879,9 @@ func (s *Syncer) intakeState(is ghIssue, ks *KeyState) error {
 	if want == openValue {
 		event = "reopened"
 	}
-	actor, ok, err := s.GH.LastActor(is.Number, event)
+	actor, err := s.attributedActor(is, event)
 	if err != nil {
 		return err
-	}
-	if !ok {
-		actor = is.Author.Login
-		s.report.warn("issue #%d: no '%s' timeline event found — attributing to the issue author @%s", is.Number, event, actor)
 	}
 	as := ghAuthorPrefix + actor
 	msg := fmt.Sprintf("%s on GitHub by @%s (#%d)", event, actor, is.Number)
@@ -1281,14 +1296,9 @@ func (s *Syncer) ensureIssue(key, forEvent string) (int, error) {
 
 	// The link note is written IMMEDIATELY after the create. The crash
 	// window between the two is closed by ADOPTION, not by search.
-	_, deduped, err := s.Board.LinkNote(key, n)
-	if err != nil {
+	if err := s.link(key, n, ""); err != nil {
 		return 0, err
 	}
-	if !deduped {
-		s.report.board("link %s <-> #%d", key, n)
-	}
-	s.byKey[key], s.byIssue[n] = n, key
 
 	// Law 6's backfill: the key may have collected notes while it had no
 	// issue (the statusless-seed window, or notes written before the bridge

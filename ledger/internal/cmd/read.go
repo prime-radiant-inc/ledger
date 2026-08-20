@@ -510,7 +510,16 @@ func titleOf(led *fold.Ledger, key string) (string, *board.RenameInfo) {
 	if !model.ReadyCapable(led.Meta) {
 		return "", nil
 	}
-	k := board.Build(led.Meta, led.Events).Keys[key]
+	// A title folds from the key's own events alone (latest rename, else the
+	// seed's -m), so fold just this key rather than building every key on
+	// the board for a single-key read.
+	var own []model.Event
+	for _, e := range led.Events {
+		if e.Key == key {
+			own = append(own, e)
+		}
+	}
+	k := board.Build(led.Meta, own).Keys[key]
 	if k == nil {
 		return "", nil
 	}

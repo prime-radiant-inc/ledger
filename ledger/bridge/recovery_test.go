@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -243,7 +244,7 @@ func TestRetractedIssueNeverHijackWarnsAgain(t *testing.T) {
 	// The cleanup doctrine: close the duplicate AND retract its link note.
 	f.humanClose(dup, false, "mallory")
 	if _, _, err := f.board().Note("cache-warm", kindLink,
-		linkRetractPrefix+itoa(dup), bridgeAuthor, ""); err != nil {
+		linkRetractPrefix+strconv.Itoa(dup), bridgeAuthor, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -274,18 +275,6 @@ func TestRetractedIssueNeverHijackWarnsAgain(t *testing.T) {
 		t.Fatalf("the established link must stay #1, got %v", lm.ByKey)
 	}
 	f.converge("operator", 3)
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
 }
 
 // TestClaimLevelCreatesNothing is rev 8.2's issue-creation rule, which reads

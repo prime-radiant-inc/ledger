@@ -161,7 +161,7 @@ func AllContests(meta model.Meta, events []model.Event, d dag.Result) []Contest 
 			}
 			add(i, e.Key, f)
 		}
-		if e.Rename != "" {
+		if writesField(e, TitleField) {
 			add(i, e.Key, TitleField)
 		}
 	}
