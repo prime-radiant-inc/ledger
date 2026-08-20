@@ -726,7 +726,7 @@ func TestFreshnessWarnsFetchedButUnmergedTTY(t *testing.T) {
 	_, b := freshnessFixture(t)
 	rawFetchTracking(t, b, "origin")
 
-	const want = "[ledger] 1 unmerged remote events — run 'chit sync'"
+	const want = "[chit] 1 unmerged remote events — run 'chit sync'"
 
 	c, buf := ttyCtx(b)
 	if err := runReady(c, "board", nil, 50, ""); err != nil {
@@ -782,7 +782,7 @@ func TestFreshnessSilentWhenSynced(t *testing.T) {
 	if err := runReady(c, "board", nil, 50, ""); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(buf.String(), "[ledger]") {
+	if strings.Contains(buf.String(), "[chit]") {
 		t.Fatalf("ready TTY: a synced replica must print no freshness line: %q", buf.String())
 	}
 }

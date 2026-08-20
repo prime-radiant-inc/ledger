@@ -1,9 +1,9 @@
 ---
 name: using-ledger
-description: Use when work spans sessions or agents and needs durable, verifiable state — starting multi-session or multi-agent work, dispatching subagent fleets, resuming after context death, handing off, tracking an investigation, running an issue board, picking unblocked work, or deciding "should this be a ledger?". Teaches when and how to use the `ledger` CLI's patterns; command mechanics live in `chit quickstart`.
+description: Use when work spans sessions or agents and needs durable, verifiable state — starting multi-session or multi-agent work, dispatching subagent fleets, resuming after context death, handing off, tracking an investigation, running an issue board, picking unblocked work, or deciding "should this be a ledger?". Teaches when and how to use the `chit` CLI's patterns; command mechanics live in `chit quickstart`.
 ---
 
-# Using ledger
+# Using chit
 
 Nine patterns for when and how to reach for a ledger. This is judgment,
 not mechanics — every command shape here is spelled out in full in `chit

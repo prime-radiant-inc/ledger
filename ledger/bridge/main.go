@@ -14,7 +14,7 @@
 //
 // The board is canonical; GitHub is the intake and display window.
 //
-// Both sides are reached through CLIs only: `gh` for GitHub, `ledger` for
+// Both sides are reached through CLIs only: `gh` for GitHub, `chit` for
 // the board. The bridge has NO identity of its own on GitHub — several
 // logins may operate it, each also participating as a human, and nothing in
 // the code path compares logins.
@@ -56,8 +56,8 @@ func run(argv []string, stdout, stderr *os.File) int {
 	fs.SetOutput(stderr)
 	repo := fs.String("repo", "", "GitHub repository, owner/repo (required)")
 	slug := fs.String("ledger", "", "board slug (required)")
-	store := fs.String("store", "", "ledger store path")
-	ledgerBin := fs.String("ledger-bin", "ledger", "path to the ledger binary")
+	store := fs.String("store", "", "chit store path")
+	ledgerBin := fs.String("ledger-bin", "chit", "path to the chit binary")
 	ghBin := fs.String("gh-bin", "gh", "path to the gh binary")
 	// The board's two MIRRORED TERMINALS, configured rather than assumed: a
 	// legal ready-capable board can call these done/dropped. Startup refuses

@@ -14,7 +14,7 @@ import (
 // signals, evidence — binds the bridge exactly as it binds any agent, so
 // every write here goes through the same doors an agent's would.
 type Board struct {
-	Bin   string // path to the ledger binary
+	Bin   string // path to the chit binary
 	Slug  string
 	Store string // --store, empty to let ledger resolve
 }
@@ -204,13 +204,13 @@ func (b Board) CheckCapable() error {
 	var so, se strings.Builder
 	cmd.Stdout, cmd.Stderr = &so, &se
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("cannot run the ledger binary %q (%v): %s", b.Bin, err, strings.TrimSpace(se.String()))
+		return fmt.Errorf("cannot run the chit binary %q (%v): %s", b.Bin, err, strings.TrimSpace(se.String()))
 	}
 	if !strings.Contains(so.String()+se.String(), "--rename") {
-		return fmt.Errorf("the ledger binary %q predates tool rev 16: `set --rename` is missing. "+
+		return fmt.Errorf("the chit binary %q predates tool rev 16: `set --rename` is missing. "+
 			"The bridge needs it for title mirroring, and rev 16's machine-readable `signals` in "+
 			"needs_override documents for Law 5 — without it every guarded intake write takes the "+
-			"refusal path. Upgrade ledger (chit update), or point --ledger-bin at a rev-16 binary", b.Bin)
+			"refusal path. Upgrade chit (chit update), or point --ledger-bin at a rev-16 binary", b.Bin)
 	}
 	return nil
 }

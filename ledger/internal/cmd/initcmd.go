@@ -15,7 +15,7 @@ func init() { register(newInitCmd) }
 
 func newInitCmd(c *Ctx) *cobra.Command {
 	var hooks bool
-	cmd := &cobra.Command{Use: "init", Short: "bootstrap this directory for ledger: repo config, or a bare store",
+	cmd := &cobra.Command{Use: "init", Short: "bootstrap this directory for chit: repo config, or a bare store",
 		Long: "In a git repo: sets core.logAllRefUpdates=always and writes the .ledger.toml breadcrumb.\n" +
 			"In a non-git directory: creates a bare store at ./.ledger.git.\n" +
 			"Never commits anything and never auto-edits harness config.",
@@ -133,7 +133,7 @@ func runInit(c *Ctx, hooks bool) error {
 			// Everything below — breadcrumb, refspec, --hooks — lands at the
 			// root, and the payload's "path" says so.
 			target = toplevel
-			lines = append(lines, "[ledger] resolved to the repo root "+toplevel)
+			lines = append(lines, "[chit] resolved to the repo root "+toplevel)
 		}
 		var repoLines []string
 		repoLines, payload, err = initRepoCase(target)
@@ -150,7 +150,7 @@ func runInit(c *Ctx, hooks bool) error {
 		if err := os.WriteFile(hookPath, []byte(hooksSnippet), 0o644); err != nil {
 			return fmt.Errorf("write .ledger-hooks.md: %w", err)
 		}
-		lines = append(lines, "", "[ledger] wrote .ledger-hooks.md — paste its snippet into your harness config yourself")
+		lines = append(lines, "", "[chit] wrote .ledger-hooks.md — paste its snippet into your harness config yourself")
 		payload["hooks_snippet"] = hookPath
 	}
 
@@ -201,14 +201,14 @@ func initRepoCase(target string) ([]string, map[string]any, error) {
 	}
 	refspecLines := make([]string, len(refspecRepairs))
 	for i, r := range refspecRepairs {
-		refspecLines[i] = "[ledger] " + r
+		refspecLines[i] = "[chit] " + r
 	}
 
 	tomlPath := filepath.Join(target, ".ledger.toml")
 	if _, err := os.Stat(tomlPath); err == nil {
 		payload["already_initialized"] = true
 		lines := append([]string{
-			"[ledger] already initialized (.ledger.toml exists) — refreshed core.logAllRefUpdates",
+			"[chit] already initialized (.ledger.toml exists) — refreshed core.logAllRefUpdates",
 			adminPointerLine,
 		}, refspecLines...)
 		return lines, payload, nil
@@ -219,7 +219,7 @@ func initRepoCase(target string) ([]string, map[string]any, error) {
 	}
 	payload["already_initialized"] = false
 
-	lines := []string{"[ledger] wrote .ledger.toml — " + commitHint, "",
+	lines := []string{"[chit] wrote .ledger.toml — " + commitHint, "",
 		"Add to CLAUDE.md or AGENTS.md:"}
 	lines = append(lines, claudeStanzaLines...)
 	lines = append(lines, "", adminPointerLine)
@@ -245,6 +245,6 @@ func initBareCase(target string) ([]string, map[string]any, error) {
 		"stanza":         stanzaText(),
 		"admin_doc":      adminDocPath,
 	}
-	lines := []string{"[ledger] created bare store ./.ledger.git", adminPointerLine}
+	lines := []string{"[chit] created bare store ./.ledger.git", adminPointerLine}
 	return lines, payload, nil
 }

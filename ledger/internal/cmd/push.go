@@ -42,7 +42,7 @@ func runPush(c *Ctx, remoteFlag string, args []string) error {
 
 	repairs := repairRefspecs(c.Store.Repo, remote)
 	for _, r := range repairs {
-		fmt.Fprintln(c.Stderr, "[ledger] "+r)
+		fmt.Fprintln(c.Stderr, "[chit] "+r)
 	}
 
 	slugs := args

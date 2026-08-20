@@ -59,7 +59,7 @@ func ledgerIssuesSkillMDPath(t *testing.T) string {
 // section must open with — the skill's absolute-binary-path convention
 // for this section (spec "The write idioms": doctrine lines that carry a
 // bare `ledger` get typed as bare `ledger`, a trial-proven failure mode).
-const doctrineBinary = "~/path-to/ledger"
+const doctrineBinary = "~/path-to/chit"
 
 // doctrineCdTokens is the exact three-token prefix every command line in
 // the section must open with, ahead of doctrineBinary — rev 17's

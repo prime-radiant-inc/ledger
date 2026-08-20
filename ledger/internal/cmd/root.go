@@ -33,7 +33,7 @@ func ExecuteArgs(args []string, stdout, stderr io.Writer) int {
 	if f, ok := stdout.(*os.File); ok {
 		ctx.TTY = out.IsTTY(f)
 	}
-	root := &cobra.Command{Use: "ledger", Short: "Durable working-state for coding agents, stored in git phantom refs",
+	root := &cobra.Command{Use: "chit", Short: "Durable working-state for coding agents, stored in git phantom refs",
 		SilenceUsage: true, SilenceErrors: true,
 		Long: "Durable working-state for coding agents.\nStart with `chit create <slug> --scope <what-it-tracks>`.\nEvery write prints its event id — that id is a cursor for since/watch.\nRun `chit quickstart` for agent doctrine."}
 	var storeFlag string

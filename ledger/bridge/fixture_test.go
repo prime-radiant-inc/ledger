@@ -37,7 +37,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	ledgerBin = filepath.Join(dir, "ledger")
+	ledgerBin = filepath.Join(dir, "chit")
 	ghBin = filepath.Join(dir, "gh")
 	bridgeBin = filepath.Join(dir, "chit-gh")
 	for _, b := range [][2]string{{ledgerBin, "."}, {ghBin, "./bridge/fakegh/cmd"}, {bridgeBin, "./bridge"}} {

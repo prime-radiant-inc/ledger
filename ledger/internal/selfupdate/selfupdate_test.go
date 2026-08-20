@@ -36,11 +36,23 @@ func TestCompareVersions(t *testing.T) {
 }
 
 func TestAssetName(t *testing.T) {
-	if got := AssetName("darwin", "arm64"); got != "ledger-darwin-arm64.tar.gz" {
+	if got := AssetName("darwin", "arm64"); got != "chit-darwin-arm64.tar.gz" {
 		t.Fatalf("AssetName = %q", got)
 	}
-	if got := AssetName("windows", "amd64"); got != "ledger-windows-amd64.tar.gz" {
+	if got := AssetName("windows", "amd64"); got != "chit-windows-amd64.tar.gz" {
 		t.Fatalf("AssetName windows = %q", got)
+	}
+}
+
+// TestBinaryName pins the executable name inside a release tarball to what
+// scripts/build-tarballs.sh actually packs — the two have to agree or every
+// self-update fails at the extract step.
+func TestBinaryName(t *testing.T) {
+	if got := BinaryName("darwin"); got != "chit" {
+		t.Fatalf("BinaryName = %q", got)
+	}
+	if got := BinaryName("windows"); got != "chit.exe" {
+		t.Fatalf("BinaryName windows = %q", got)
 	}
 }
 
@@ -81,9 +93,9 @@ func makeTarball(t *testing.T, name string, content []byte) []byte {
 }
 
 func TestFetchVerifiesChecksumAndExtracts(t *testing.T) {
-	binContent := []byte("#!fake ledger binary\n")
-	asset := "ledger-linux-amd64.tar.gz"
-	tarball := makeTarball(t, "ledger", binContent)
+	binContent := []byte("#!fake chit binary\n")
+	asset := "chit-linux-amd64.tar.gz"
+	tarball := makeTarball(t, "chit", binContent)
 	sum := sha256.Sum256(tarball)
 	checksums := fmt.Sprintf("%s  %s\n%s  other-file.tar.gz\n",
 		hex.EncodeToString(sum[:]), asset, "0000000000000000000000000000000000000000000000000000000000000000")
@@ -116,8 +128,8 @@ func TestFetchVerifiesChecksumAndExtracts(t *testing.T) {
 }
 
 func TestFetchRejectsBadChecksum(t *testing.T) {
-	asset := "ledger-linux-amd64.tar.gz"
-	tarball := makeTarball(t, "ledger", []byte("real"))
+	asset := "chit-linux-amd64.tar.gz"
+	tarball := makeTarball(t, "chit", []byte("real"))
 	checksums := fmt.Sprintf("%064d  %s\n", 0, asset) // wrong sum
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -138,8 +150,8 @@ func TestFetchRejectsBadChecksum(t *testing.T) {
 }
 
 func TestFetchRejectsAssetMissingFromChecksums(t *testing.T) {
-	asset := "ledger-linux-amd64.tar.gz"
-	tarball := makeTarball(t, "ledger", []byte("real"))
+	asset := "chit-linux-amd64.tar.gz"
+	tarball := makeTarball(t, "chit", []byte("real"))
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch filepath.Base(r.URL.Path) {
@@ -160,8 +172,8 @@ func TestFetchRejectsAssetMissingFromChecksums(t *testing.T) {
 
 func TestReplaceSwapsBinary(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "ledger")
-	newBin := filepath.Join(dir, "ledger-new")
+	target := filepath.Join(dir, "chit")
+	newBin := filepath.Join(dir, "chit-new")
 	if err := os.WriteFile(target, []byte("old"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -186,11 +198,11 @@ func TestManagedByHomebrew(t *testing.T) {
 		path string
 		want bool
 	}{
-		{"/opt/homebrew/Cellar/ledger/0.1.0/bin/ledger", true},
-		{"/usr/local/Cellar/ledger/0.1.0/bin/ledger", true},
-		{"/home/linuxbrew/.linuxbrew/Cellar/ledger/0.1.0/bin/ledger", true},
-		{"/Users/x/.local/bin/ledger", false},
-		{"/usr/local/bin/ledger", false},
+		{"/opt/homebrew/Cellar/chit/0.1.0/bin/chit", true},
+		{"/usr/local/Cellar/chit/0.1.0/bin/chit", true},
+		{"/home/linuxbrew/.linuxbrew/Cellar/chit/0.1.0/bin/chit", true},
+		{"/Users/x/.local/bin/chit", false},
+		{"/usr/local/bin/chit", false},
 	}
 	for _, c := range cases {
 		if got := ManagedByHomebrew(c.path); got != c.want {

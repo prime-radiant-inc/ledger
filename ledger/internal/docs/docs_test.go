@@ -176,14 +176,14 @@ func migrationLoop(t *testing.T) string {
 }
 
 // ledgerBinDir builds the CLI once per test binary and returns the
-// directory holding it — the recipe calls a bare `ledger`, so it has to be
+// directory holding it — the recipe calls a bare `chit`, so it has to be
 // on PATH as a real executable, not an in-process ExecuteArgs call.
 var ledgerBinDir = sync.OnceValues(func() (string, error) {
-	dir, err := os.MkdirTemp("", "ledger-bin")
+	dir, err := os.MkdirTemp("", "chit-bin")
 	if err != nil {
 		return "", err
 	}
-	build := exec.Command("go", "build", "-o", filepath.Join(dir, "ledger"), ".")
+	build := exec.Command("go", "build", "-o", filepath.Join(dir, "chit"), ".")
 	build.Dir = filepath.Join("..", "..")
 	if out, err := build.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("go build: %v\n%s", err, out)
@@ -365,7 +365,7 @@ func TestMigrateGitHubRecipeBreaksOnFailureThenResumes(t *testing.T) {
 }
 
 // example is one executable line pulled from a fenced ```-block: the
-// verb+args to run (with the leading "ledger" token stripped) and the
+// verb+args to run (with the leading "chit" token stripped) and the
 // expectations parsed from a trailing "# expect: ..." annotation. Default
 // expectation is a clean exit.
 type example struct {
@@ -375,7 +375,7 @@ type example struct {
 }
 
 // extractExamples scans md for fenced ``` blocks and pulls out every line
-// that starts with "ledger " (prose and inline `single-backtick` snippets
+// that starts with "chit " (prose and inline `single-backtick` snippets
 // outside a fence are never executed — only lines presented as a runnable
 // transcript are). Each line is shell-split (quote-balanced only; doc
 // examples are written quote-simple on purpose) and may end with a trailing
@@ -389,7 +389,7 @@ func extractExamples(md string) ([]example, error) {
 			inFence = !inFence
 			continue
 		}
-		if !inFence || !strings.HasPrefix(trimmed, "ledger ") {
+		if !inFence || !strings.HasPrefix(trimmed, "chit ") {
 			continue
 		}
 		cmdPart := trimmed
@@ -424,7 +424,7 @@ func extractExamples(md string) ([]example, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%q: %w", line, err)
 		}
-		ex.argv = argv[1:] // drop the leading "ledger" token
+		ex.argv = argv[1:] // drop the leading "chit" token
 		exs = append(exs, ex)
 	}
 	return exs, nil

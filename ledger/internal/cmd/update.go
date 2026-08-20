@@ -39,10 +39,10 @@ func init() { register(newUpdateCmd) }
 // updating the binary is meaningful anywhere, git repo or not.
 func newUpdateCmd(c *Ctx) *cobra.Command {
 	var check bool
-	cmd := &cobra.Command{Use: "update", Short: "install the latest released ledger",
+	cmd := &cobra.Command{Use: "update", Short: "install the latest released chit",
 		Long: "Downloads the latest GitHub release for this platform, verifies its\n" +
 			"checksum, and atomically replaces the running binary. --check only\n" +
-			"reports. Homebrew installs are refused — use `brew upgrade ledger`.",
+			"reports. Homebrew installs are refused — use `brew upgrade chit`.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			api, dl := updateBases()
@@ -76,7 +76,7 @@ func newUpdateCmd(c *Ctx) *cobra.Command {
 				target = resolved
 			}
 			if selfupdate.ManagedByHomebrew(target) {
-				return out.Errf("brew_managed", "run: brew upgrade ledger", 4,
+				return out.Errf("brew_managed", "run: brew upgrade chit", 4,
 					"this binary was installed by Homebrew (%s); a self-update would be undone by the next brew upgrade", target)
 			}
 			// Fetch extracts into the install dir (keeps the final rename on
@@ -89,7 +89,7 @@ func newUpdateCmd(c *Ctx) *cobra.Command {
 			// sweep staging files a killed earlier update left behind — Fetch
 			// stages in the install dir (same-filesystem rename), so orphans
 			// would otherwise accumulate there forever
-			if stale, err := filepath.Glob(filepath.Join(filepath.Dir(target), ".ledger-update-*")); err == nil {
+			if stale, err := filepath.Glob(filepath.Join(filepath.Dir(target), ".chit-update-*")); err == nil {
 				for _, f := range stale {
 					os.Remove(f)
 				}
@@ -154,7 +154,7 @@ func passiveUpdateCheck(c *Ctx, verb string) {
 			if selfupdate.ManagedByHomebrew(target) {
 				// `chit update` refuses brew installs — don't nag toward a
 				// command that will only bounce the user to another one
-				fix = "run `brew upgrade ledger`"
+				fix = "run `brew upgrade chit`"
 			}
 		}
 		fmt.Fprintf(c.Stderr, "chit %s is available (you have %s) — %s\n", st.Latest, Version, fix)

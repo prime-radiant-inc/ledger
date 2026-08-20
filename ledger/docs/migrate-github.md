@@ -46,7 +46,7 @@ done
 ```
 
 **Check the exit code of every command.** That is what `&&` and `|| break`
-are doing. A pipeline reports only its LAST command's status, so a `ledger`
+are doing. A pipeline reports only its LAST command's status, so a `chit`
 call piped into `jq` looks successful no matter how it exited — the
 migration this recipe comes from lost its `chit init` error exactly that
 way and spent an hour on a store that was never initialized.

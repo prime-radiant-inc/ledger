@@ -1,4 +1,4 @@
-# Ledger admin runbook
+# chit admin runbook
 
 This is the material `chit init` points at but doesn't print in full: the
 hazards that only matter to whoever administers a shared remote, not to an
@@ -19,7 +19,7 @@ branches. Two operations can wipe them on the remote:
   force-pushes everything) or a rebase tool that doesn't know these refs
   are append-only history, never branches to be rewritten.
 
-Neither is ledger-specific; they're generic git hazards that happen to be
+Neither is chit-specific; they're generic git hazards that happen to be
 sharper here because these refs aren't visible in `git branch` and nobody's
 watching them the way they watch `main`.
 

@@ -66,7 +66,7 @@ take `--ledger <slug>`, ambient when one ledger's open — except `ls`/`sync`):
 13. **Close what you abandon.** One call: `close <slug> --as-state
     shipped|abandoned|superseded`. Otherwise `ls`'s idle mark catches it.
 14. **Never alias the invocation into a shell variable** — `cmd="chit set
-    ..."; $cmd` re-splits on every space. Always call `ledger` directly.
+    ..."; $cmd` re-splits on every space. Always call `chit` directly.
 15. **Sync at session start, push at session end.** `sync` fetches and
     merges remote history, never pushes; `push [<slug>...]` publishes
     local refs, non-force — bare sends every slug, naming sends only

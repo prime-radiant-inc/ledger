@@ -77,7 +77,7 @@ path — working directory travels with the command, same as the binary
 path did before it.
 
 ```
-cd <board dir> && ~/path-to/ledger ready --ledger issues
+cd <board dir> && ~/path-to/chit ready --ledger issues
 ```
 
 On a human-labeled key, every guarded write below — touch-base and close
@@ -113,9 +113,9 @@ rename is the honest fix.
   only under `attention` as a half-seed: momentary, harmless):
 
   ```
-  cd <board dir> && ~/path-to/ledger set spike-probe status=open --expect none -m "spike probe: investigate retry storm" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set fix-retry blocked-by=spike-probe --expect none --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set fix-retry status=open --expect none -m "fix the retry storm bug" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set spike-probe status=open --expect none -m "spike probe: investigate retry storm" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set fix-retry blocked-by=spike-probe --expect none --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set fix-retry status=open --expect none -m "fix the retry storm bug" --as ash --ledger issues
   ```
 
   Seed collision: the corrupting write is the one that SUCCEEDS — your
@@ -127,11 +127,11 @@ rename is the honest fix.
   checking exit codes:
 
   ```
-  cd <board dir> && ~/path-to/ledger set cache-warm status=open --expect none -m "warm the cache on boot" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set cache-warm blocked-by=spike-probe --expect none -m "dependency edge" --as kit --ledger issues
-  cd <board dir> && ~/path-to/ledger set cache-warm blocked-by= --expect <your own edge event id> -m "reverting: seed collision" --as kit --ledger issues
-  cd <board dir> && ~/path-to/ledger set cache-warm-2 blocked-by=spike-probe --expect none -m "dependency edge" --as kit --ledger issues
-  cd <board dir> && ~/path-to/ledger set cache-warm-2 status=open --expect none -m "kit's actual issue, re-seeded after the cache-warm collision" --as kit --ledger issues
+  cd <board dir> && ~/path-to/chit set cache-warm status=open --expect none -m "warm the cache on boot" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set cache-warm blocked-by=spike-probe --expect none -m "dependency edge" --as kit --ledger issues
+  cd <board dir> && ~/path-to/chit set cache-warm blocked-by= --expect <your own edge event id> -m "reverting: seed collision" --as kit --ledger issues
+  cd <board dir> && ~/path-to/chit set cache-warm-2 blocked-by=spike-probe --expect none -m "dependency edge" --as kit --ledger issues
+  cd <board dir> && ~/path-to/chit set cache-warm-2 status=open --expect none -m "kit's actual issue, re-seeded after the cache-warm collision" --as kit --ledger issues
   ```
 
   Seeding a pre-`human`-labeled key is a legitimate way to reserve
@@ -139,9 +139,9 @@ rename is the honest fix.
   is both the title and the override justification:
 
   ```
-  cd <board dir> && ~/path-to/ledger set design-review labels=human --expect none -m "reserving for jesse" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set design-review status=open --expect none -m "pick the retry API shape" --as ash --ledger issues  # expect: exit 4 error needs_override
-  cd <board dir> && ~/path-to/ledger set design-review status=open --expect none --override -m "pick the retry API shape -- reserved for jesse: needs a human call on the retry contract" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set design-review labels=human --expect none -m "reserving for jesse" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set design-review status=open --expect none -m "pick the retry API shape" --as ash --ledger issues  # expect: exit 4 error needs_override
+  cd <board dir> && ~/path-to/chit set design-review status=open --expect none --override -m "pick the retry API shape -- reserved for jesse: needs a human call on the retry contract" --as ash --ledger issues
   ```
 
 - **Retire a mistake**: a junk key — a probe, a typo'd name, a seed that
@@ -155,10 +155,10 @@ rename is the honest fix.
   the board later doesn't mistake it for abandoned work:
 
   ```
-  cd <board dir> && ~/path-to/ledger set probe-key labels=human --expect none -m "reserving while probing CAS behavior" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set probe-key labels= --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set probe-key status=open --expect none -m "probe key: minted while probing CAS behavior" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set probe-key status=wontfix --expect <probe-key's seed id> -m "retiring: artifact of a CAS probe, never real work" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set probe-key labels=human --expect none -m "reserving while probing CAS behavior" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set probe-key labels= --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set probe-key status=open --expect none -m "probe key: minted while probing CAS behavior" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set probe-key status=wontfix --expect <probe-key's seed id> -m "retiring: artifact of a CAS probe, never real work" --as ash --ledger issues
   ```
 
 - **Retitle** (rare, and never a workflow step): `set <key> --rename
@@ -170,9 +170,9 @@ rename is the honest fix.
   should:
 
   ```
-  cd <board dir> && ~/path-to/ledger set spike-probe --rename "spike probe: retry storm under backpressure" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set design-review --rename "pick the retry contract" --as ash --ledger issues  # expect: exit 4 error needs_override
-  cd <board dir> && ~/path-to/ledger set design-review --rename "pick the retry contract" --override -m "jesse asked for the retitle in standup" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set spike-probe --rename "spike probe: retry storm under backpressure" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set design-review --rename "pick the retry contract" --as ash --ledger issues  # expect: exit 4 error needs_override
+  cd <board dir> && ~/path-to/chit set design-review --rename "pick the retry contract" --override -m "jesse asked for the retitle in standup" --as ash --ledger issues
   ```
 
 - **Claim**: `set <key> status=in-progress --expect <ready id> -m
@@ -181,7 +181,7 @@ rename is the honest fix.
   when, from where.
 
   ```
-  cd <board dir> && ~/path-to/ledger set spike-probe status=in-progress --expect <the seed id> -m "claiming" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set spike-probe status=in-progress --expect <the seed id> -m "claiming" --as ash --ledger issues
   ```
 
 - **Touch-base**: re-set `status=in-progress --expect <own claim id> -m
@@ -190,14 +190,14 @@ rename is the honest fix.
   matching their tasks, not the reverse.
 
   ```
-  cd <board dir> && ~/path-to/ledger set spike-probe status=in-progress --expect <own claim id> -m "still on it" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set spike-probe status=in-progress --expect <own claim id> -m "still on it" --as ash --ledger issues
   ```
 
 - **Close**: `set <key> status=closed --evidence <ref> --expect <own
   claim id> -m "done"`.
 
   ```
-  cd <board dir> && ~/path-to/ledger set spike-probe status=closed --evidence run:demo-1 --expect <own claim id> -m "done" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set spike-probe status=closed --evidence run:demo-1 --expect <own claim id> -m "done" --as ash --ledger issues
   ```
 
   A `claim_lost` here means you were reclaimed while working: leave a
@@ -207,13 +207,13 @@ rename is the honest fix.
   `handoff` note before closing:
 
   ```
-  cd <board dir> && ~/path-to/ledger set retry-config status=open --expect none -m "tune retry backoff config" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set retry-config status=in-progress --expect <the seed id> -m "claiming" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set retry-config status=in-progress --expect <ash's claim id> -m "reclaiming from ash: stale 350ms" --as moss --ledger issues
-  cd <board dir> && ~/path-to/ledger set retry-config status=closed --evidence run:demo-2 --expect <ash's claim id> -m "done" --as ash --ledger issues  # expect: exit 4 error claim_lost
-  cd <board dir> && ~/path-to/ledger note -k handoff --key retry-config -m "finished the backoff tuning before losing the claim: new config is exponential base 200ms cap 5s, verified against a local repro; evidence run:demo-2" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger notes -k handoff --key retry-config --ledger issues
-  cd <board dir> && ~/path-to/ledger set retry-config status=closed --evidence run:demo-2 --expect <moss's reclaim id> -m "done, per ash's handoff note" --as moss --ledger issues
+  cd <board dir> && ~/path-to/chit set retry-config status=open --expect none -m "tune retry backoff config" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set retry-config status=in-progress --expect <the seed id> -m "claiming" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set retry-config status=in-progress --expect <ash's claim id> -m "reclaiming from ash: stale 350ms" --as moss --ledger issues
+  cd <board dir> && ~/path-to/chit set retry-config status=closed --evidence run:demo-2 --expect <ash's claim id> -m "done" --as ash --ledger issues  # expect: exit 4 error claim_lost
+  cd <board dir> && ~/path-to/chit note -k handoff --key retry-config -m "finished the backoff tuning before losing the claim: new config is exponential base 200ms cap 5s, verified against a local repro; evidence run:demo-2" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit notes -k handoff --key retry-config --ledger issues
+  cd <board dir> && ~/path-to/chit set retry-config status=closed --evidence run:demo-2 --expect <moss's reclaim id> -m "done, per ash's handoff note" --as moss --ledger issues
   ```
 
 - **Reclaim**: a stale claim (from `attention`) is retaken with `set
@@ -230,9 +230,9 @@ rename is the honest fix.
   is the visibility the old two-step reopen never actually had.
 
   ```
-  cd <board dir> && ~/path-to/ledger set docs-typo status=open --expect none -m "typo in readme install section" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set docs-typo status=closed --evidence commit:abc111 --expect <the seed id> -m "done" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set docs-typo status=wontfix --expect <the close id> --override -m "dup of [[readme-typo-2]]" --as kit --ledger issues
+  cd <board dir> && ~/path-to/chit set docs-typo status=open --expect none -m "typo in readme install section" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set docs-typo status=closed --evidence commit:abc111 --expect <the seed id> -m "done" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set docs-typo status=wontfix --expect <the close id> --override -m "dup of [[readme-typo-2]]" --as kit --ledger issues
   ```
 
 - **Break a squat / evict a live claim**: triage-only by doctrine. Free
@@ -242,13 +242,13 @@ rename is the honest fix.
   Either records `override: claim`.
 
   ```
-  cd <board dir> && ~/path-to/ledger set urgent-fix status=open --expect none -m "urgent: prod alert flapping" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set urgent-fix status=in-progress --expect <the seed id> -m "claiming" --as moss --ledger issues
-  cd <board dir> && ~/path-to/ledger set urgent-fix status=open --expect <moss's claim id> --override -m "freeing: moss went dark, urgent-fix needs a new owner" --as triager --ledger issues
+  cd <board dir> && ~/path-to/chit set urgent-fix status=open --expect none -m "urgent: prod alert flapping" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set urgent-fix status=in-progress --expect <the seed id> -m "claiming" --as moss --ledger issues
+  cd <board dir> && ~/path-to/chit set urgent-fix status=open --expect <moss's claim id> --override -m "freeing: moss went dark, urgent-fix needs a new owner" --as triager --ledger issues
 
-  cd <board dir> && ~/path-to/ledger set hotfix-now status=open --expect none -m "hotfix: payment webhook 500s" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set hotfix-now status=in-progress --expect <the seed id> -m "claiming" --as kit --ledger issues
-  cd <board dir> && ~/path-to/ledger set hotfix-now status=in-progress --expect <kit's claim id> --override -m "taking over: kit unresponsive, needed now" --as triager --ledger issues
+  cd <board dir> && ~/path-to/chit set hotfix-now status=open --expect none -m "hotfix: payment webhook 500s" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set hotfix-now status=in-progress --expect <the seed id> -m "claiming" --as kit --ledger issues
+  cd <board dir> && ~/path-to/chit set hotfix-now status=in-progress --expect <kit's claim id> --override -m "taking over: kit unresponsive, needed now" --as triager --ledger issues
   ```
 
 - **Edge edit**: read the current set, union or prune, write whole:
@@ -257,10 +257,10 @@ rename is the honest fix.
   `--override` here like everywhere.
 
   ```
-  cd <board dir> && ~/path-to/ledger set deploy blocked-by=fix-retry --expect none --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set deploy status=open --expect none -m "deploy the retry fix" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger status deploy --field blocked-by --ledger issues
-  cd <board dir> && ~/path-to/ledger set deploy blocked-by=fix-retry,cache-warm-2 --expect <the edge field's latest id> -m "also wait on the cache warm fix" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set deploy blocked-by=fix-retry --expect none --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set deploy status=open --expect none -m "deploy the retry fix" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit status deploy --field blocked-by --ledger issues
+  cd <board dir> && ~/path-to/chit set deploy blocked-by=fix-retry,cache-warm-2 --expect <the edge field's latest id> -m "also wait on the cache warm fix" --as ash --ledger issues
   ```
 
 - **Break a cycle** — any agent or person does this IMMEDIATELY, whenever
@@ -278,26 +278,26 @@ rename is the honest fix.
   `ready`: overlapping cycles surface one at a time.
 
   ```
-  cd <board dir> && ~/path-to/ledger set cycle-x status=open --expect none -m "cycle x" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set cycle-y status=open --expect none -m "cycle y" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set cycle-x blocked-by=cycle-y --expect none --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set cycle-y blocked-by=cycle-x --expect none --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger ready --ledger issues
-  cd <board dir> && ~/path-to/ledger set cycle-y blocked-by= --expect <cycle-y's edge id> -m "breaking cycle [cycle-x cycle-y]: dropping cycle-x" --as kit --ledger issues
+  cd <board dir> && ~/path-to/chit set cycle-x status=open --expect none -m "cycle x" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set cycle-y status=open --expect none -m "cycle y" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set cycle-x blocked-by=cycle-y --expect none --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set cycle-y blocked-by=cycle-x --expect none --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit ready --ledger issues
+  cd <board dir> && ~/path-to/chit set cycle-y blocked-by= --expect <cycle-y's edge id> -m "breaking cycle [cycle-x cycle-y]: dropping cycle-x" --as kit --ledger issues
   ```
 
   The human variant — `break.human` names a reserved key, so the fix
   needs `--override` like every other guarded write against it:
 
   ```
-  cd <board dir> && ~/path-to/ledger set cycle-human-a status=open --expect none -m "cycle human a" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set cycle-human-b labels=human --expect none -m "reserving for jesse" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set cycle-human-b status=open --expect none --override -m "cycle human b -- reserved for jesse: needs a human call" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set cycle-human-a blocked-by=cycle-human-b --expect none --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set cycle-human-b blocked-by=cycle-human-a --expect none --override -m "closing the demo cycle" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger ready --ledger issues
-  cd <board dir> && ~/path-to/ledger set cycle-human-b blocked-by= --expect <cycle-human-b's edge id> -m "breaking cycle [cycle-human-a cycle-human-b]: dropping cycle-human-a" --as kit --ledger issues  # expect: exit 4 error needs_override
-  cd <board dir> && ~/path-to/ledger set cycle-human-b blocked-by= --expect <cycle-human-b's edge id> --override -m "breaking cycle [cycle-human-a cycle-human-b]: dropping cycle-human-a" --as kit --ledger issues
+  cd <board dir> && ~/path-to/chit set cycle-human-a status=open --expect none -m "cycle human a" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set cycle-human-b labels=human --expect none -m "reserving for jesse" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set cycle-human-b status=open --expect none --override -m "cycle human b -- reserved for jesse: needs a human call" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set cycle-human-a blocked-by=cycle-human-b --expect none --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set cycle-human-b blocked-by=cycle-human-a --expect none --override -m "closing the demo cycle" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit ready --ledger issues
+  cd <board dir> && ~/path-to/chit set cycle-human-b blocked-by= --expect <cycle-human-b's edge id> -m "breaking cycle [cycle-human-a cycle-human-b]: dropping cycle-human-a" --as kit --ledger issues  # expect: exit 4 error needs_override
+  cd <board dir> && ~/path-to/chit set cycle-human-b blocked-by= --expect <cycle-human-b's edge id> --override -m "breaking cycle [cycle-human-a cycle-human-b]: dropping cycle-human-a" --as kit --ledger issues
   ```
 
 **Break ticket schema**: every `cycle` entry in `attention` carries a
@@ -319,12 +319,12 @@ false}` — `task-lex`'s edge is the younger one, so it's the key the
 ticket names:
 
 ```
-cd <board dir> && ~/path-to/ledger set task-parse status=open --expect none -m "parse task" --as ash --ledger issues
-cd <board dir> && ~/path-to/ledger set task-lex status=open --expect none -m "lex task" --as ash --ledger issues
-cd <board dir> && ~/path-to/ledger set task-parse blocked-by=task-lex --expect none --as ash --ledger issues
-cd <board dir> && ~/path-to/ledger set task-lex blocked-by=task-parse --expect none --as ash --ledger issues
-cd <board dir> && ~/path-to/ledger ready --ledger issues
-cd <board dir> && ~/path-to/ledger set task-lex blocked-by= --expect <task-lex's edge id> -m "breaking cycle per ready's break ticket: dropping task-parse" --as ash --ledger issues
+cd <board dir> && ~/path-to/chit set task-parse status=open --expect none -m "parse task" --as ash --ledger issues
+cd <board dir> && ~/path-to/chit set task-lex status=open --expect none -m "lex task" --as ash --ledger issues
+cd <board dir> && ~/path-to/chit set task-parse blocked-by=task-lex --expect none --as ash --ledger issues
+cd <board dir> && ~/path-to/chit set task-lex blocked-by=task-parse --expect none --as ash --ledger issues
+cd <board dir> && ~/path-to/chit ready --ledger issues
+cd <board dir> && ~/path-to/chit set task-lex blocked-by= --expect <task-lex's edge id> -m "breaking cycle per ready's break ticket: dropping task-parse" --as ash --ledger issues
 ```
 
 - **Label edit**: the same read-union-write pattern, `--expect <the
@@ -337,9 +337,9 @@ cd <board dir> && ~/path-to/ledger set task-lex blocked-by= --expect <task-lex's
   writer just added.
 
   ```
-  cd <board dir> && ~/path-to/ledger set fix-retry labels=needs-triage --expect none -m "flagging for triage review" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger status fix-retry --field labels --ledger issues
-  cd <board dir> && ~/path-to/ledger set fix-retry labels=needs-triage,perf --expect <the labels field's latest id> -m "also perf-relevant" --as kit --ledger issues
+  cd <board dir> && ~/path-to/chit set fix-retry labels=needs-triage --expect none -m "flagging for triage review" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit status fix-retry --field labels --ledger issues
+  cd <board dir> && ~/path-to/chit set fix-retry labels=needs-triage,perf --expect <the labels field's latest id> -m "also perf-relevant" --as kit --ledger issues
   ```
 
 - **Recovery** (after discovering a clobber or duplication): a
@@ -348,10 +348,10 @@ cd <board dir> && ~/path-to/ledger set task-lex blocked-by= --expect <task-lex's
   re-fix.
 
   ```
-  cd <board dir> && ~/path-to/ledger set db-migrate status=open --expect none -m "run the pending schema migration" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger set db-migrate status=closed --evidence commit:wrong0000 --expect <the seed id> -m "done" --as ash --ledger issues
-  cd <board dir> && ~/path-to/ledger note -k handoff --key db-migrate -m "closed with the wrong evidence ref (copy-pasted from deploy); correcting below, not re-closing quietly" --as kit --ledger issues
-  cd <board dir> && ~/path-to/ledger set db-migrate status=closed --evidence commit:c9f1a02 --expect <the bad close's id> --override -m "correcting: evidence ref was copy-pasted from deploy, see handoff" --as kit --ledger issues
+  cd <board dir> && ~/path-to/chit set db-migrate status=open --expect none -m "run the pending schema migration" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit set db-migrate status=closed --evidence commit:wrong0000 --expect <the seed id> -m "done" --as ash --ledger issues
+  cd <board dir> && ~/path-to/chit note -k handoff --key db-migrate -m "closed with the wrong evidence ref (copy-pasted from deploy); correcting below, not re-closing quietly" --as kit --ledger issues
+  cd <board dir> && ~/path-to/chit set db-migrate status=closed --evidence commit:c9f1a02 --expect <the bad close's id> --override -m "correcting: evidence ref was copy-pasted from deploy, see handoff" --as kit --ledger issues
   ```
 
 Claiming a key `ready` annotates `unblocked_without_evidence`: name it in
@@ -371,7 +371,7 @@ with `-n 0`, since `tail`'s own `--limit` default of 20 would silently
 cover only the most recent events, not the whole chain:
 
 ```
-cd <board dir> && ~/path-to/ledger tail --raw -n 0 --ledger issues | grep '"override"'
+cd <board dir> && ~/path-to/chit tail --raw -n 0 --ledger issues | grep '"override"'
 ```
 
 Evidence on `wontfix` is NOT required — evidence of a
@@ -380,7 +380,7 @@ annotation itself. Any non-zero `totals.attention` is a triage cue on
 its own, regardless of what `frontier` says.
 
 ```
-cd <board dir> && ~/path-to/ledger show --where status=open --ledger issues
+cd <board dir> && ~/path-to/chit show --where status=open --ledger issues
 ```
 
 Dup defense: search titles before seeding (`ready`/`show` carry titles
@@ -401,7 +401,7 @@ unscoped, so a label token that happens to equal a status word (e.g.
 fires no event, so a timeout is how it gets noticed.
 
 ```
-cd <board dir> && ~/path-to/ledger watch --value open,in-progress,closed,wontfix --timeout 1 --ledger issues  # expect: exit 2
+cd <board dir> && ~/path-to/chit watch --value open,in-progress,closed,wontfix --timeout 1 --ledger issues  # expect: exit 2
 ```
 
 Run `chit quickstart` for general mechanics; `chit create --help`

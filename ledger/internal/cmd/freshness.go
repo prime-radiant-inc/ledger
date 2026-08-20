@@ -50,7 +50,7 @@ func (c *Ctx) attachFreshness(led *fold.Ledger, payload map[string]any) {
 	if !rootsIntersect(led.DAG.Roots, trackRoots) {
 		hint := rootMismatchDetail(c, led.Slug, led.DAG.Roots, trackRoots)
 		payload["freshness"] = map[string]any{"hint": hint}
-		fmt.Fprintln(c.Stderr, "[ledger] "+hint)
+		fmt.Fprintln(c.Stderr, "[chit] "+hint)
 		return
 	}
 
@@ -59,7 +59,7 @@ func (c *Ctx) attachFreshness(led *fold.Ledger, payload map[string]any) {
 		return // only sentinel commits ahead — nothing a reader is missing
 	}
 	payload["freshness"] = map[string]any{"unmerged_remote_events": n, "hint": "run `chit sync`"}
-	fmt.Fprintf(c.Stderr, "[ledger] %d unmerged remote events — run 'chit sync'\n", n)
+	fmt.Fprintf(c.Stderr, "[chit] %d unmerged remote events — run 'chit sync'\n", n)
 }
 
 // freshnessRemote picks the remote freshness checks against: routed through
