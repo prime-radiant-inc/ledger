@@ -112,13 +112,13 @@ type ghStateBits struct {
 
 // Run is one sync, in Law 1's order:
 //
-//	1  chit sync             (always first; a stale replica mints duplicates)
+//	1  chit sync               (always first; a stale replica mints duplicates)
 //	1a post-sync preflight     (vocabulary, repo binding, link map, listing)
 //	2  read the outbound drain (before any write — echo safety)
 //	3  intake GitHub -> board  (per-aspect suppression, divergences noted)
 //	4  mirror board -> GitHub
 //	5  persist state if ANY of the four disjuncts holds
-//	6  chit push <slug>      (always, selective, last)
+//	6  chit push <slug>        (always, selective, last)
 func (s *Syncer) Run() (*Report, error) {
 	// Actions is never nil: a converged run must marshal it as [], not JSON
 	// null, exactly as the parent tool's own empty lists do. A consumer that
